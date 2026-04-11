@@ -34,11 +34,15 @@ public static class InstallCommand
         command.SetAction((parseResult, cancellationToken) =>
         {
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var skillsDir = Path.Combine(home, ".claude", "skills");
-            var skillFile = Path.Combine(skillsDir, "reforge.md");
+            var skillDir = Path.Combine(home, ".claude", "skills", "reforge");
+            var skillFile = Path.Combine(skillDir, "SKILL.md");
 
-            Directory.CreateDirectory(skillsDir);
+            Directory.CreateDirectory(skillDir);
             File.WriteAllText(skillFile, SkillContent);
+
+            // Clean up old flat file if it exists
+            var oldFile = Path.Combine(home, ".claude", "skills", "reforge.md");
+            if (File.Exists(oldFile)) File.Delete(oldFile);
 
             Console.WriteLine($"Installed skill to {skillFile}");
             Console.WriteLine("Reforge is now available as a skill in all Claude Code sessions.");
