@@ -23,7 +23,11 @@ public static class CallersCommand
                 var symbols = await SymbolResolver.ResolveAsync(solution, symbolQuery);
                 if (symbols.Count == 0)
                 {
-                    OutputFormatter.WriteMessage("callers", $"Symbol '{symbolQuery}' not found.", format);
+                    var suggestions = await SymbolResolver.SuggestAsync(solution, symbolQuery);
+                    var msg = suggestions.Count > 0
+                        ? $"Symbol '{symbolQuery}' not found. Did you mean: {string.Join(", ", suggestions)}"
+                        : $"Symbol '{symbolQuery}' not found.";
+                    OutputFormatter.WriteMessage("callers", msg, format);
                     return;
                 }
 

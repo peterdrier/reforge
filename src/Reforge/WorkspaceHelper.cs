@@ -22,8 +22,16 @@ public static class WorkspaceHelper
             Console.Error.WriteLine($"workspace: {e.Diagnostic.Message}");
         });
 
-        var solution = await workspace.OpenSolutionAsync(resolved);
-        return (solution, workspace);
+        try
+        {
+            var solution = await workspace.OpenSolutionAsync(resolved);
+            return (solution, workspace);
+        }
+        catch
+        {
+            workspace.Dispose();
+            throw;
+        }
     }
 
     /// <summary>

@@ -42,6 +42,9 @@ static async Task<int> RunAsync(string[] args)
     rootCommand.Add(UsagesCommand.Create(solutionOption, formatOption));
     rootCommand.Add(ParametersCommand.Create(solutionOption, formatOption));
 
+    // Help
+    rootCommand.Add(SkillCommand.Create());
+
     // Phase 2 — Mechanical Transform commands (future)
 
     var parseResult = rootCommand.Parse(args);

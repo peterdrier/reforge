@@ -71,7 +71,7 @@ public static class ParametersCommand
                                         continue;
 
                                     var lineSpan = location.GetLineSpan();
-                                    var filePath = NormalizePath(lineSpan.Path, solutionDir);
+                                    var filePath = LocationHelper.NormalizePath(lineSpan.Path, solutionDir);
                                     var line = lineSpan.StartLinePosition.Line + 1;
                                     var column = lineSpan.StartLinePosition.Character + 1;
 
@@ -87,11 +87,17 @@ public static class ParametersCommand
                     }
                 }
 
+                // Deduplicate entries that may appear from multiple compilations
+                var deduped = entries
+                    .GroupBy(r => (r.File, r.Line, r.Column))
+                    .Select(g => g.First())
+                    .ToList();
+
                 var symbolDesc = BuildSymbolDescription(namePattern, typePattern);
                 OutputFormatter.WriteResults(
                     "parameters",
                     symbolDesc,
-                    entries,
+                    deduped,
                     format,
                     entry => entry);
             }
@@ -112,6 +118,8 @@ public static class ParametersCommand
             else if (member is INamedTypeSymbol type)
             {
                 yield return type;
+                foreach (var nested in type.GetTypeMembers())
+                    yield return nested;
             }
         }
     }
@@ -124,21 +132,5 @@ public static class ParametersCommand
         if (typePattern is not null)
             parts.Add($"type~'{typePattern}'");
         return string.Join(" && ", parts);
-    }
-
-    private static string NormalizePath(string absolutePath, string solutionDirectory)
-    {
-        if (string.IsNullOrEmpty(absolutePath))
-            return absolutePath;
-
-        if (absolutePath.StartsWith(solutionDirectory, StringComparison.OrdinalIgnoreCase))
-        {
-            var relative = absolutePath[solutionDirectory.Length..];
-            if (relative.StartsWith(Path.DirectorySeparatorChar) || relative.StartsWith(Path.AltDirectorySeparatorChar))
-                relative = relative[1..];
-            return relative.Replace('\\', '/');
-        }
-
-        return absolutePath.Replace('\\', '/');
     }
 }

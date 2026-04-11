@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
 
 namespace Reforge;
@@ -63,7 +64,7 @@ public static class LocationHelper
     /// <summary>
     /// Makes a file path relative to the solution directory and uses forward slashes.
     /// </summary>
-    private static string NormalizePath(string absolutePath, string solutionDirectory)
+    public static string NormalizePath(string absolutePath, string solutionDirectory)
     {
         if (string.IsNullOrEmpty(absolutePath))
             return absolutePath;
@@ -111,7 +112,7 @@ public static class LocationHelper
     /// <summary>
     /// Attempts to determine the containing symbol name from a source location
     /// by walking up the syntax tree to find the nearest type or member declaration.
-    /// Falls back to the file name if no containing symbol can be determined.
+    /// Falls back to empty string if no containing symbol can be determined.
     /// </summary>
     private static string GetContainingNameFromLocation(Location location)
     {
@@ -121,75 +122,58 @@ public static class LocationHelper
         var root = location.SourceTree.GetRoot();
         var node = root.FindNode(location.SourceSpan);
 
-        // Walk up to find the nearest member or type declaration
         var current = node;
         while (current is not null)
         {
-            // Check for common declaration kinds by their syntax kind name
-            // (avoiding direct CSharp dependency to keep this general)
-            var kindName = current.GetType().Name;
-            if (kindName.Contains("MethodDeclaration") ||
-                kindName.Contains("PropertyDeclaration") ||
-                kindName.Contains("ConstructorDeclaration") ||
-                kindName.Contains("FieldDeclaration"))
+            switch (current)
             {
-                // Found a member — now find its parent type
-                var parentType = FindParentTypeDeclaration(current.Parent);
-                var memberName = GetDeclarationName(current);
-                if (parentType is not null)
-                {
-                    var typeName = GetDeclarationName(parentType);
-                    return string.IsNullOrEmpty(memberName) ? typeName : $"{typeName}.{memberName}";
-                }
-                return memberName;
+                case MethodDeclarationSyntax method:
+                    var parentType = FindParentTypeDeclaration(current.Parent);
+                    return parentType is not null ? $"{GetIdentifier(parentType)}.{method.Identifier.Text}" : method.Identifier.Text;
+                case ConstructorDeclarationSyntax ctor:
+                    parentType = FindParentTypeDeclaration(current.Parent);
+                    return parentType is not null ? $"{GetIdentifier(parentType)}.{ctor.Identifier.Text}" : ctor.Identifier.Text;
+                case PropertyDeclarationSyntax prop:
+                    parentType = FindParentTypeDeclaration(current.Parent);
+                    return parentType is not null ? $"{GetIdentifier(parentType)}.{prop.Identifier.Text}" : prop.Identifier.Text;
+                case FieldDeclarationSyntax:
+                    parentType = FindParentTypeDeclaration(current.Parent);
+                    return parentType is not null ? GetIdentifier(parentType) : string.Empty;
+                case ClassDeclarationSyntax cls:
+                    return cls.Identifier.Text;
+                case StructDeclarationSyntax str:
+                    return str.Identifier.Text;
+                case RecordDeclarationSyntax rec:
+                    return rec.Identifier.Text;
+                case InterfaceDeclarationSyntax iface:
+                    return iface.Identifier.Text;
+                case EnumDeclarationSyntax enm:
+                    return enm.Identifier.Text;
             }
-
-            if (kindName.Contains("ClassDeclaration") ||
-                kindName.Contains("StructDeclaration") ||
-                kindName.Contains("RecordDeclaration") ||
-                kindName.Contains("InterfaceDeclaration") ||
-                kindName.Contains("EnumDeclaration"))
-            {
-                return GetDeclarationName(current);
-            }
-
             current = current.Parent;
         }
-
         return string.Empty;
     }
 
-    private static Microsoft.CodeAnalysis.SyntaxNode? FindParentTypeDeclaration(Microsoft.CodeAnalysis.SyntaxNode? node)
+    private static SyntaxNode? FindParentTypeDeclaration(SyntaxNode? node)
     {
         var current = node;
         while (current is not null)
         {
-            var kindName = current.GetType().Name;
-            if (kindName.Contains("ClassDeclaration") ||
-                kindName.Contains("StructDeclaration") ||
-                kindName.Contains("RecordDeclaration") ||
-                kindName.Contains("InterfaceDeclaration"))
-            {
+            if (current is ClassDeclarationSyntax or StructDeclarationSyntax
+                or RecordDeclarationSyntax or InterfaceDeclarationSyntax)
                 return current;
-            }
             current = current.Parent;
         }
         return null;
     }
 
-    /// <summary>
-    /// Extracts the identifier name from a declaration syntax node.
-    /// Works by looking for the Identifier property via reflection to avoid
-    /// coupling to specific CSharp syntax types.
-    /// </summary>
-    private static string GetDeclarationName(Microsoft.CodeAnalysis.SyntaxNode node)
+    private static string GetIdentifier(SyntaxNode node) => node switch
     {
-        var identifierProp = node.GetType().GetProperty("Identifier");
-        if (identifierProp is not null)
-        {
-            var token = identifierProp.GetValue(node);
-            return token?.ToString() ?? string.Empty;
-        }
-        return string.Empty;
-    }
+        ClassDeclarationSyntax c => c.Identifier.Text,
+        StructDeclarationSyntax s => s.Identifier.Text,
+        RecordDeclarationSyntax r => r.Identifier.Text,
+        InterfaceDeclarationSyntax i => i.Identifier.Text,
+        _ => string.Empty
+    };
 }

@@ -22,7 +22,11 @@ public static class InjectedCommand
                 var symbols = await SymbolResolver.ResolveAsync(solution, symbolQuery);
                 if (symbols.Count == 0)
                 {
-                    OutputFormatter.WriteMessage("injected", $"Symbol '{symbolQuery}' not found.", format);
+                    var suggestions = await SymbolResolver.SuggestAsync(solution, symbolQuery);
+                    var msg = suggestions.Count > 0
+                        ? $"Symbol '{symbolQuery}' not found. Did you mean: {string.Join(", ", suggestions)}"
+                        : $"Symbol '{symbolQuery}' not found.";
+                    OutputFormatter.WriteMessage("injected", msg, format);
                     return;
                 }
 
@@ -68,7 +72,7 @@ public static class InjectedCommand
                                     if (location is not null)
                                     {
                                         var lineSpan = location.GetLineSpan();
-                                        var filePath = NormalizePath(lineSpan.Path, solutionDir);
+                                        var filePath = LocationHelper.NormalizePath(lineSpan.Path, solutionDir);
                                         var line = lineSpan.StartLinePosition.Line + 1;
                                         var column = lineSpan.StartLinePosition.Character + 1;
 
@@ -135,21 +139,5 @@ public static class InjectedCommand
             foreach (var deepNested in GetNestedTypes(nested))
                 yield return deepNested;
         }
-    }
-
-    private static string NormalizePath(string absolutePath, string solutionDirectory)
-    {
-        if (string.IsNullOrEmpty(absolutePath))
-            return absolutePath;
-
-        if (absolutePath.StartsWith(solutionDirectory, StringComparison.OrdinalIgnoreCase))
-        {
-            var relative = absolutePath[solutionDirectory.Length..];
-            if (relative.StartsWith(Path.DirectorySeparatorChar) || relative.StartsWith(Path.AltDirectorySeparatorChar))
-                relative = relative[1..];
-            return relative.Replace('\\', '/');
-        }
-
-        return absolutePath.Replace('\\', '/');
     }
 }

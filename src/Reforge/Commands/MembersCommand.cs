@@ -22,7 +22,11 @@ public static class MembersCommand
                 var symbols = await SymbolResolver.ResolveAsync(solution, symbolQuery);
                 if (symbols.Count == 0)
                 {
-                    OutputFormatter.WriteMessage("members", $"Symbol '{symbolQuery}' not found.", format);
+                    var suggestions = await SymbolResolver.SuggestAsync(solution, symbolQuery);
+                    var msg = suggestions.Count > 0
+                        ? $"Symbol '{symbolQuery}' not found. Did you mean: {string.Join(", ", suggestions)}"
+                        : $"Symbol '{symbolQuery}' not found.";
+                    OutputFormatter.WriteMessage("members", msg, format);
                     return;
                 }
 
@@ -54,7 +58,8 @@ public static class MembersCommand
                 var solutionDir = LocationHelper.GetSolutionDirectory(solution);
 
                 var members = typeSymbol.GetMembers()
-                    .Where(m => !m.IsImplicitlyDeclared)
+                    .Where(m => !m.IsImplicitlyDeclared
+                             && !(m is IMethodSymbol ms && ms.AssociatedSymbol is not null))
                     .Where(m => m.Locations.Length > 0 && m.Locations[0].IsInSource)
                     .ToList();
 
@@ -67,7 +72,7 @@ public static class MembersCommand
                     {
                         var location = member.Locations[0];
                         var lineSpan = location.GetLineSpan();
-                        var filePath = MakeRelativePath(lineSpan.Path, solutionDir);
+                        var filePath = LocationHelper.NormalizePath(lineSpan.Path, solutionDir);
                         var line = lineSpan.StartLinePosition.Line + 1;
                         var column = lineSpan.StartLinePosition.Character + 1;
                         var signature = FormatMemberSignature(member);
@@ -116,21 +121,5 @@ public static class MembersCommand
         // Prepend modifiers to the minimally qualified display
         var prefix = string.Join(" ", modifiers);
         return string.IsNullOrEmpty(prefix) ? display : $"{prefix} {display}";
-    }
-
-    private static string MakeRelativePath(string absolutePath, string solutionDirectory)
-    {
-        if (string.IsNullOrEmpty(absolutePath))
-            return absolutePath;
-
-        if (absolutePath.StartsWith(solutionDirectory, StringComparison.OrdinalIgnoreCase))
-        {
-            var relative = absolutePath[solutionDirectory.Length..];
-            if (relative.Length > 0 && (relative[0] == '\\' || relative[0] == '/'))
-                relative = relative[1..];
-            return relative.Replace('\\', '/');
-        }
-
-        return absolutePath.Replace('\\', '/');
     }
 }

@@ -22,7 +22,11 @@ public static class DependenciesCommand
                 var symbols = await SymbolResolver.ResolveAsync(solution, symbolQuery);
                 if (symbols.Count == 0)
                 {
-                    OutputFormatter.WriteMessage("dependencies", $"Symbol '{symbolQuery}' not found.", format);
+                    var suggestions = await SymbolResolver.SuggestAsync(solution, symbolQuery);
+                    var msg = suggestions.Count > 0
+                        ? $"Symbol '{symbolQuery}' not found. Did you mean: {string.Join(", ", suggestions)}"
+                        : $"Symbol '{symbolQuery}' not found.";
+                    OutputFormatter.WriteMessage("dependencies", msg, format);
                     return;
                 }
 
@@ -178,17 +182,6 @@ public static class DependenciesCommand
             return string.Empty;
 
         var absolutePath = location.GetLineSpan().Path;
-        if (string.IsNullOrEmpty(absolutePath))
-            return string.Empty;
-
-        if (absolutePath.StartsWith(solutionDir, StringComparison.OrdinalIgnoreCase))
-        {
-            var relative = absolutePath[solutionDir.Length..];
-            if (relative.StartsWith(Path.DirectorySeparatorChar) || relative.StartsWith(Path.AltDirectorySeparatorChar))
-                relative = relative[1..];
-            return relative.Replace('\\', '/');
-        }
-
-        return absolutePath.Replace('\\', '/');
+        return LocationHelper.NormalizePath(absolutePath, solutionDir);
     }
 }

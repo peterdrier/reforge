@@ -50,6 +50,24 @@ public static class SymbolResolver
     }
 
     /// <summary>
+    /// Suggests possible symbols when a query yields no results.
+    /// Finds named types whose name contains the query as a substring (case-insensitive).
+    /// Returns up to 10 fully qualified display names.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> SuggestAsync(Solution solution, string query)
+    {
+        var allSymbols = await CollectAllSymbolsAsync(solution);
+        return allSymbols
+            .OfType<INamedTypeSymbol>()
+            .Where(s => s.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                      && s.Locations.Any(l => l.IsInSource))
+            .Select(s => s.ToDisplayString())
+            .Distinct()
+            .Take(10)
+            .ToList();
+    }
+
+    /// <summary>
     /// Collects all named type symbols from every project in the solution.
     /// Uses GetSymbolsWithName for efficiency where possible.
     /// </summary>
