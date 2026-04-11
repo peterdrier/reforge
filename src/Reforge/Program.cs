@@ -56,6 +56,11 @@ static async Task<int> RunAsync(string[] args)
     rootCommand.Add(UsagesCommand.Create(solutionOption, formatOption, limitOption));
     rootCommand.Add(ParametersCommand.Create(solutionOption, formatOption, limitOption));
 
+    // Service ownership analysis
+    rootCommand.Add(DbSetUsageCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(OwnershipViolationsCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(ServiceMapCommand.Create(solutionOption, formatOption, limitOption));
+
     // Help & setup
     rootCommand.Add(SkillCommand.Create());
     rootCommand.Add(InstallCommand.Create());

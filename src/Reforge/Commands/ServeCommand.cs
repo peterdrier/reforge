@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -47,6 +48,74 @@ public static class ServeCommand
             Console.Error.WriteLine($"Port file: {portFile}");
             Console.Error.WriteLine("Press Ctrl+C to stop.");
 
+            // Watch for file changes and reload workspace when source files change
+            var solutionFilePath = solution.FilePath!;
+            var watcher = new FileSystemWatcher(solutionDir)
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
+                EnableRaisingEvents = true
+            };
+
+            watcher.Filters.Add("*.cs");
+            watcher.Filters.Add("*.csproj");
+            watcher.Filters.Add("*.slnx");
+            watcher.Filters.Add("*.sln");
+
+            var reloadLock = new SemaphoreSlim(1, 1);
+            Timer? debounceTimer = null;
+
+            void OnFileChanged(object sender, FileSystemEventArgs e)
+            {
+                // Skip bin/obj directories
+                if (e.FullPath.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar) ||
+                    e.FullPath.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar) ||
+                    e.FullPath.Contains("/bin/") || e.FullPath.Contains("/obj/"))
+                    return;
+
+                debounceTimer?.Dispose();
+                debounceTimer = new Timer(async _ =>
+                {
+                    if (await reloadLock.WaitAsync(0)) // Non-blocking try
+                    {
+                        try
+                        {
+                            Console.Error.WriteLine("File changes detected, reloading workspace...");
+                            var sw = Stopwatch.StartNew();
+
+                            var newWorkspace = MSBuildWorkspace.Create();
+                            newWorkspace.RegisterWorkspaceFailedHandler(evt =>
+                            {
+                                // Suppress diagnostics during reload
+                            });
+                            var newSolution = await newWorkspace.OpenSolutionAsync(solutionFilePath);
+
+                            // Atomic swap — old solution remains usable for in-flight queries
+                            WorkspaceHelper.HotSolution = newSolution;
+
+                            // Let the old workspace get GC'd rather than disposing it
+                            // while in-flight queries might still reference the old solution
+
+                            sw.Stop();
+                            Console.Error.WriteLine($"Workspace reloaded in {sw.ElapsedMilliseconds}ms");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.Error.WriteLine($"Reload failed: {ex.Message}");
+                        }
+                        finally
+                        {
+                            reloadLock.Release();
+                        }
+                    }
+                }, null, 500, Timeout.Infinite);
+            }
+
+            watcher.Changed += OnFileChanged;
+            watcher.Created += OnFileChanged;
+            watcher.Deleted += OnFileChanged;
+            watcher.Renamed += (s, e) => OnFileChanged(s, e);
+
             try
             {
                 while (!cancellationToken.IsCancellationRequested)
@@ -67,6 +136,8 @@ public static class ServeCommand
             }
             finally
             {
+                debounceTimer?.Dispose();
+                watcher.Dispose();
                 listener.Stop();
                 WorkspaceHelper.HotSolution = null;
                 workspace.Dispose();
@@ -157,6 +228,9 @@ public static class ServeCommand
                     rootCommand.Add(CallChainCommand.Create(solutionOption, formatOption, limitOption));
                     rootCommand.Add(UsagesCommand.Create(solutionOption, formatOption, limitOption));
                     rootCommand.Add(ParametersCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(DbSetUsageCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(OwnershipViolationsCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(ServiceMapCommand.Create(solutionOption, formatOption, limitOption));
                     rootCommand.Add(SkillCommand.Create());
 
                     var parseResult = rootCommand.Parse(args);

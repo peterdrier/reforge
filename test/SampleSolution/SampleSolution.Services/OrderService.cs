@@ -1,26 +1,30 @@
 using SampleSolution.Core.Interfaces;
 using SampleSolution.Core.Models;
+using SampleSolution.Services.Data;
 
 namespace SampleSolution.Services;
 
 /// <summary>
-/// Tests: injected (takes IUserService + IOrderRepository), cross-service dependencies.
+/// Tests: injected (takes IUserService + IOrderRepository), cross-service dependencies,
+///        ownership-violations (accesses Users table which is owned by UserService).
 /// </summary>
 public class OrderService
 {
     private readonly IUserService _userService;
     private readonly IOrderRepository _orderRepository;
+    private readonly AppDbContext _dbContext;
 
-    public OrderService(IUserService userService, IOrderRepository orderRepository)
+    public OrderService(IUserService userService, IOrderRepository orderRepository, AppDbContext dbContext)
     {
         _userService = userService;
         _orderRepository = orderRepository;
+        _dbContext = dbContext;
     }
 
     public async Task<object?> GetOrderForUserAsync(int userId, int orderId, CancellationToken cancellationToken = default)
     {
-        // Validates user exists before fetching order
-        var user = await _userService.GetUserAsync(userId, cancellationToken);
+        // Ownership violation: OrderService accesses Users table directly
+        var user = _dbContext.Users.FirstOrDefault(u => u.Id == userId);
         if (user == null)
         {
             return null;

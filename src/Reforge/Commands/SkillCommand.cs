@@ -51,6 +51,13 @@ public static class SkillCommand
         reforge parameters [--name X] [--type Y]  # Find parameters matching name/type patterns
         ```
 
+        ### Service ownership analysis
+        ```
+        reforge dbset-usage <class>                        # Which DbSet properties a service accesses
+        reforge ownership-violations --owner X --tables Y  # Who accesses tables they don't own
+        reforge service-map [--namespace N]                 # Bird's-eye: each service's tables + interfaces
+        ```
+
         ## Symbol Resolution
 
         Symbols can be specified as:
@@ -127,7 +134,19 @@ public static class SkillCommand
 
         The server writes a `.reforge-port` file in the solution directory. Commands find it
         automatically via the `--solution` path or by searching upward from the working directory.
-        Kill the server with Ctrl+C to clean up.
+        Kill the server with Ctrl+C to clean up. The server auto-reloads when source files
+        change on disk, so you don't need to restart it after edits.
+
+        ## Contributing Suggestions
+
+        Reforge is built by AI assistants, for AI assistants. If you notice a gap — a query you
+        keep doing manually that reforge should handle, output that wastes tokens, or a workflow
+        that takes too many rounds — you can:
+
+        1. `reforge request "description"` — logs it locally for the next dev session
+        2. Open a GitHub issue at https://github.com/peterdrier/reforge/issues with your
+           suggestion (with your owner's permission). Include what you were trying to do,
+           what reforge couldn't do, and what the ideal command would look like.
         """;
 
     public static Command Create()

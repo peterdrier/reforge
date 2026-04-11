@@ -1,45 +1,63 @@
 using SampleSolution.Core.Attributes;
 using SampleSolution.Core.Interfaces;
 using SampleSolution.Core.Models;
+using SampleSolution.Services.Data;
 
 namespace SampleSolution.Services;
 
 /// <summary>
 /// Primary IUserService implementation.
 /// Tests: implementations, injected (takes IUserRepository), dependencies,
-///        members (variety of member types), callers/call-chain.
+///        members (variety of member types), callers/call-chain,
+///        dbset-usage (accesses Users and AuditLogs through AppDbContext).
 /// </summary>
 [ServiceLifetime("Scoped")]
 public class UserService : IUserService
 {
     private readonly IUserRepository _userRepository;
     private readonly ILogger _logger;
+    private readonly AppDbContext _dbContext;
     private static int _instanceCount;
 
     public bool IsInitialized { get; private set; }
 
-    public UserService(IUserRepository userRepository, ILogger logger)
+    public UserService(IUserRepository userRepository, ILogger logger, AppDbContext dbContext)
     {
         _userRepository = userRepository;
         _logger = logger;
+        _dbContext = dbContext;
         _instanceCount++;
     }
 
     public async Task<User?> GetUserAsync(int id, CancellationToken cancellationToken = default)
     {
         _logger.LogInfo($"Getting user {id}");
-        var user = await _userRepository.FindByIdAsync(id, cancellationToken);
+        var user = _dbContext.Users.FirstOrDefault(u => u.Id == id);
         if (user == null)
         {
             _logger.LogWarning($"User {id} not found");
         }
-        return user;
+        return await Task.FromResult(user);
     }
 
     public async Task<IReadOnlyList<User>> GetAllUsersAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInfo("Getting all users");
-        return await _userRepository.GetAllAsync(cancellationToken);
+        return await Task.FromResult(_dbContext.Users.Where(u => u.IsActive).ToList().AsReadOnly());
+    }
+
+    /// <summary>
+    /// Writes an audit log entry — tests dbset-usage finding AuditLogs access.
+    /// </summary>
+    public void LogAudit(string action, string entityName, int entityId, string performedBy)
+    {
+        _dbContext.AuditLogs.Add(new AuditLog
+        {
+            Action = action,
+            EntityName = entityName,
+            EntityId = entityId,
+            PerformedBy = performedBy
+        });
     }
 
     /// <summary>

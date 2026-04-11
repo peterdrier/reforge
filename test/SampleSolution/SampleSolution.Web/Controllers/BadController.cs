@@ -1,4 +1,5 @@
 using SampleSolution.Core.Models;
+using SampleSolution.Services.Data;
 
 namespace SampleSolution.Web.Controllers;
 
@@ -6,6 +7,7 @@ namespace SampleSolution.Web.Controllers;
 /// Intentional design rule violations for Phase 3 audit testing:
 /// 1. Directly uses AppDbContext (DbContext-like class) instead of going through a service
 /// 2. Has a method with bool isAdmin parameter (privileged boolean)
+/// Also tests ownership-violations: controller accesses Users and AuditLogs tables directly.
 /// </summary>
 public class BadController
 {
@@ -36,14 +38,4 @@ public class BadController
 
         return _dbContext.Users.Where(u => u.IsActive).Take(maxResults).ToList().AsReadOnly();
     }
-}
-
-/// <summary>
-/// Minimal DbContext-like class for testing design rule violations.
-/// Not a real EF Core DbContext -- just enough to simulate the pattern.
-/// </summary>
-public class AppDbContext
-{
-    public List<User> Users { get; set; } = [];
-    public List<AuditLog> AuditLogs { get; set; } = [];
 }
