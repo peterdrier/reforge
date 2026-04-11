@@ -1,11 +1,12 @@
 using System.CommandLine;
+using System.Diagnostics;
 using Microsoft.CodeAnalysis;
 
 namespace Reforge.Commands;
 
 public static class ParametersCommand
 {
-    public static Command Create(Option<string?> solutionOption, Option<OutputFormat> formatOption)
+    public static Command Create(Option<string?> solutionOption, Option<OutputFormat> formatOption, Option<int?> limitOption)
     {
         var nameOption = new Option<string?>("--name")
         {
@@ -24,15 +25,19 @@ public static class ParametersCommand
 
         command.SetAction(async (parseResult, cancellationToken) =>
         {
+            var sw = Stopwatch.StartNew();
             var solutionPath = parseResult.GetValue(solutionOption);
             var format = parseResult.GetValue(formatOption);
             var namePattern = parseResult.GetValue(nameOption);
             var typePattern = parseResult.GetValue(typeOption);
+            var limit = parseResult.GetValue(limitOption);
 
             if (namePattern is null && typePattern is null)
             {
                 OutputFormatter.WriteMessage("parameters",
                     "At least one of --name or --type must be provided.", format);
+                sw.Stop();
+                Telemetry.Log("parameters", "(no args)", 0, sw.ElapsedMilliseconds);
                 return;
             }
 
@@ -93,13 +98,24 @@ public static class ParametersCommand
                     .Select(g => g.First())
                     .ToList();
 
+                int? totalBeforeLimit = null;
+                if (limit.HasValue && deduped.Count > limit.Value)
+                {
+                    totalBeforeLimit = deduped.Count;
+                    deduped = deduped.Take(limit.Value).ToList();
+                }
+
                 var symbolDesc = BuildSymbolDescription(namePattern, typePattern);
                 OutputFormatter.WriteResults(
                     "parameters",
                     symbolDesc,
                     deduped,
                     format,
-                    entry => entry);
+                    entry => entry,
+                    totalBeforeLimit);
+
+                sw.Stop();
+                Telemetry.Log("parameters", symbolDesc, totalBeforeLimit ?? deduped.Count, sw.ElapsedMilliseconds);
             }
         });
 

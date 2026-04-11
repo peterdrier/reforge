@@ -107,6 +107,12 @@ public static class SkillCommand
         7. **To trace impact:** `call-chain <method>` shows the full transitive caller tree —
            how far up the stack a change propagates.
 
+        8. **Limit results** when you only need a sample: `reforge references Foo --limit 10`
+           saves context window when you don't need all 300 references.
+
+        9. **Log feature requests** when you find yourself doing something reforge should handle:
+           `reforge request "needed to find all async methods that don't pass CancellationToken"`
+
         ## Hot Mode (Fast Repeated Queries)
 
         First query pays a cold start tax (~3-20s depending on solution size). For repeated queries,

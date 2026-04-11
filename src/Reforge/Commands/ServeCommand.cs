@@ -134,22 +134,29 @@ public static class ServeCommand
                         Recursive = true
                     };
 
+                    var limitOption = new Option<int?>("--limit")
+                    {
+                        Description = "Maximum number of results to return",
+                        Recursive = true
+                    };
+
                     var rootCommand = new System.CommandLine.RootCommand("Reforge")
                     {
                         solutionOption,
-                        formatOption
+                        formatOption,
+                        limitOption
                     };
 
-                    rootCommand.Add(ReferencesCommand.Create(solutionOption, formatOption));
-                    rootCommand.Add(CallersCommand.Create(solutionOption, formatOption));
-                    rootCommand.Add(ImplementationsCommand.Create(solutionOption, formatOption));
-                    rootCommand.Add(MembersCommand.Create(solutionOption, formatOption));
-                    rootCommand.Add(DependenciesCommand.Create(solutionOption, formatOption));
-                    rootCommand.Add(InjectedCommand.Create(solutionOption, formatOption));
-                    rootCommand.Add(InheritorsCommand.Create(solutionOption, formatOption));
-                    rootCommand.Add(CallChainCommand.Create(solutionOption, formatOption));
-                    rootCommand.Add(UsagesCommand.Create(solutionOption, formatOption));
-                    rootCommand.Add(ParametersCommand.Create(solutionOption, formatOption));
+                    rootCommand.Add(ReferencesCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(CallersCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(ImplementationsCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(MembersCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(DependenciesCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(InjectedCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(InheritorsCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(CallChainCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(UsagesCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(ParametersCommand.Create(solutionOption, formatOption, limitOption));
                     rootCommand.Add(SkillCommand.Create());
 
                     var parseResult = rootCommand.Parse(args);

@@ -1,20 +1,23 @@
 using System.CommandLine;
+using System.Diagnostics;
 using Microsoft.CodeAnalysis;
 
 namespace Reforge.Commands;
 
 public static class InjectedCommand
 {
-    public static Command Create(Option<string?> solutionOption, Option<OutputFormat> formatOption)
+    public static Command Create(Option<string?> solutionOption, Option<OutputFormat> formatOption, Option<int?> limitOption)
     {
         var symbolArg = new Argument<string>("type") { Description = "The type to find injection sites for" };
         var command = new Command("injected", "Find all classes that inject a given type via constructor") { symbolArg };
 
         command.SetAction(async (parseResult, cancellationToken) =>
         {
+            var sw = Stopwatch.StartNew();
             var solutionPath = parseResult.GetValue(solutionOption);
             var format = parseResult.GetValue(formatOption);
             var symbolQuery = parseResult.GetValue(symbolArg)!;
+            var limit = parseResult.GetValue(limitOption);
 
             var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
             using (handle)
@@ -27,6 +30,8 @@ public static class InjectedCommand
                         ? $"Symbol '{symbolQuery}' not found. Did you mean: {string.Join(", ", suggestions)}"
                         : $"Symbol '{symbolQuery}' not found.";
                     OutputFormatter.WriteMessage("injected", msg, format);
+                    sw.Stop();
+                    Telemetry.Log("injected", symbolQuery, 0, sw.ElapsedMilliseconds);
                     return;
                 }
 
@@ -35,6 +40,8 @@ public static class InjectedCommand
                     var candidates = string.Join(", ", symbols.Select(s => s.ToDisplayString()));
                     OutputFormatter.WriteMessage("injected",
                         $"Ambiguous symbol '{symbolQuery}'. Candidates: {candidates}", format);
+                    sw.Stop();
+                    Telemetry.Log("injected", $"{symbolQuery} (ambiguous, {symbols.Count} candidates)", 0, sw.ElapsedMilliseconds);
                     return;
                 }
 
@@ -42,6 +49,8 @@ public static class InjectedCommand
                 {
                     OutputFormatter.WriteMessage("injected",
                         $"'{symbolQuery}' is not a type (it is a {symbols[0].Kind}).", format);
+                    sw.Stop();
+                    Telemetry.Log("injected", symbolQuery, 0, sw.ElapsedMilliseconds);
                     return;
                 }
 
@@ -95,12 +104,23 @@ public static class InjectedCommand
                     .Select(g => g.First())
                     .ToList();
 
+                int? totalBeforeLimit = null;
+                if (limit.HasValue && deduped.Count > limit.Value)
+                {
+                    totalBeforeLimit = deduped.Count;
+                    deduped = deduped.Take(limit.Value).ToList();
+                }
+
                 OutputFormatter.WriteResults(
                     "injected",
                     targetSymbol.ToDisplayString(),
                     deduped,
                     format,
-                    entry => entry);
+                    entry => entry,
+                    totalBeforeLimit);
+
+                sw.Stop();
+                Telemetry.Log("injected", symbolQuery, totalBeforeLimit ?? deduped.Count, sw.ElapsedMilliseconds);
             }
         });
 

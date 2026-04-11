@@ -36,12 +36,13 @@ public static class OutputFormatter
         string symbol,
         IReadOnlyList<T> results,
         OutputFormat format,
-        Func<T, ResultEntry> toEntry)
+        Func<T, ResultEntry> toEntry,
+        int? totalBeforeLimit = null)
     {
         if (format == OutputFormat.Json)
-            WriteJson(command, symbol, results, toEntry);
+            WriteJson(command, symbol, results, toEntry, totalBeforeLimit);
         else
-            WriteCompact(command, symbol, results, toEntry);
+            WriteCompact(command, symbol, results, toEntry, totalBeforeLimit);
     }
 
     /// <summary>
@@ -64,36 +65,57 @@ public static class OutputFormatter
         string command,
         string symbol,
         IReadOnlyList<T> results,
-        Func<T, ResultEntry> toEntry)
+        Func<T, ResultEntry> toEntry,
+        int? totalBeforeLimit = null)
     {
         var entries = results.Select(toEntry).ToList();
-        var output = new
+        var resultArray = entries.Select(e => new
         {
-            command,
-            symbol,
-            results = entries.Select(e => new
-            {
-                file = e.File,
-                line = e.Line,
-                column = e.Column,
-                context = e.Context,
-                containingSymbol = e.ContainingSymbol
-            }).ToArray(),
-            total = entries.Count
-        };
+            file = e.File,
+            line = e.Line,
+            column = e.Column,
+            context = e.Context,
+            containingSymbol = e.ContainingSymbol
+        }).ToArray();
 
-        Console.WriteLine(JsonSerializer.Serialize(output, JsonOptions));
+        if (totalBeforeLimit.HasValue && totalBeforeLimit.Value > entries.Count)
+        {
+            var output = new
+            {
+                command,
+                symbol,
+                results = resultArray,
+                total = entries.Count,
+                totalBeforeLimit = totalBeforeLimit.Value
+            };
+            Console.WriteLine(JsonSerializer.Serialize(output, JsonOptions));
+        }
+        else
+        {
+            var output = new
+            {
+                command,
+                symbol,
+                results = resultArray,
+                total = entries.Count
+            };
+            Console.WriteLine(JsonSerializer.Serialize(output, JsonOptions));
+        }
     }
 
     private static void WriteCompact<T>(
         string command,
         string symbol,
         IReadOnlyList<T> results,
-        Func<T, ResultEntry> toEntry)
+        Func<T, ResultEntry> toEntry,
+        int? totalBeforeLimit = null)
     {
         var entries = results.Select(toEntry).ToList();
 
-        Console.WriteLine($"{entries.Count} {command} of {symbol}");
+        if (totalBeforeLimit.HasValue && totalBeforeLimit.Value > entries.Count)
+            Console.WriteLine($"{entries.Count} of {totalBeforeLimit.Value} {command} of {symbol}");
+        else
+            Console.WriteLine($"{entries.Count} {command} of {symbol}");
 
         if (entries.Count == 0)
             return;

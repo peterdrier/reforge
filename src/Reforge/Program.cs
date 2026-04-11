@@ -4,7 +4,7 @@ using Reforge.Commands;
 
 // Try relaying to a hot server FIRST — before MSBuildLocator or any Roslyn types load.
 // ServerClient is pure TCP, no Roslyn dependency. This skips the expensive startup path.
-if (args.Length > 0 && args[0] is not "serve" and not "skill" and not "install" and not "--help" and not "-h")
+if (args.Length > 0 && args[0] is not "serve" and not "skill" and not "install" and not "request" and not "--list" and not "--help" and not "-h")
 {
     if (await ServerClient.TryRelayAsync(args))
         return 0;
@@ -31,27 +31,35 @@ static async Task<int> RunAsync(string[] args)
         Recursive = true
     };
 
+    var limitOption = new Option<int?>("--limit")
+    {
+        Description = "Maximum number of results to return",
+        Recursive = true
+    };
+
     var rootCommand = new RootCommand("Reforge — Roslyn-powered semantic query and refactoring CLI for AI coding assistants")
     {
         solutionOption,
-        formatOption
+        formatOption,
+        limitOption
     };
 
     // Phase 1 — Semantic Query commands
-    rootCommand.Add(ReferencesCommand.Create(solutionOption, formatOption));
-    rootCommand.Add(CallersCommand.Create(solutionOption, formatOption));
-    rootCommand.Add(ImplementationsCommand.Create(solutionOption, formatOption));
-    rootCommand.Add(MembersCommand.Create(solutionOption, formatOption));
-    rootCommand.Add(DependenciesCommand.Create(solutionOption, formatOption));
-    rootCommand.Add(InjectedCommand.Create(solutionOption, formatOption));
-    rootCommand.Add(InheritorsCommand.Create(solutionOption, formatOption));
-    rootCommand.Add(CallChainCommand.Create(solutionOption, formatOption));
-    rootCommand.Add(UsagesCommand.Create(solutionOption, formatOption));
-    rootCommand.Add(ParametersCommand.Create(solutionOption, formatOption));
+    rootCommand.Add(ReferencesCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(CallersCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(ImplementationsCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(MembersCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(DependenciesCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(InjectedCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(InheritorsCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(CallChainCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(UsagesCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(ParametersCommand.Create(solutionOption, formatOption, limitOption));
 
     // Help & setup
     rootCommand.Add(SkillCommand.Create());
     rootCommand.Add(InstallCommand.Create());
+    rootCommand.Add(RequestCommand.Create());
 
     // Server
     rootCommand.Add(ServeCommand.Create(solutionOption));

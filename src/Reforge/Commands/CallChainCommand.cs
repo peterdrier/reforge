@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Diagnostics;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
 
@@ -6,7 +7,7 @@ namespace Reforge.Commands;
 
 public static class CallChainCommand
 {
-    public static Command Create(Option<string?> solutionOption, Option<OutputFormat> formatOption)
+    public static Command Create(Option<string?> solutionOption, Option<OutputFormat> formatOption, Option<int?> limitOption)
     {
         var methodArg = new Argument<string>("method") { Description = "The method to find transitive callers of" };
         var depthOption = new Option<int>("--depth")
@@ -23,10 +24,12 @@ public static class CallChainCommand
 
         command.SetAction(async (parseResult, cancellationToken) =>
         {
+            var sw = Stopwatch.StartNew();
             var solutionPath = parseResult.GetValue(solutionOption);
             var format = parseResult.GetValue(formatOption);
             var symbolQuery = parseResult.GetValue(methodArg)!;
             var maxDepth = parseResult.GetValue(depthOption);
+            var limit = parseResult.GetValue(limitOption);
 
             var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
             using (handle)
@@ -39,6 +42,8 @@ public static class CallChainCommand
                         ? $"Symbol '{symbolQuery}' not found. Did you mean: {string.Join(", ", suggestions)}"
                         : $"Symbol '{symbolQuery}' not found.";
                     OutputFormatter.WriteMessage("call-chain", msg, format);
+                    sw.Stop();
+                    Telemetry.Log("call-chain", symbolQuery, 0, sw.ElapsedMilliseconds);
                     return;
                 }
 
@@ -47,6 +52,8 @@ public static class CallChainCommand
                     var candidates = string.Join(", ", symbols.Select(s => s.ToDisplayString()));
                     OutputFormatter.WriteMessage("call-chain",
                         $"Ambiguous symbol '{symbolQuery}'. Candidates: {candidates}", format);
+                    sw.Stop();
+                    Telemetry.Log("call-chain", $"{symbolQuery} (ambiguous, {symbols.Count} candidates)", 0, sw.ElapsedMilliseconds);
                     return;
                 }
 
@@ -55,11 +62,20 @@ public static class CallChainCommand
                 {
                     OutputFormatter.WriteMessage("call-chain",
                         $"Symbol '{symbolQuery}' is not a method (it is a {symbol.Kind}).", format);
+                    sw.Stop();
+                    Telemetry.Log("call-chain", symbolQuery, 0, sw.ElapsedMilliseconds);
                     return;
                 }
 
                 var solutionDir = LocationHelper.GetSolutionDirectory(solution);
                 var chain = await FindCallChainAsync(methodSymbol, solution, maxDepth, cancellationToken);
+
+                int? totalBeforeLimit = null;
+                if (limit.HasValue && chain.Count > limit.Value)
+                {
+                    totalBeforeLimit = chain.Count;
+                    chain = chain.Take(limit.Value).ToList();
+                }
 
                 OutputFormatter.WriteResults(
                     "call-chain",
@@ -69,7 +85,11 @@ public static class CallChainCommand
                     entry => LocationHelper.ToResultEntry(entry.Location, entry.Caller, solutionDir) with
                     {
                         Context = $"[depth {entry.Depth}] {entry.Caller.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}"
-                    });
+                    },
+                    totalBeforeLimit);
+
+                sw.Stop();
+                Telemetry.Log("call-chain", symbolQuery, totalBeforeLimit ?? chain.Count, sw.ElapsedMilliseconds);
             }
         });
 

@@ -1,20 +1,23 @@
 using System.CommandLine;
+using System.Diagnostics;
 using Microsoft.CodeAnalysis;
 
 namespace Reforge.Commands;
 
 public static class MembersCommand
 {
-    public static Command Create(Option<string?> solutionOption, Option<OutputFormat> formatOption)
+    public static Command Create(Option<string?> solutionOption, Option<OutputFormat> formatOption, Option<int?> limitOption)
     {
         var typeArg = new Argument<string>("type") { Description = "The type to list members of" };
         var command = new Command("members", "List members of a type with types, visibility, and modifiers") { typeArg };
 
         command.SetAction(async (parseResult, cancellationToken) =>
         {
+            var sw = Stopwatch.StartNew();
             var solutionPath = parseResult.GetValue(solutionOption);
             var format = parseResult.GetValue(formatOption);
             var symbolQuery = parseResult.GetValue(typeArg)!;
+            var limit = parseResult.GetValue(limitOption);
 
             var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
             using (handle)
@@ -27,6 +30,8 @@ public static class MembersCommand
                         ? $"Symbol '{symbolQuery}' not found. Did you mean: {string.Join(", ", suggestions)}"
                         : $"Symbol '{symbolQuery}' not found.";
                     OutputFormatter.WriteMessage("members", msg, format);
+                    sw.Stop();
+                    Telemetry.Log("members", symbolQuery, 0, sw.ElapsedMilliseconds);
                     return;
                 }
 
@@ -43,6 +48,8 @@ public static class MembersCommand
                         var candidates = string.Join(", ", symbols.Select(s => s.ToDisplayString()));
                         OutputFormatter.WriteMessage("members",
                             $"Ambiguous symbol '{symbolQuery}'. Candidates: {candidates}", format);
+                        sw.Stop();
+                        Telemetry.Log("members", $"{symbolQuery} (ambiguous, {symbols.Count} candidates)", 0, sw.ElapsedMilliseconds);
                         return;
                     }
                 }
@@ -52,6 +59,8 @@ public static class MembersCommand
                 {
                     OutputFormatter.WriteMessage("members",
                         $"Symbol '{symbolQuery}' is not a type (it is a {symbol.Kind}).", format);
+                    sw.Stop();
+                    Telemetry.Log("members", symbolQuery, 0, sw.ElapsedMilliseconds);
                     return;
                 }
 
@@ -62,6 +71,13 @@ public static class MembersCommand
                              && !(m is IMethodSymbol ms && ms.AssociatedSymbol is not null))
                     .Where(m => m.Locations.Length > 0 && m.Locations[0].IsInSource)
                     .ToList();
+
+                int? totalBeforeLimit = null;
+                if (limit.HasValue && members.Count > limit.Value)
+                {
+                    totalBeforeLimit = members.Count;
+                    members = members.Take(limit.Value).ToList();
+                }
 
                 OutputFormatter.WriteResults(
                     "members",
@@ -78,7 +94,11 @@ public static class MembersCommand
                         var signature = FormatMemberSignature(member);
 
                         return new ResultEntry(filePath, line, column, signature, typeSymbol.Name);
-                    });
+                    },
+                    totalBeforeLimit);
+
+                sw.Stop();
+                Telemetry.Log("members", symbolQuery, totalBeforeLimit ?? members.Count, sw.ElapsedMilliseconds);
             }
         });
 
