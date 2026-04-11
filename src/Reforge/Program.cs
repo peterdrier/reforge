@@ -1,10 +1,18 @@
 using System.CommandLine;
 using Microsoft.Build.Locator;
+using Reforge;
 using Reforge.Commands;
 
 // Register MSBuild BEFORE any Roslyn types are loaded.
 // This must happen before anything touches Microsoft.CodeAnalysis.
 MSBuildLocator.RegisterDefaults();
+
+// If not the serve command itself, try relaying to a hot server
+if (args.Length > 0 && args[0] != "serve" && args[0] != "skill" && args[0] != "--help" && args[0] != "-h")
+{
+    if (await ServerClient.TryRelayAsync(args))
+        return 0;
+}
 
 return await RunAsync(args);
 
@@ -44,6 +52,9 @@ static async Task<int> RunAsync(string[] args)
 
     // Help
     rootCommand.Add(SkillCommand.Create());
+
+    // Server
+    rootCommand.Add(ServeCommand.Create(solutionOption));
 
     // Phase 2 — Mechanical Transform commands (future)
 

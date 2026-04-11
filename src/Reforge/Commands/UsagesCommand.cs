@@ -28,8 +28,8 @@ public static class UsagesCommand
             var symbolQuery = parseResult.GetValue(typeArg)!;
             var namespaceFilter = parseResult.GetValue(inOption);
 
-            var (solution, workspace) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
-            using (workspace)
+            var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
+            using (handle)
             {
                 var symbols = await SymbolResolver.ResolveAsync(solution, symbolQuery);
                 if (symbols.Count == 0)

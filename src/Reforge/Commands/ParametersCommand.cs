@@ -36,8 +36,8 @@ public static class ParametersCommand
                 return;
             }
 
-            var (solution, workspace) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
-            using (workspace)
+            var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
+            using (handle)
             {
                 var solutionDir = LocationHelper.GetSolutionDirectory(solution);
                 var entries = new List<ResultEntry>();

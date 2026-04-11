@@ -6,14 +6,30 @@ namespace Reforge;
 public static class WorkspaceHelper
 {
     /// <summary>
-    /// Opens a solution and returns the Solution + MSBuildWorkspace.
-    /// The caller is responsible for disposing the workspace.
+    /// When set by the serve command, OpenSolutionAsync returns this solution
+    /// with a no-op disposable instead of opening a new workspace.
+    /// </summary>
+    internal static Solution? HotSolution { get; set; }
+
+    private sealed class NoOpDisposable : IDisposable
+    {
+        public void Dispose() { }
+    }
+
+    /// <summary>
+    /// Opens a solution and returns the Solution + a disposable handle.
+    /// In normal (cold) mode, the handle is the MSBuildWorkspace.
+    /// In hot mode (HotSolution is set), the handle is a no-op.
+    /// The caller is responsible for disposing the handle.
     /// </summary>
     /// <param name="solutionPath">
     /// Explicit path to a .slnx or .sln file. If null, searches upward from CWD.
     /// </param>
-    public static async Task<(Solution solution, MSBuildWorkspace workspace)> OpenSolutionAsync(string? solutionPath)
+    public static async Task<(Solution solution, IDisposable handle)> OpenSolutionAsync(string? solutionPath)
     {
+        if (HotSolution is not null)
+            return (HotSolution, new NoOpDisposable());
+
         var resolved = solutionPath ?? FindSolutionFile();
 
         var workspace = MSBuildWorkspace.Create();
@@ -38,7 +54,7 @@ public static class WorkspaceHelper
     /// Searches upward from CWD for a solution file.
     /// Prefers .slnx over .sln. Errors if multiple candidates exist in the same directory.
     /// </summary>
-    private static string FindSolutionFile()
+    internal static string FindSolutionFile()
     {
         var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
 

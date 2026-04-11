@@ -17,8 +17,8 @@ public static class CallersCommand
             var format = parseResult.GetValue(formatOption);
             var symbolQuery = parseResult.GetValue(methodArg)!;
 
-            var (solution, workspace) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
-            using (workspace)
+            var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
+            using (handle)
             {
                 var symbols = await SymbolResolver.ResolveAsync(solution, symbolQuery);
                 if (symbols.Count == 0)

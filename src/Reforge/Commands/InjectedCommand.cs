@@ -16,8 +16,8 @@ public static class InjectedCommand
             var format = parseResult.GetValue(formatOption);
             var symbolQuery = parseResult.GetValue(symbolArg)!;
 
-            var (solution, workspace) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
-            using (workspace)
+            var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
+            using (handle)
             {
                 var symbols = await SymbolResolver.ResolveAsync(solution, symbolQuery);
                 if (symbols.Count == 0)
