@@ -1,18 +1,17 @@
 using System.CommandLine;
-using Microsoft.Build.Locator;
 using Reforge;
 using Reforge.Commands;
 
-// Register MSBuild BEFORE any Roslyn types are loaded.
-// This must happen before anything touches Microsoft.CodeAnalysis.
-MSBuildLocator.RegisterDefaults();
-
-// If not the serve command itself, try relaying to a hot server
+// Try relaying to a hot server FIRST — before MSBuildLocator or any Roslyn types load.
+// ServerClient is pure TCP, no Roslyn dependency. This skips the expensive startup path.
 if (args.Length > 0 && args[0] != "serve" && args[0] != "skill" && args[0] != "--help" && args[0] != "-h")
 {
     if (await ServerClient.TryRelayAsync(args))
         return 0;
 }
+
+// Cold path: register MSBuild BEFORE any Roslyn types are loaded.
+Microsoft.Build.Locator.MSBuildLocator.RegisterDefaults();
 
 return await RunAsync(args);
 

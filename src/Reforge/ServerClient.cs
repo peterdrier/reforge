@@ -13,7 +13,7 @@ public static class ServerClient
     /// </summary>
     public static async Task<bool> TryRelayAsync(string[] args)
     {
-        var port = FindServerPort();
+        var port = FindServerPort(args);
         if (port is null)
             return false;
 
@@ -49,8 +49,22 @@ public static class ServerClient
     /// <summary>
     /// Searches upward from CWD for a .reforge-port file and reads the port number.
     /// </summary>
-    private static int? FindServerPort()
+    private static int? FindServerPort(string[] args)
     {
+        // Check the --solution directory first (most reliable)
+        var solutionDir = GetSolutionDirFromArgs(args);
+        if (solutionDir is not null)
+        {
+            var portFile = Path.Combine(solutionDir, ".reforge-port");
+            if (File.Exists(portFile))
+            {
+                var content = File.ReadAllText(portFile).Trim();
+                if (int.TryParse(content, out var port))
+                    return port;
+            }
+        }
+
+        // Fall back to searching upward from CWD
         var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
         while (dir is not null)
         {
@@ -62,6 +76,20 @@ public static class ServerClient
                     return port;
             }
             dir = dir.Parent;
+        }
+        return null;
+    }
+
+    private static string? GetSolutionDirFromArgs(string[] args)
+    {
+        for (int i = 0; i < args.Length - 1; i++)
+        {
+            if (args[i] == "--solution")
+            {
+                var solutionPath = args[i + 1];
+                if (File.Exists(solutionPath))
+                    return Path.GetDirectoryName(Path.GetFullPath(solutionPath));
+            }
         }
         return null;
     }
