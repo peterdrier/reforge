@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="SampleSolution.Core/SampleSolution.Core.csproj" />
+  <Project Path="SampleSolution.Services/SampleSolution.Services.csproj" />
+  <Project Path="SampleSolution.Web/SampleSolution.Web.csproj" />
+</Solution>

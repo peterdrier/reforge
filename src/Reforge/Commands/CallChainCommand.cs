@@ -1,0 +1,108 @@
+using System.CommandLine;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.FindSymbols;
+
+namespace Reforge.Commands;
+
+public static class CallChainCommand
+{
+    public static Command Create(Option<string?> solutionOption, Option<OutputFormat> formatOption)
+    {
+        var methodArg = new Argument<string>("method") { Description = "The method to find transitive callers of" };
+        var depthOption = new Option<int>("--depth")
+        {
+            Description = "Maximum recursion depth",
+            DefaultValueFactory = _ => 5
+        };
+
+        var command = new Command("call-chain", "Find transitive callers of a method (who calls who calls this)")
+        {
+            methodArg,
+            depthOption
+        };
+
+        command.SetAction(async (parseResult, cancellationToken) =>
+        {
+            var solutionPath = parseResult.GetValue(solutionOption);
+            var format = parseResult.GetValue(formatOption);
+            var symbolQuery = parseResult.GetValue(methodArg)!;
+            var maxDepth = parseResult.GetValue(depthOption);
+
+            var (solution, workspace) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
+            using (workspace)
+            {
+                var symbols = await SymbolResolver.ResolveAsync(solution, symbolQuery);
+                if (symbols.Count == 0)
+                {
+                    OutputFormatter.WriteMessage("call-chain", $"Symbol '{symbolQuery}' not found.", format);
+                    return;
+                }
+
+                if (symbols.Count > 1)
+                {
+                    var candidates = string.Join(", ", symbols.Select(s => s.ToDisplayString()));
+                    OutputFormatter.WriteMessage("call-chain",
+                        $"Ambiguous symbol '{symbolQuery}'. Candidates: {candidates}", format);
+                    return;
+                }
+
+                var symbol = symbols[0];
+                if (symbol is not IMethodSymbol methodSymbol)
+                {
+                    OutputFormatter.WriteMessage("call-chain",
+                        $"Symbol '{symbolQuery}' is not a method (it is a {symbol.Kind}).", format);
+                    return;
+                }
+
+                var solutionDir = LocationHelper.GetSolutionDirectory(solution);
+                var chain = await FindCallChainAsync(methodSymbol, solution, maxDepth, cancellationToken);
+
+                OutputFormatter.WriteResults(
+                    "call-chain",
+                    methodSymbol.ToDisplayString(),
+                    chain,
+                    format,
+                    entry => LocationHelper.ToResultEntry(entry.Location, entry.Caller, solutionDir) with
+                    {
+                        Context = $"[depth {entry.Depth}] {entry.Caller.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}"
+                    });
+            }
+        });
+
+        return command;
+    }
+
+    private static async Task<List<(ISymbol Caller, int Depth, Location Location)>> FindCallChainAsync(
+        ISymbol method, Solution solution, int maxDepth, CancellationToken ct)
+    {
+        var results = new List<(ISymbol Caller, int Depth, Location Location)>();
+        var visited = new HashSet<string>();
+        var queue = new Queue<(ISymbol method, int depth)>();
+
+        queue.Enqueue((method, 0));
+        visited.Add(method.ToDisplayString());
+
+        while (queue.Count > 0)
+        {
+            var (current, depth) = queue.Dequeue();
+            if (depth >= maxDepth)
+                continue;
+
+            var callers = await SymbolFinder.FindCallersAsync(current, solution, ct);
+            foreach (var caller in callers)
+            {
+                var key = caller.CallingSymbol.ToDisplayString();
+                if (visited.Add(key))
+                {
+                    var loc = caller.Locations.FirstOrDefault();
+                    if (loc != null)
+                        results.Add((caller.CallingSymbol, depth + 1, loc));
+
+                    queue.Enqueue((caller.CallingSymbol, depth + 1));
+                }
+            }
+        }
+
+        return results;
+    }
+}
