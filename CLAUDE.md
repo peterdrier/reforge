@@ -163,9 +163,36 @@ dotnet pack src/Reforge
 dotnet tool install --global --add-source src/Reforge/nupkg Reforge
 ```
 
+## Testing Strategy
+
+### Test solution (primary)
+
+The repo includes a test solution at `test/SampleSolution/` that exercises every query and transform Reforge supports. **Reforge must work against this test solution before testing against anything else.**
+
+The test solution should be a minimal but realistic C# codebase with deliberate patterns that exercise each command:
+
+- **Interfaces + implementations** — at least one interface with 2+ implementing classes (for `implementations`, `inheritors`)
+- **Constructor injection** — services injected into controllers/other services (for `injected`, `dependencies`)
+- **Call chains** — A calls B calls C, at least 3 deep (for `callers`, `call-chain`)
+- **Cross-project references** — at least 2 projects in the solution, with references between them (for solution-wide `references`)
+- **Ambiguous symbol names** — same simple name in different namespaces (for symbol resolution disambiguation)
+- **Interface dispatch** — a method called through an interface variable, not a concrete type (for `references` completeness — this is what grep misses)
+- **nameof() references** — a symbol referenced via `nameof(Foo)` (for `references` completeness)
+- **Attribute references** — a symbol used in an attribute argument (for `references` completeness)
+- **Design rule violations** — at least one "controller uses DbContext directly" and one "bool isPrivileged parameter" (for Phase 3 audit rules)
+
+Create the test solution as part of building Phase 1. Each new command should add test cases to this solution if the existing patterns don't cover it.
+
+### Dogfooding (secondary)
+
+Once basic commands work, test them against Reforge's own solution (`Reforge.slnx`). This validates real-world MSBuildWorkspace behavior and catches edge cases the synthetic test solution won't have.
+
+### Integration with external projects
+
+After the above, optionally test against `H:\source\Humans\Humans.slnx` as a large real-world target. This is a stretch goal, not a gating requirement.
+
 ## Development Guidelines
 
-- **Test with a real solution.** The Humans project at `H:\source\Humans\Humans.slnx` is the primary test target. Always verify commands work against it.
 - **MSBuildWorkspace quirks.** Opening a workspace can produce diagnostic warnings (missing SDKs, target framework issues). Log these to stderr, not stdout. Don't fail on warnings — many are benign.
 - **Startup time matters.** Opening an MSBuildWorkspace and compiling the semantic model takes seconds. For a CLI tool this is acceptable (it's a one-shot command, not interactive). But avoid unnecessary recompilation — open the workspace once, run the query, exit.
 - **Error messages should be actionable.** "Symbol not found" is useless. "Symbol 'Foo' not found. Did you mean: Humans.Core.Foo, Humans.Web.Foo?" is useful.
