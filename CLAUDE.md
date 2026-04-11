@@ -191,6 +191,22 @@ Once basic commands work, test them against Reforge's own solution (`Reforge.sln
 
 After the above, optionally test against `H:\source\Humans\Humans.slnx` as a large real-world target. This is a stretch goal, not a gating requirement.
 
+## Evolution
+
+This tool is built by an AI coding assistant, for AI coding assistants. It will evolve continuously as its primary user (Claude Code) learns what works and what doesn't through real refactoring sessions.
+
+**Expect and embrace change:**
+- Commands will be added, renamed, or merged as usage reveals what's actually useful vs. what seemed useful in theory
+- Output formats will be tuned to minimize tokens — if a command's output wastes context window on information the AI never acts on, strip it
+- New commands may emerge from patterns noticed during refactoring work ("I keep doing these 3 queries in sequence — that should be one command")
+- Underused commands should be removed, not maintained out of completeness
+
+**Feedback loop:** When using Reforge during refactoring work in other projects, note what's slow, what's missing, what's verbose, and what's redundant. Come back to this repo and improve it. The tool should get better every time it's used.
+
+**Token efficiency is a first-class concern.** Every byte of output costs context window. If a command returns 200 lines but the AI only needs 5 fields from each, that's a design bug. Measure usefulness in information-per-token, not completeness.
+
+**Keep a changelog.** Maintain `CHANGELOG.md` with what changed and *why* — especially when a command is redesigned based on real usage experience. This helps future sessions understand the reasoning behind the current design.
+
 ## Development Guidelines
 
 - **MSBuildWorkspace quirks.** Opening a workspace can produce diagnostic warnings (missing SDKs, target framework issues). Log these to stderr, not stdout. Don't fail on warnings — many are benign.
