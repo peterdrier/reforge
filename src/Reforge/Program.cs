@@ -61,6 +61,15 @@ static async Task<int> RunAsync(string[] args)
     rootCommand.Add(OwnershipViolationsCommand.Create(solutionOption, formatOption, limitOption));
     rootCommand.Add(ServiceMapCommand.Create(solutionOption, formatOption, limitOption));
 
+    // Code health analysis
+    rootCommand.Add(HealthCommand.Create(solutionOption, formatOption, limitOption));
+
+    // Audit commands
+    rootCommand.Add(AuditAuthCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(AuditCacheCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(AuditImmutableCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(AuditEfCommand.Create(solutionOption, formatOption, limitOption));
+
     // Help & setup
     rootCommand.Add(SkillCommand.Create());
     rootCommand.Add(InstallCommand.Create());

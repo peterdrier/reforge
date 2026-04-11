@@ -58,6 +58,15 @@ public static class SkillCommand
         reforge service-map [--namespace N]                 # Bird's-eye: each service's tables + interfaces
         ```
 
+        ### Code health and auditing
+        ```
+        reforge health [--top N] [--namespace N]            # Rank types by refactoring risk (coupling, complexity, cohesion)
+        reforge audit-auth                                  # Controller actions missing [Authorize] or [ValidateAntiForgeryToken]
+        reforge audit-cache [--cache-method M]              # SaveChangesAsync without cache eviction
+        reforge audit-immutable --types X,Y                 # Mutations on append-only entities (Remove, Update, property sets)
+        reforge audit-ef                                    # EF Core pitfalls: sentinel defaults, string enums, interpolation in LINQ
+        ```
+
         ## Symbol Resolution
 
         Symbols can be specified as:

@@ -9,7 +9,8 @@ namespace SampleSolution.Services;
 /// Primary IUserService implementation.
 /// Tests: implementations, injected (takes IUserRepository), dependencies,
 ///        members (variety of member types), callers/call-chain,
-///        dbset-usage (accesses Users and AuditLogs through AppDbContext).
+///        dbset-usage (accesses Users and AuditLogs through AppDbContext),
+///        audit-cache (has both cache and DbContext — tests cache eviction detection).
 /// </summary>
 [ServiceLifetime("Scoped")]
 public class UserService : IUserService
@@ -17,15 +18,17 @@ public class UserService : IUserService
     private readonly IUserRepository _userRepository;
     private readonly ILogger _logger;
     private readonly AppDbContext _dbContext;
+    private readonly IMemoryCache _cache;
     private static int _instanceCount;
 
     public bool IsInitialized { get; private set; }
 
-    public UserService(IUserRepository userRepository, ILogger logger, AppDbContext dbContext)
+    public UserService(IUserRepository userRepository, ILogger logger, AppDbContext dbContext, IMemoryCache cache)
     {
         _userRepository = userRepository;
         _logger = logger;
         _dbContext = dbContext;
+        _cache = cache;
         _instanceCount++;
     }
 
@@ -100,5 +103,60 @@ public class UserService : IUserService
             _logger.LogInfo($"Admin access for user {id}");
         }
         return await _userRepository.FindByIdAsync(id, cancellationToken);
+    }
+
+    /// <summary>
+    /// audit-cache violation: calls SaveChangesAsync without cache eviction.
+    /// </summary>
+    public async Task UpdateUserNameAsync(int id, string name, CancellationToken cancellationToken = default)
+    {
+        var user = _dbContext.Users.FirstOrDefault(u => u.Id == id);
+        if (user != null)
+        {
+            user.Name = name;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// audit-cache clean: calls SaveChangesAsync AND cache.Remove.
+    /// </summary>
+    public async Task UpdateUserEmailAsync(int id, string email, CancellationToken cancellationToken = default)
+    {
+        var user = _dbContext.Users.FirstOrDefault(u => u.Id == id);
+        if (user != null)
+        {
+            user.Email = email;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            _cache.Remove($"user:{id}");
+        }
+    }
+
+    /// <summary>
+    /// audit-cache clean: calls SaveChangesAsync and delegates cache eviction to a helper.
+    /// </summary>
+    public async Task DeactivateUserAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var user = _dbContext.Users.FirstOrDefault(u => u.Id == id);
+        if (user != null)
+        {
+            user.IsActive = false;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            EvictUserCache(id);
+        }
+    }
+
+    private void EvictUserCache(int id)
+    {
+        _cache.Remove($"user:{id}");
+        _cache.Remove("user:all");
+    }
+
+    /// <summary>
+    /// Tests audit-ef — string interpolation in LINQ predicate (violation).
+    /// </summary>
+    public object FindByInterpolation(string name)
+    {
+        return _dbContext.Users.Where(u => $"{u.Name}".Contains(name));
     }
 }
