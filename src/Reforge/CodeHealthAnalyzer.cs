@@ -45,6 +45,12 @@ public static class CodeHealthAnalyzer
 
             foreach (var syntaxTree in compilation.SyntaxTrees)
             {
+                // Skip generated files in obj/ directories
+                var filePath = syntaxTree.FilePath ?? "";
+                if (filePath.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") ||
+                    filePath.Contains("/obj/"))
+                    continue;
+
                 var model = compilation.GetSemanticModel(syntaxTree);
                 var root = await syntaxTree.GetRootAsync(ct);
 
@@ -104,6 +110,24 @@ public static class CodeHealthAnalyzer
             {
                 if (dependedOnBy.TryGetValue(dep, out var set))
                     set.Add(typeName);
+            }
+        }
+
+        // 3b. Propagate interface dependents to implementations.
+        // In DI codebases, types depend on IFoo, not Foo. Transfer IFoo's dependents to Foo.
+        foreach (var (symbol, _, _) in deduped)
+        {
+            var implName = symbol.ToDisplayString();
+            foreach (var iface in symbol.Interfaces)
+            {
+                var ifaceName = iface.ToDisplayString();
+                if (dependedOnBy.TryGetValue(ifaceName, out var ifaceDeps))
+                {
+                    if (!dependedOnBy.ContainsKey(implName))
+                        dependedOnBy[implName] = new HashSet<string>();
+                    foreach (var dep in ifaceDeps)
+                        dependedOnBy[implName].Add(dep);
+                }
             }
         }
 
