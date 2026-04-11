@@ -19,8 +19,8 @@ static async Task<int> RunAsync(string[] args)
 
     var formatOption = new Option<Reforge.OutputFormat>("--format")
     {
-        Description = "Output format (json or table)",
-        DefaultValueFactory = _ => Reforge.OutputFormat.Json,
+        Description = "Output format (compact or json)",
+        DefaultValueFactory = _ => Reforge.OutputFormat.Compact,
         Recursive = true
     };
 

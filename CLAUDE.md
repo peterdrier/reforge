@@ -53,7 +53,21 @@ The measure of success: a refactoring task that currently takes 10 rounds of gre
 
 ### Output Format
 
-**Default: JSON** — machine-parseable for AI assistant consumption.
+**Default: Compact** — grouped by file, optimized for LLM context windows.
+
+```
+4 references of MyApp.Data.HumansDbContext
+
+src/Controllers/ProfileController.cs
+  42: private readonly HumansDbContext _context;
+  15: public ProfileController(HumansDbContext context)
+
+src/Services/UserService.cs
+  23: private readonly HumansDbContext _db;
+  10: public UserService(HumansDbContext db)
+```
+
+**Optional: `--format json`** — structured output for programmatic consumption.
 
 ```json
 {
@@ -70,12 +84,6 @@ The measure of success: a refactoring task that currently takes 10 rounds of gre
   ],
   "total": 1
 }
-```
-
-**Optional: `--format table`** — human-readable for interactive use.
-
-```
-src/Controllers/ProfileController.cs:42  ProfileController  private readonly HumansDbContext _context;
 ```
 
 **Design principles for output:**

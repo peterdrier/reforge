@@ -5,12 +5,12 @@ namespace Reforge;
 
 public enum OutputFormat
 {
-    Json,
-    Table
+    Compact,
+    Json
 }
 
 /// <summary>
-/// A single result entry with location and context, suitable for both JSON and table output.
+/// A single result entry with location and context, suitable for both JSON and compact output.
 /// </summary>
 public record ResultEntry(
     string File,
@@ -31,12 +31,6 @@ public static class OutputFormatter
     /// <summary>
     /// Writes a result set to stdout in the requested format.
     /// </summary>
-    /// <typeparam name="T">The source result type.</typeparam>
-    /// <param name="command">The command name (e.g., "references").</param>
-    /// <param name="symbol">The symbol that was queried.</param>
-    /// <param name="results">The result items.</param>
-    /// <param name="format">JSON or Table output format.</param>
-    /// <param name="toEntry">Converts a source item to a ResultEntry for output.</param>
     public static void WriteResults<T>(
         string command,
         string symbol,
@@ -47,7 +41,7 @@ public static class OutputFormatter
         if (format == OutputFormat.Json)
             WriteJson(command, symbol, results, toEntry);
         else
-            WriteTable(results, toEntry);
+            WriteCompact(command, symbol, results, toEntry);
     }
 
     /// <summary>
@@ -91,15 +85,31 @@ public static class OutputFormatter
         Console.WriteLine(JsonSerializer.Serialize(output, JsonOptions));
     }
 
-    private static void WriteTable<T>(
+    private static void WriteCompact<T>(
+        string command,
+        string symbol,
         IReadOnlyList<T> results,
         Func<T, ResultEntry> toEntry)
     {
-        foreach (var item in results)
+        var entries = results.Select(toEntry).ToList();
+
+        Console.WriteLine($"{entries.Count} {command} of {symbol}");
+
+        if (entries.Count == 0)
+            return;
+
+        Console.WriteLine();
+
+        // Group by file, output grouped
+        var grouped = entries.GroupBy(e => e.File);
+        foreach (var group in grouped)
         {
-            var e = toEntry(item);
-            // Format: file:line  containingSymbol  context
-            Console.WriteLine($"{e.File}:{e.Line}  {e.ContainingSymbol}  {e.Context}");
+            Console.WriteLine(group.Key);
+            foreach (var e in group)
+            {
+                Console.WriteLine($"  {e.Line}: {e.Context}");
+            }
+            Console.WriteLine();
         }
     }
 }

@@ -63,34 +63,27 @@ public static class SkillCommand
         ## Options
 
         ```
-        --solution <path>    # Explicit solution path. If omitted, searches upward for .slnx/.sln
-        --format <Json|Table> # Output format (default: Json)
+        --solution <path>          # Explicit solution path. If omitted, searches upward for .slnx/.sln
+        --format <Compact|Json>    # Output format (default: Compact)
         ```
 
         ## Output Format
 
-        JSON output (default) is structured for programmatic consumption:
-        ```json
-        {
-          "command": "references",
-          "symbol": "MyApp.Services.UserService",
-          "results": [
-            {
-              "file": "src/Controllers/HomeController.cs",
-              "line": 15,
-              "column": 22,
-              "context": "private readonly UserService _service;",
-              "containingSymbol": "HomeController"
-            }
-          ],
-          "total": 1
-        }
+        Default output is compact, grouped by file — optimized for LLM context windows:
+        ```
+        3 injected of MyApp.Services.IUserService
+
+        MyApp.Services/CachedUserService.cs
+          19: CachedUserService(IUserService inner)
+
+        MyApp.Web/Controllers/UserController.cs
+          16: UserController(IUserService userService)
+
+        MyApp.Web/Controllers/OrderController.cs
+          14: OrderController(IUserService userService)
         ```
 
-        Table output (`--format table`) is one line per result:
-        ```
-        src/Controllers/HomeController.cs:15  HomeController  private readonly UserService _service;
-        ```
+        JSON output (`--format json`) is available for programmatic consumption.
 
         ## Workflow Tips
 
