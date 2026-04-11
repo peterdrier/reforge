@@ -106,6 +106,22 @@ public static class SkillCommand
 
         7. **To trace impact:** `call-chain <method>` shows the full transitive caller tree —
            how far up the stack a change propagates.
+
+        ## Hot Mode (Fast Repeated Queries)
+
+        First query pays a cold start tax (~3-20s depending on solution size). For repeated queries,
+        start a hot server:
+
+        ```
+        reforge serve --solution path/to/Solution.slnx
+        ```
+
+        The server loads the workspace once and stays running. All subsequent `reforge` commands
+        auto-detect the server and relay queries — dropping response time from seconds to ~200ms.
+
+        The server writes a `.reforge-port` file in the solution directory. Commands find it
+        automatically via the `--solution` path or by searching upward from the working directory.
+        Kill the server with Ctrl+C to clean up.
         """;
 
     public static Command Create()
