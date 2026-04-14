@@ -63,6 +63,8 @@ static async Task<int> RunAsync(string[] args)
 
     // Code health analysis
     rootCommand.Add(HealthCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(SnapshotCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(CyclesCommand.Create(solutionOption, formatOption, limitOption));
 
     // Audit commands
     rootCommand.Add(AuditAuthCommand.Create(solutionOption, formatOption, limitOption));
