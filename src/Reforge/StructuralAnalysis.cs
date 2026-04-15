@@ -91,15 +91,18 @@ public static class StructuralAnalysis
     }
 
     /// <summary>
-    /// Propagation cost = fraction of file pairs (A,B) where A transitively depends on B.
+    /// Per-file transitive reach: how many other files could be affected by changes
+    /// to file i. This is the raw unnormalized numerator of MacCormack's propagation
+    /// cost — we report it as a natural count (not a ratio of N²) because the ratio
+    /// has a 1/N size deflator that makes healthy growth look like improvement.
     /// Computed via SCC condensation + reverse-topo bitset union.
-    /// Also returns the reachable set per file for downstream use.
+    /// Returned counts exclude the file itself.
     /// </summary>
-    public static (double PropagationCost, BitArray[] Reachable) ComputePropagationCost(
+    public static int[] ComputeReachCounts(
         IReadOnlyList<HashSet<int>> adj, List<int[]> sccs)
     {
         int n = adj.Count;
-        if (n == 0) return (0, Array.Empty<BitArray>());
+        if (n == 0) return Array.Empty<int>();
 
         // Map each file to its SCC index.
         var fileToScc = new int[n];
@@ -138,21 +141,21 @@ public static class StructuralAnalysis
             sccReachable[s] = bits;
         }
 
-        // Per-file reachability = reachability of its SCC, minus itself.
-        var reachable = new BitArray[n];
-        long reachedPairs = 0;
-        for (int v = 0; v < n; v++)
+        // Cache popcounts per SCC — every file in the same SCC shares the same reach.
+        var sccPopcount = new int[k];
+        for (int s = 0; s < k; s++)
         {
-            var bits = sccReachable[fileToScc[v]];
-            reachable[v] = bits;
-            // Count set bits, then subtract 1 for self.
             int c = 0;
+            var bits = sccReachable[s];
             for (int i = 0; i < n; i++) if (bits.Get(i)) c++;
-            reachedPairs += (c - 1);
+            sccPopcount[s] = c;
         }
 
-        double propagationCost = n > 1 ? (double)reachedPairs / ((long)n * (n - 1)) : 0;
-        return (propagationCost, reachable);
+        var reach = new int[n];
+        for (int v = 0; v < n; v++)
+            reach[v] = sccPopcount[fileToScc[v]] - 1; // exclude self
+
+        return reach;
     }
 
     /// <summary>

@@ -14,7 +14,10 @@ public sealed record SnapshotRecord(
     int FilesTest,
     int Classes,
     int Interfaces,
-    double PropagationCost,
+    double AvgReach,
+    int P95Reach,
+    int MaxReach,
+    string MaxReachFile,
     double CoreSizePct,
     int CoreFileCount,
     int CycleCount,
@@ -38,15 +41,37 @@ public static class SnapshotAnalyzer
     {
         var graph = await FileDependencyGraph.BuildAsync(solution, ct);
 
-        // SCCs & propagation cost.
+        // SCCs & per-file reach.
         var sccs = StructuralAnalysis.FindStronglyConnectedComponents(graph.Adj);
-        var (propagationCost, _) = StructuralAnalysis.ComputePropagationCost(graph.Adj, sccs);
+        var reach = StructuralAnalysis.ComputeReachCounts(graph.Adj, sccs);
 
         // Core = largest non-trivial SCC.
         var core = StructuralAnalysis.FindCoreScc(sccs);
         int n = graph.Files.Count;
         double coreSizePct = n > 0 ? (double)core.Length / n : 0;
         int cycleCount = sccs.Count(s => s.Length >= 2);
+
+        // Reach stats — unnormalized, size-independent when avg coupling is constant.
+        double avgReach = 0;
+        int p95Reach = 0;
+        int maxReach = 0;
+        string maxReachFile = "";
+        if (n > 0)
+        {
+            long totalReach = 0;
+            for (int i = 0; i < n; i++)
+            {
+                totalReach += reach[i];
+                if (reach[i] > maxReach)
+                {
+                    maxReach = reach[i];
+                    maxReachFile = graph.Files[i];
+                }
+            }
+            avgReach = (double)totalReach / n;
+            var sortedReach = reach.OrderBy(r => r).ToList();
+            p95Reach = StructuralAnalysis.Percentile(sortedReach, 0.95);
+        }
 
         // Fan-out stats from the adjacency list.
         double avgFanOut = 0;
@@ -149,7 +174,10 @@ public static class SnapshotAnalyzer
             FilesTest: graph.TestFileCount,
             Classes: graph.ClassCount,
             Interfaces: graph.InterfaceCount,
-            PropagationCost: propagationCost,
+            AvgReach: avgReach,
+            P95Reach: p95Reach,
+            MaxReach: maxReach,
+            MaxReachFile: maxReachFile,
             CoreSizePct: coreSizePct,
             CoreFileCount: core.Length,
             CycleCount: cycleCount,

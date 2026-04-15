@@ -63,7 +63,7 @@ public static class SnapshotCommand
         Console.WriteLine($"    loc (tests)      {r.LocTest,10:N0}      files       {r.FilesTest,6:N0}");
         Console.WriteLine($"    classes          {r.Classes,10:N0}      interfaces  {r.Interfaces,6:N0}");
         Console.WriteLine("  structure");
-        Console.WriteLine($"    propagation cost {r.PropagationCost,10:P1}      (files reachable from avg file)");
+        Console.WriteLine($"    avg reach        {r.AvgReach,10:F1}      p95 {r.P95Reach}   max {r.MaxReach} ({r.MaxReachFile})");
         Console.WriteLine($"    core size        {r.CoreSizePct,10:P1}      {r.CoreFileCount} files in largest SCC");
         Console.WriteLine($"    cycle count      {r.CycleCount,10:N0}      non-trivial SCCs (size >= 2)");
         Console.WriteLine($"    avg fan-out      {r.AvgFanOut,10:F1}      max {r.MaxFanOut} ({r.MaxFanOutFile})");
@@ -87,7 +87,8 @@ public static class SnapshotCommand
         "commit_date", "commit", "solution",
         "loc_prod", "loc_test", "files_prod", "files_test",
         "classes", "interfaces",
-        "propagation_cost", "core_size_pct", "core_file_count", "cycle_count",
+        "avg_reach", "p95_reach", "max_reach", "max_reach_file",
+        "core_size_pct", "core_file_count", "cycle_count",
         "avg_fanout", "max_fanout", "max_fanout_file",
         "avg_cyclomatic", "p95_cyclomatic", "max_cyclomatic", "max_cyclomatic_method",
         "avg_class_loc", "p95_class_loc", "max_class_loc", "max_class_loc_name"
@@ -110,7 +111,10 @@ public static class SnapshotCommand
             r.FilesTest.ToString(),
             r.Classes.ToString(),
             r.Interfaces.ToString(),
-            r.PropagationCost.ToString("F6"),
+            r.AvgReach.ToString("F3"),
+            r.P95Reach.ToString(),
+            r.MaxReach.ToString(),
+            CsvEscape(r.MaxReachFile),
             r.CoreSizePct.ToString("F6"),
             r.CoreFileCount.ToString(),
             r.CycleCount.ToString(),
