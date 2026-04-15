@@ -56,7 +56,8 @@ public static class SnapshotCommand
     private static void WriteCompact(SnapshotRecord r)
     {
         var label = string.IsNullOrEmpty(r.Commit) ? r.Solution : $"{r.Solution} @ {r.Commit}";
-        Console.WriteLine($"reforge snapshot — {label} ({r.Timestamp[..10]})");
+        var dateLabel = string.IsNullOrEmpty(r.CommitDate) ? "unknown" : r.CommitDate[..10];
+        Console.WriteLine($"reforge snapshot — {label} ({dateLabel})");
         Console.WriteLine("  size");
         Console.WriteLine($"    loc (prod)       {r.LocProd,10:N0}      files       {r.FilesProd,6:N0}");
         Console.WriteLine($"    loc (tests)      {r.LocTest,10:N0}      files       {r.FilesTest,6:N0}");
@@ -83,7 +84,7 @@ public static class SnapshotCommand
 
     private static readonly string[] CsvHeader =
     [
-        "timestamp", "commit", "solution",
+        "commit_date", "commit", "solution",
         "loc_prod", "loc_test", "files_prod", "files_test",
         "classes", "interfaces",
         "propagation_cost", "core_size_pct", "core_file_count", "cycle_count",
@@ -100,7 +101,7 @@ public static class SnapshotCommand
 
         var row = new[]
         {
-            r.Timestamp,
+            r.CommitDate,
             r.Commit,
             r.Solution,
             r.LocProd.ToString(),

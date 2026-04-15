@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace Reforge;
 
 public sealed record SnapshotRecord(
-    string Timestamp,
+    string CommitDate,
     string Commit,
     string Solution,
     int LocProd,
@@ -140,7 +140,7 @@ public static class SnapshotAnalyzer
         int p95ClassLoc = StructuralAnalysis.Percentile(classLocs, 0.95);
 
         var record = new SnapshotRecord(
-            Timestamp: DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+            CommitDate: TryGetGitCommitDate(solution),
             Commit: TryGetGitCommit(solution),
             Solution: Path.GetFileName(solution.FilePath ?? ""),
             LocProd: graph.TotalProdLoc,
@@ -222,7 +222,13 @@ public static class SnapshotAnalyzer
         return false;
     }
 
-    private static string TryGetGitCommit(Solution solution)
+    private static string TryGetGitCommit(Solution solution) =>
+        RunGit(solution, "rev-parse --short HEAD");
+
+    private static string TryGetGitCommitDate(Solution solution) =>
+        RunGit(solution, "show -s --format=%cI HEAD");
+
+    private static string RunGit(Solution solution, string arguments)
     {
         try
         {
@@ -230,7 +236,7 @@ public static class SnapshotAnalyzer
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "git",
-                Arguments = "rev-parse --short HEAD",
+                Arguments = arguments,
                 WorkingDirectory = dir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
