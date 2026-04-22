@@ -65,6 +65,35 @@ public class ReferencesCommandTests
     }
 
     [Fact]
+    public async Task FindReferences_UserIsActive_IncludesLambdaParameterAccess()
+    {
+        // Regression for issue #5: property accessed through a lambda parameter
+        // (e.g. Expression<Func<User, TProp>> in EF Core .Property(u => u.IsActive),
+        // .Where(u => u.IsActive)) must show up in references.
+        var symbols = await SymbolResolver.ResolveAsync(
+            _fixture.Solution, "SampleSolution.Core.Models.User.IsActive");
+        Assert.Single(symbols);
+
+        var refs = await SymbolFinder.FindReferencesAsync(symbols[0], _fixture.Solution);
+        var sourceTexts = refs.SelectMany(r => r.Locations)
+            .Select(l =>
+            {
+                var lineSpan = l.Location.GetLineSpan();
+                var text = l.Location.SourceTree?.GetText();
+                var lineNum = lineSpan.StartLinePosition.Line;
+                return text?.Lines[lineNum].ToString().Trim() ?? "";
+            })
+            .ToList();
+
+        // Expression-tree lambda (EF Property configuration)
+        Assert.Contains(sourceTexts, t => t.Contains("Property(u => u.IsActive)"));
+        // Delegate lambda (LINQ Where)
+        Assert.Contains(sourceTexts, t => t.Contains("Where(u => u.IsActive)"));
+        // Direct member access on a variable in a different project
+        Assert.Contains(sourceTexts, t => t.Contains("user.IsActive"));
+    }
+
+    [Fact]
     public async Task FindReferences_ServiceLifetimeAttribute_IncludesAttributeUsage()
     {
         var symbols = await SymbolResolver.ResolveAsync(
