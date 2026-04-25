@@ -236,6 +236,8 @@ public static class ServeCommand
                     rootCommand.Add(AuditCacheCommand.Create(solutionOption, formatOption, limitOption));
                     rootCommand.Add(AuditImmutableCommand.Create(solutionOption, formatOption, limitOption));
                     rootCommand.Add(AuditEfCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(AuditSurfaceCommand.Create(solutionOption, formatOption, limitOption));
+                    rootCommand.Add(AuditDownstreamCommand.Create(solutionOption, formatOption, limitOption));
                     rootCommand.Add(SkillCommand.Create());
 
                     var parseResult = rootCommand.Parse(args);

@@ -65,6 +65,8 @@ public static class SkillCommand
         reforge audit-cache [--cache-method M]              # SaveChangesAsync without cache eviction
         reforge audit-immutable --types X,Y                 # Mutations on append-only entities (Remove, Update, property sets)
         reforge audit-ef                                    # EF Core pitfalls: sentinel defaults, string enums, interpolation in LINQ
+        reforge audit-surface <type>                        # Per-method caller counts (prod/test); body shape for classes
+        reforge audit-downstream <class>                    # Per-method outbound: dependency calls, DbSet read/write, external IO
         ```
 
         ## Symbol Resolution

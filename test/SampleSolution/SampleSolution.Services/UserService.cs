@@ -159,4 +159,15 @@ public class UserService : IUserService
     {
         return _dbContext.Users.Where(u => $"{u.Name}".Contains(name));
     }
+
+    /// <summary>
+    /// audit-surface passthrough-repo: single call on a repository field (issue #7).
+    /// </summary>
+    public async Task<User?> GetByRepoAsync(int id, CancellationToken cancellationToken = default) =>
+        await _userRepository.FindByIdAsync(id, cancellationToken);
+
+    /// <summary>
+    /// audit-surface passthrough-self: single call on `this` via a private helper (issue #7).
+    /// </summary>
+    public void EvictUserCacheById(int id) => EvictUserCache(id);
 }

@@ -37,10 +37,26 @@ Every reference is found via the compiler's semantic model — including referen
 | `reforge injected <type>` | Who injects this type via constructor |
 | `reforge usages <type>` | Where a type is used, categorized by kind |
 | `reforge parameters --name X --type Y` | Find parameters matching patterns |
+| `reforge audit-surface <type>` | Per-method inbound view: caller counts (prod/test) + body shape for classes (passthrough-repo/-service/-self, linq-over-repo/-service, write, composite, complex) |
+| `reforge audit-downstream <class>` | Per-method outbound view: dependency calls, DbSet reads/writes traced one hop through repository implementations with `via` attribution, untraced repo-to-repo hops, and external IO |
 
 ## Install
 
 Requires [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
+
+```bash
+dotnet tool install --global Reforge
+```
+
+To upgrade an existing install:
+
+```bash
+dotnet tool update --global Reforge
+```
+
+Works the same on Linux, macOS, and Windows (PowerShell or cmd). Make sure `~/.dotnet/tools` (Linux/macOS) or `%USERPROFILE%\.dotnet\tools` (Windows) is on your `PATH`.
+
+### Build from source
 
 ```bash
 git clone https://github.com/peterdrier/reforge.git

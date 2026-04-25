@@ -43,4 +43,10 @@ public class CachedUserService : IUserService
         _logger.LogInfo("Cache bypass: getting all users");
         return await _inner.GetAllUsersAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// audit-surface linq-over-service: LINQ chain over the result of a service call (issue #7).
+    /// </summary>
+    public async Task<int> CountActiveAsync(CancellationToken cancellationToken = default) =>
+        (await _inner.GetAllUsersAsync(cancellationToken)).Count(u => u.IsActive);
 }
