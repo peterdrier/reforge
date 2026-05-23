@@ -4,7 +4,7 @@ using Reforge.Commands;
 
 // Try relaying to a hot server FIRST — before MSBuildLocator or any Roslyn types load.
 // ServerClient is pure TCP, no Roslyn dependency. This skips the expensive startup path.
-if (args.Length > 0 && args[0] is not "serve" and not "skill" and not "install" and not "request" and not "--list" and not "--help" and not "-h")
+if (args.Length > 0 && args[0] is not "serve" and not "stop" and not "skill" and not "install" and not "request" and not "--list" and not "--help" and not "-h")
 {
     if (await ServerClient.TryRelayAsync(args))
         return 0;
@@ -81,6 +81,7 @@ static async Task<int> RunAsync(string[] args)
 
     // Server
     rootCommand.Add(ServeCommand.Create(solutionOption));
+    rootCommand.Add(StopCommand.Create(solutionOption));
 
     // Phase 2 — Mechanical Transform commands (future)
 

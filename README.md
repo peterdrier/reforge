@@ -83,6 +83,8 @@ reforge serve --solution path/to/Solution.slnx &
 
 Subsequent commands auto-detect the server and relay queries — ~200ms instead of seconds.
 
+Stop it with `reforge stop` (cleans up the `.reforge-port` file, and removes a stale one if the server was hard-killed). The server also auto-shuts-down after 5 minutes of query inactivity; tune with `--idle-timeout <minutes>` (0 disables).
+
 ## Options
 
 | Option | Description |

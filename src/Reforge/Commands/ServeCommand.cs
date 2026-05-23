@@ -16,9 +16,16 @@ public static class ServeCommand
             DefaultValueFactory = _ => 0
         };
 
+        var idleTimeoutOption = new Option<int>("--idle-timeout")
+        {
+            Description = "Minutes of inactivity before auto-shutdown (default: 5, 0 to disable)",
+            DefaultValueFactory = _ => 5
+        };
+
         var command = new Command("serve", "Start hot workspace server for fast repeated queries")
         {
-            portOption
+            portOption,
+            idleTimeoutOption
         };
 
         command.SetAction(async (parseResult, cancellationToken) =>
@@ -116,26 +123,51 @@ public static class ServeCommand
             watcher.Deleted += OnFileChanged;
             watcher.Renamed += (s, e) => OnFileChanged(s, e);
 
+            // Shutdown is triggered by Ctrl+C (framework token), the `stop` command
+            // (shutdown sentinel), or the idle timeout — all converge on this token so
+            // the finally block's cleanup runs exactly once.
+            using var shutdownCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+            var idleMinutes = parseResult.GetValue(idleTimeoutOption);
+            var idleMs = idleMinutes > 0 ? idleMinutes * 60_000 : Timeout.Infinite;
+            Timer? idleTimer = null;
+            if (idleMs != Timeout.Infinite)
+            {
+                Console.Error.WriteLine($"Idle timeout: {idleMinutes} min.");
+                idleTimer = new Timer(_ =>
+                {
+                    Console.Error.WriteLine($"Idle timeout ({idleMinutes} min) reached, shutting down.");
+                    shutdownCts.Cancel();
+                }, null, idleMs, Timeout.Infinite);
+            }
+
             try
             {
-                while (!cancellationToken.IsCancellationRequested)
+                while (!shutdownCts.IsCancellationRequested)
                 {
                     TcpClient client;
                     try
                     {
-                        client = await listener.AcceptTcpClientAsync(cancellationToken);
+                        client = await listener.AcceptTcpClientAsync(shutdownCts.Token);
                     }
                     catch (OperationCanceledException)
                     {
                         break;
                     }
 
+                    // Pause the idle timer while handling so an in-flight query is never
+                    // interrupted; restart it once the query completes.
+                    idleTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+
                     // Process clients sequentially — Roslyn isn't thread-safe for mutations
-                    await HandleClientAsync(client, cancellationToken);
+                    await HandleClientAsync(client, shutdownCts);
+
+                    idleTimer?.Change(idleMs, Timeout.Infinite);
                 }
             }
             finally
             {
+                idleTimer?.Dispose();
                 debounceTimer?.Dispose();
                 watcher.Dispose();
                 listener.Stop();
@@ -164,8 +196,9 @@ public static class ServeCommand
         return (solution, workspace);
     }
 
-    private static async Task HandleClientAsync(TcpClient client, CancellationToken ct)
+    private static async Task HandleClientAsync(TcpClient client, CancellationTokenSource shutdownCts)
     {
+        var ct = shutdownCts.Token;
         try
         {
             using (client)
@@ -179,6 +212,15 @@ public static class ServeCommand
                 if (string.IsNullOrWhiteSpace(commandLine))
                 {
                     await writer.WriteLineAsync("error: empty command");
+                    return;
+                }
+
+                // Shutdown sentinel from the `stop` command — ack, then trip the
+                // cancellation that unwinds the accept loop and runs cleanup.
+                if (commandLine.Trim() == "__shutdown__")
+                {
+                    await writer.WriteLineAsync("ok: shutting down");
+                    shutdownCts.Cancel();
                     return;
                 }
 

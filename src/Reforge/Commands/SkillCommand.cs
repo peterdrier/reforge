@@ -145,8 +145,13 @@ public static class SkillCommand
 
         The server writes a `.reforge-port` file in the solution directory. Commands find it
         automatically via the `--solution` path or by searching upward from the working directory.
-        Kill the server with Ctrl+C to clean up. The server auto-reloads when source files
-        change on disk, so you don't need to restart it after edits.
+        The server auto-reloads when source files change on disk, so you don't need to restart
+        it after edits.
+
+        Stop the server with `reforge stop` (or Ctrl+C). If the server was hard-killed and left
+        a stale `.reforge-port` file behind, `reforge stop` removes it. The server also
+        auto-shuts-down after 5 minutes of query inactivity to free memory; tune with
+        `reforge serve --idle-timeout <minutes>` (0 disables).
 
         ## Contributing Suggestions
 

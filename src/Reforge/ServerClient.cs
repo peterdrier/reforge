@@ -47,34 +47,38 @@ public static class ServerClient
     }
 
     /// <summary>
-    /// Searches upward from CWD for a .reforge-port file and reads the port number.
+    /// Resolves the port of a running server by reading the .reforge-port file.
     /// </summary>
-    private static int? FindServerPort(string[] args)
+    public static int? FindServerPort(string[] args)
     {
-        // Check the --solution directory first (most reliable)
+        var portFile = FindPortFile(args);
+        if (portFile is null)
+            return null;
+
+        var content = File.ReadAllText(portFile).Trim();
+        return int.TryParse(content, out var port) ? port : null;
+    }
+
+    /// <summary>
+    /// Locates the .reforge-port file: the --solution directory first (most reliable),
+    /// then searching upward from CWD. Returns the path if it exists, else null.
+    /// </summary>
+    public static string? FindPortFile(string[] args)
+    {
         var solutionDir = GetSolutionDirFromArgs(args);
         if (solutionDir is not null)
         {
             var portFile = Path.Combine(solutionDir, ".reforge-port");
             if (File.Exists(portFile))
-            {
-                var content = File.ReadAllText(portFile).Trim();
-                if (int.TryParse(content, out var port))
-                    return port;
-            }
+                return portFile;
         }
 
-        // Fall back to searching upward from CWD
         var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
         while (dir is not null)
         {
             var portFile = Path.Combine(dir.FullName, ".reforge-port");
             if (File.Exists(portFile))
-            {
-                var content = File.ReadAllText(portFile).Trim();
-                if (int.TryParse(content, out var port))
-                    return port;
-            }
+                return portFile;
             dir = dir.Parent;
         }
         return null;
