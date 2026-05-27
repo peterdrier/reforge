@@ -67,7 +67,9 @@ public static class SkillCommand
         reforge audit-ef                                    # EF Core pitfalls: sentinel defaults, string enums, interpolation in LINQ
         reforge audit-surface <type>                        # Per-method caller counts (prod/test); body shape for classes
         reforge audit-downstream <class>                    # Per-method outbound: dependency calls, DbSet read/write, external IO
-        reforge surface-score [--group X] [--top N]         # Solution-wide score: durable surface + dependency use + internal shape (Markdown)
+        reforge surface-score [--group X] [--top N]         # Solution-wide score: durable surface + dependency use + internal shape
+                              [--config path] [--list-groups]
+                              [--format compact|markdown|json]
         ```
 
         ### Surface score config — `reforge.surface-score.json`
@@ -81,14 +83,32 @@ public static class SkillCommand
 
         ```jsonc
         {
-          // Each type is assigned to the first matching group. If no group matches and no
-          // groups are configured at all, types fall back to grouping by top-level namespace.
+          // Sections — preferred form. Keyed by section name. A type joins the first section
+          // whose ANY criterion matches: paths, namespaces, symbols (name globs), or one of the
+          // three interface-name lists (which also auto-classify the named types so you don't
+          // have to write a separate classification entry).
+          //
+          // If no section matches and no sections are configured at all, types fall back to
+          // grouping by top-level namespace segment.
+          "sections": {
+            "Tickets": {
+              "paths":      ["src/App.Application/Services/Tickets/**", "src/App.Web/Controllers/Tickets/**"],
+              "namespaces": ["App.Application.Tickets"],
+              "symbols":    ["Ticket*", "ITicket*"],
+              "repositoryInterfaces": ["ITicketRepository", "ITicketTransferRepository"],
+              "serviceInterfaces":    ["ITicketService", "ITicketingBudgetService"],
+              "readServiceInterfaces": ["ITicketServiceRead"]
+            }
+          },
+
+          // Legacy ordered form (0.10–0.11 compatibility). Merged into `sections` at load time.
+          // Prefer `sections` for new configs.
           "groups": [
             {
               "name": "Tickets",
               "match": {
-                "paths":      ["src/App.Application/**/Tickets/**", "src/App.Infrastructure/**/Tickets/**"],
-                "namespaces": ["App.Application.Tickets", "App.Infrastructure.Tickets"]
+                "paths":      ["src/App.Application/**/Tickets/**"],
+                "namespaces": ["App.Application.Tickets"]
               }
             }
           ],

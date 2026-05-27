@@ -6,7 +6,12 @@ namespace Reforge;
 public enum OutputFormat
 {
     Compact,
-    Json
+    Json,
+    /// <summary>
+    /// Markdown — currently only honored by <c>surface-score</c>. Other commands fall back
+    /// to <see cref="Compact"/>.
+    /// </summary>
+    Markdown
 }
 
 /// <summary>

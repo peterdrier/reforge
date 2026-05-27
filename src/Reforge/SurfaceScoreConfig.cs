@@ -13,12 +13,30 @@ namespace Reforge;
 /// </summary>
 public sealed class SurfaceScoreConfig
 {
+    /// <summary>
+    /// Primary form. Keyed by section name. Each section can match by paths, namespaces,
+    /// symbol-name globs, or explicit interface lists; the interface lists also auto-classify
+    /// the named types (sugar — saves writing a separate classification entry).
+    /// </summary>
+    public Dictionary<string, SectionRule> Sections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Legacy ordered form, kept for backward compatibility with 0.10/0.11 configs.
+    /// Merged into <see cref="Sections"/> at load time.
+    /// </summary>
     public List<GroupRule> Groups { get; set; } = new();
     public Dictionary<string, ClassificationRule> Classifications { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public ResourceConfig Resources { get; set; } = new();
     public Dictionary<string, int> Weights { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     [JsonIgnore] public bool GroupByNamespaceFallback { get; set; } = true;
+
+    /// <summary>
+    /// Internal section list in declaration order. First match wins. Built once from
+    /// <see cref="Sections"/> + <see cref="Groups"/> at load time so the engine has a
+    /// single canonical view regardless of which form the user wrote.
+    /// </summary>
+    [JsonIgnore] public List<SectionRule> EffectiveSections { get; private set; } = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -54,9 +72,34 @@ public sealed class SurfaceScoreConfig
         foreach (var (k, v) in defaults.Weights)
             loaded.Weights.TryAdd(k, v);
 
-        loaded.GroupByNamespaceFallback = loaded.Groups.Count == 0;
+        loaded.BuildEffectiveSections();
+        loaded.GroupByNamespaceFallback = loaded.EffectiveSections.Count == 0;
         loadedFrom = path;
         return loaded;
+    }
+
+    /// <summary>
+    /// Merges <see cref="Sections"/> + legacy <see cref="Groups"/> into the canonical
+    /// <see cref="EffectiveSections"/> list. Dict ordering follows JSON insertion order
+    /// (System.Text.Json preserves it for objects); legacy groups are appended after.
+    /// </summary>
+    public void BuildEffectiveSections()
+    {
+        EffectiveSections = new List<SectionRule>();
+        foreach (var (name, rule) in Sections)
+        {
+            rule.Name = name;
+            EffectiveSections.Add(rule);
+        }
+        foreach (var g in Groups)
+        {
+            EffectiveSections.Add(new SectionRule
+            {
+                Name = g.Name,
+                Paths = g.Match.Paths,
+                Namespaces = g.Match.Namespaces
+            });
+        }
     }
 
     private static string? DiscoverConfigFile(string solutionDirectory)
@@ -78,7 +121,7 @@ public sealed class SurfaceScoreConfig
     /// </summary>
     public static SurfaceScoreConfig Default()
     {
-        return new SurfaceScoreConfig
+        var config = new SurfaceScoreConfig
         {
             Groups = new List<GroupRule>(),
             GroupByNamespaceFallback = true,
@@ -154,9 +197,38 @@ public sealed class SurfaceScoreConfig
                 ["oneImplementationInterface"] = 8
             }
         };
+        config.BuildEffectiveSections();
+        return config;
     }
 
     public int Weight(string key) => Weights.TryGetValue(key, out var v) ? v : 0;
+
+    /// <summary>
+    /// Returns true if the named section is configured (in either <see cref="Sections"/>
+    /// or legacy <see cref="Groups"/>). Useful for distinguishing "the user asked for a
+    /// section that doesn't exist" from "the section exists but matched no types".
+    /// </summary>
+    public bool HasConfiguredSection(string name) =>
+        EffectiveSections.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>
+/// Canonical section rule used by the engine. <see cref="SurfaceScoreConfig.Sections"/>
+/// and legacy <see cref="SurfaceScoreConfig.Groups"/> are both merged into a list of
+/// these at load time. A type joins a section if any one of its matchers fires.
+/// </summary>
+public sealed class SectionRule
+{
+    public string Name { get; set; } = "";
+    public List<string> Paths { get; set; } = new();
+    public List<string> Namespaces { get; set; } = new();
+    public List<string> Symbols { get; set; } = new();
+    /// <summary>Names that should be treated as repository interfaces (auto-classified and section-owned).</summary>
+    public List<string> RepositoryInterfaces { get; set; } = new();
+    /// <summary>Names that should be treated as full-service interfaces (auto-classified and section-owned).</summary>
+    public List<string> ServiceInterfaces { get; set; } = new();
+    /// <summary>Names that should be treated as read-only service interfaces (auto-classified and section-owned).</summary>
+    public List<string> ReadServiceInterfaces { get; set; } = new();
 }
 
 public sealed class GroupRule
@@ -215,13 +287,46 @@ public static class GlobMatcher
         if (string.IsNullOrEmpty(path)) return false;
         if (!PathCache.TryGetValue(pattern, out var rx))
         {
-            // Translate glob: ** -> .*, * -> [^/]*, escape the rest.
-            var escaped = Regex.Escape(pattern)
-                .Replace("/", "/")
-                .Replace("\\*\\*", ".*")
-                .Replace("\\*", "[^/]*");
-            var rxStr = "^" + escaped + "$";
-            rx = new Regex(rxStr, RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            // Hand-rolled glob-to-regex so we can give `**/` the standard meaning
+            // "zero or more path segments". A naive escape-then-replace forces at least
+            // one segment before `**/foo`, which is the opposite of what users expect.
+            var sb = new System.Text.StringBuilder();
+            sb.Append('^');
+            int i = 0;
+            while (i < pattern.Length)
+            {
+                char c = pattern[i];
+                if (c == '*' && i + 1 < pattern.Length && pattern[i + 1] == '*')
+                {
+                    if (i + 2 < pattern.Length && pattern[i + 2] == '/')
+                    {
+                        sb.Append("(?:.*/)?"); // **/ -> zero or more path segments (each ending with /)
+                        i += 3;
+                    }
+                    else
+                    {
+                        sb.Append(".*"); // bare ** -> any characters including /
+                        i += 2;
+                    }
+                }
+                else if (c == '*')
+                {
+                    sb.Append("[^/]*");
+                    i++;
+                }
+                else if (c == '?')
+                {
+                    sb.Append("[^/]");
+                    i++;
+                }
+                else
+                {
+                    sb.Append(Regex.Escape(c.ToString()));
+                    i++;
+                }
+            }
+            sb.Append('$');
+            rx = new Regex(sb.ToString(), RegexOptions.Compiled | RegexOptions.IgnoreCase);
             PathCache[pattern] = rx;
         }
         return rx.IsMatch(path.Replace('\\', '/'));

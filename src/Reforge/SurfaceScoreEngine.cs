@@ -32,9 +32,14 @@ public sealed class ScoreReport
     public Dictionary<string, GroupScore> Groups { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, int> ByRule { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> DuplicateOwners { get; } = new();
+    public List<ScoreDiagnostic> Diagnostics { get; } = new();
     public string? ConfigPath { get; set; }
     public int TypesAnalyzed { get; set; }
+    /// <summary>Configured section names — used by --list-groups and the missing-section diagnostic.</summary>
+    public List<string> ConfiguredSections { get; } = new();
 }
+
+public sealed record ScoreDiagnostic(string Level, string Code, string Message);
 
 /// <summary>
 /// Computes a Surface Score for a Roslyn <see cref="Solution"/> using the supplied
@@ -57,6 +62,7 @@ public sealed class SurfaceScoreEngine
     public async Task<ScoreReport> ScoreAsync(Solution solution, CancellationToken ct)
     {
         var report = new ScoreReport();
+        report.ConfiguredSections.AddRange(_config.EffectiveSections.Select(s => s.Name));
         var classified = new List<ClassifiedType>();
         // ToDisplayString is the practical cross-compilation identity (SymbolEqualityComparer
         // doesn't match symbols from different project compilations). A type that lives in a
@@ -85,8 +91,31 @@ public sealed class SurfaceScoreEngine
                 var relPath = LocationHelper.NormalizePath(filePath, _solutionDirectory);
                 var nsName = type.ContainingNamespace?.ToDisplayString() ?? "";
 
-                var group = ResolveGroup(relPath, nsName);
+                var (group, sectionMatch) = ResolveSection(type, relPath, nsName);
                 var tags = Classify(type, relPath, nsName);
+
+                // Auto-classify types named in a section's RepositoryInterfaces / ServiceInterfaces /
+                // ReadServiceInterfaces lists. This is sugar: the user doesn't have to write a
+                // matching classification entry — and these lists are usually the most accurate
+                // (hand-curated) signal we have about what role each interface plays.
+                if (sectionMatch?.MatchKind == SectionMatchKind.RepositoryInterface)
+                {
+                    tags.Add("repositoryInterface");
+                    tags.Remove("fullServiceInterface");
+                    tags.Remove("readServiceInterface");
+                }
+                else if (sectionMatch?.MatchKind == SectionMatchKind.ReadServiceInterface)
+                {
+                    tags.Add("readServiceInterface");
+                    tags.Remove("fullServiceInterface");
+                    tags.Remove("repositoryInterface");
+                }
+                else if (sectionMatch?.MatchKind == SectionMatchKind.ServiceInterface)
+                {
+                    tags.Add("fullServiceInterface");
+                    tags.Remove("readServiceInterface");
+                    tags.Remove("repositoryInterface");
+                }
 
                 classified.Add(new ClassifiedType(type, group, tags, relPath, primaryLocation));
             }
@@ -134,16 +163,29 @@ public sealed class SurfaceScoreEngine
         }
     }
 
-    private string ResolveGroup(string filePath, string namespaceName)
+    private (string Group, SectionMatchResult? MatchResult) ResolveSection(
+        INamedTypeSymbol type, string filePath, string namespaceName)
     {
-        foreach (var rule in _config.Groups)
+        foreach (var rule in _config.EffectiveSections)
         {
-            foreach (var p in rule.Match.Paths)
+            // Exact-name lists first — they're the most precise signal and need to win even
+            // when a less-specific Symbols pattern from another section would match.
+            if (rule.RepositoryInterfaces.Contains(type.Name, StringComparer.Ordinal))
+                return (rule.Name, new SectionMatchResult(SectionMatchKind.RepositoryInterface));
+            if (rule.ReadServiceInterfaces.Contains(type.Name, StringComparer.Ordinal))
+                return (rule.Name, new SectionMatchResult(SectionMatchKind.ReadServiceInterface));
+            if (rule.ServiceInterfaces.Contains(type.Name, StringComparer.Ordinal))
+                return (rule.Name, new SectionMatchResult(SectionMatchKind.ServiceInterface));
+
+            foreach (var p in rule.Paths)
                 if (GlobMatcher.MatchesPath(filePath, p))
-                    return rule.Name;
-            foreach (var n in rule.Match.Namespaces)
+                    return (rule.Name, new SectionMatchResult(SectionMatchKind.Path));
+            foreach (var n in rule.Namespaces)
                 if (namespaceName.StartsWith(n, StringComparison.Ordinal))
-                    return rule.Name;
+                    return (rule.Name, new SectionMatchResult(SectionMatchKind.Namespace));
+            foreach (var s in rule.Symbols)
+                if (GlobMatcher.MatchesName(type.Name, s))
+                    return (rule.Name, new SectionMatchResult(SectionMatchKind.Symbol));
         }
 
         if (_config.GroupByNamespaceFallback && !string.IsNullOrEmpty(namespaceName))
@@ -152,13 +194,16 @@ public sealed class SurfaceScoreEngine
             // e.g. "MyApp.Application.Tickets.Services" -> "Tickets" when there are 3+ parts;
             // shorter namespaces fall back to the deepest segment.
             var parts = namespaceName.Split('.');
-            if (parts.Length >= 3) return parts[2];
-            if (parts.Length >= 2) return parts[1];
-            return parts[0];
+            if (parts.Length >= 3) return (parts[2], null);
+            if (parts.Length >= 2) return (parts[1], null);
+            return (parts[0], null);
         }
 
-        return "(ungrouped)";
+        return ("(ungrouped)", null);
     }
+
+    private enum SectionMatchKind { Path, Namespace, Symbol, RepositoryInterface, ServiceInterface, ReadServiceInterface }
+    private sealed record SectionMatchResult(SectionMatchKind MatchKind);
 
     private HashSet<string> Classify(INamedTypeSymbol type, string filePath, string namespaceName)
     {
