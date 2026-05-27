@@ -67,7 +67,109 @@ public static class SkillCommand
         reforge audit-ef                                    # EF Core pitfalls: sentinel defaults, string enums, interpolation in LINQ
         reforge audit-surface <type>                        # Per-method caller counts (prod/test); body shape for classes
         reforge audit-downstream <class>                    # Per-method outbound: dependency calls, DbSet read/write, external IO
+        reforge surface-score [--group X] [--top N]         # Solution-wide score: durable surface + dependency use + internal shape (Markdown)
         ```
+
+        ### Surface score config — `reforge.surface-score.json`
+
+        `surface-score` is fully config-driven. The file is searched for upward from the
+        solution directory; with no file present the command falls back to namespace-based
+        grouping and conventional name-pattern classifications, which is enough to score
+        any solution but won't reflect project-specific section boundaries or DbSet ownership.
+
+        **Schema** (all sections are optional — unspecified keys inherit the built-in defaults):
+
+        ```jsonc
+        {
+          // Each type is assigned to the first matching group. If no group matches and no
+          // groups are configured at all, types fall back to grouping by top-level namespace.
+          "groups": [
+            {
+              "name": "Tickets",
+              "match": {
+                "paths":      ["src/App.Application/**/Tickets/**", "src/App.Infrastructure/**/Tickets/**"],
+                "namespaces": ["App.Application.Tickets", "App.Infrastructure.Tickets"]
+              }
+            }
+          ],
+
+          // Classifications tag types. A type may receive multiple tags; precedence handled by
+          // the engine (e.g. on interfaces, repository/read-service tags override fullService).
+          // Built-in classification names (override or extend, do not invent new ones unless
+          // you also add a matching weight key — unknown classification names are ignored):
+          //   dto, readServiceInterface, fullServiceInterface, repositoryInterface,
+          //   repositoryImplementation, applicationService, controller, backgroundJob
+          //
+          // Each classification matches if ANY of its sub-criteria matches:
+          //   namePatterns:   glob on the type's short name      (e.g. "I*ServiceRead", "*Dto")
+          //   paths:          glob on the source file path       (** = any segments, * = one segment)
+          //   namespaces:     prefix match on the namespace name
+          //   inherits:       short-name match against any base class or implemented interface
+          //   attributeNames: short-name match on attributes applied to the type (with or without "Attribute" suffix)
+          "classifications": {
+            "readServiceInterface": {
+              "namePatterns": ["I*ServiceRead", "I*ReadService"],
+              "attributeNames": ["ReadOnlyService"]
+            },
+            "fullServiceInterface": { "namePatterns": ["I*Service"] },
+            "repositoryInterface":  { "namePatterns": ["I*Repository"], "inherits": ["IRepository"] }
+          },
+
+          // Resource ownership — currently DbSets. Each DbSet property name maps to the group
+          // that owns it. Any read OR write of that DbSet from a class outside the owning group
+          // contributes `duplicateDbSetOwner` points to the offending class's group.
+          "resources": {
+            "dbSets": {
+              "ownerByName": {
+                "TicketOrders": "Tickets",
+                "ShiftSignups": "Shifts"
+              }
+            }
+          },
+
+          // Weights — every value here overrides the built-in default. Setting a weight to 0
+          // disables that rule. Full list of rule keys (group: durable / dependency / shape):
+          //
+          // Durable surface:
+          //   dtoScalarProperty (1), dtoCollectionProperty (2), dtoNestedProperty (3),
+          //   publicDtoType (5), applicationServiceMethod (5), readServiceInterfaceMethod (6),
+          //   fullServiceInterfaceMethod (8), repositoryInterfaceMethod (10),
+          //   repositoryImplementationMethod (10), newRepositoryInterface (15),
+          //   newRepositoryImplementation (15), diRegistration (3), controllerAction (8),
+          //   backgroundJob (12), duplicateDbSetOwner (20)
+          //
+          // Dependency use (constructor injection across configured groups):
+          //   sameSectionReadService (0), crossSectionReadInterface (2),
+          //   crossSectionFullService (8), crossSectionRepository (25)
+          //
+          // Internal shape (per method):
+          //   methodParameterOverflow (1, per param beyond 2), booleanParameter (3),
+          //   tupleReturn (4), optionsBag (8), dashboardAdminPageName (6),
+          //   oneImplementationInterface (8)
+          "weights": {
+            "crossSectionRepository": 25,
+            "duplicateDbSetOwner": 20,
+            "booleanParameter": 3
+          }
+        }
+        ```
+
+        **Authoring guidance for agents:**
+
+        1. **Start with `groups`.** Identify the project's section boundaries (usually by folder
+           or namespace). If you can't tell, omit `groups` entirely — the namespace fallback is
+           often good enough for an initial pass.
+        2. **Only override `classifications` if the project uses non-default name patterns.** The
+           built-in defaults already match `I*Repository`, `I*Service`, `*Dto`, `*Controller`, etc.
+        3. **Populate `resources.dbSets.ownerByName` from the DbContext.** Every `DbSet<T>` property
+           on the project's `DbContext` is a candidate key; map each to its owning group. Without
+           this map, the `duplicateDbSetOwner` rule produces no findings.
+        4. **Weights are project-policy.** Defaults reflect a "repositories are expensive,
+           cross-section calls are costly" architecture. Adjust to match how heavily the project
+           penalises each pattern.
+        5. **Verify by running `reforge surface-score` and inspecting the top offenders.** If the
+           score is dominated by a rule that doesn't match the project's actual concerns, raise
+           or lower its weight (or set it to 0) rather than redesigning the engine.
 
         ## Symbol Resolution
 

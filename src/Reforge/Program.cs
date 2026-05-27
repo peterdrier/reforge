@@ -73,6 +73,7 @@ static async Task<int> RunAsync(string[] args)
     rootCommand.Add(AuditEfCommand.Create(solutionOption, formatOption, limitOption));
     rootCommand.Add(AuditSurfaceCommand.Create(solutionOption, formatOption, limitOption));
     rootCommand.Add(AuditDownstreamCommand.Create(solutionOption, formatOption, limitOption));
+    rootCommand.Add(SurfaceScoreCommand.Create(solutionOption, formatOption, limitOption));
 
     // Help & setup
     rootCommand.Add(SkillCommand.Create());
