@@ -34,8 +34,17 @@ public static class SurfaceScoreCommand
         };
         var topOption = new Option<int>("--top")
         {
-            Description = "Number of top offenders to show per group (default 10)",
+            Description = "Number of top offenders to show per group (default 10). Pass 0 for no cap.",
             DefaultValueFactory = _ => 10
+        };
+        var allOption = new Option<bool>("--all")
+        {
+            Description = "Show every scored entry — alias for --top 0. Useful when an agent wants the full picture for combinatorial refactoring."
+        };
+        var topSymbolsOption = new Option<int>("--top-symbols")
+        {
+            Description = "Number of symbols to include in the cross-rule symbol aggregation (default 25). The view sums each symbol's points across every rule so combinations are visible.",
+            DefaultValueFactory = _ => 25
         };
         var listGroupsOption = new Option<bool>("--list-groups")
         {
@@ -48,6 +57,8 @@ public static class SurfaceScoreCommand
             configOption,
             groupOption,
             topOption,
+            allOption,
+            topSymbolsOption,
             listGroupsOption
         };
 
@@ -58,8 +69,14 @@ public static class SurfaceScoreCommand
             var configPath = parseResult.GetValue(configOption);
             var groupFilter = parseResult.GetValue(groupOption);
             var top = parseResult.GetValue(topOption);
+            var all = parseResult.GetValue(allOption);
+            var topSymbols = parseResult.GetValue(topSymbolsOption);
             var listGroups = parseResult.GetValue(listGroupsOption);
             var format = parseResult.GetValue(formatOption);
+
+            // --all is an alias for --top 0 (no cap). int.MaxValue is the sentinel for "show
+            // everything" through the Take(top) calls downstream.
+            if (all || top == 0) top = int.MaxValue;
 
             var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
             using (handle)
@@ -103,15 +120,15 @@ public static class SurfaceScoreCommand
                 }
                 else if (format == OutputFormat.Json)
                 {
-                    WriteJson(report, groupFilter, top);
+                    WriteJson(report, groupFilter, top, topSymbols);
                 }
                 else if (format == OutputFormat.Markdown)
                 {
-                    WriteMarkdown(report, groupFilter, top);
+                    WriteMarkdown(report, groupFilter, top, topSymbols);
                 }
                 else
                 {
-                    WriteCompact(report, groupFilter, top);
+                    WriteCompact(report, groupFilter, top, topSymbols);
                 }
 
                 sw.Stop();
@@ -124,9 +141,55 @@ public static class SurfaceScoreCommand
         return command;
     }
 
+    // ----------------------- Symbol aggregation -----------------------
+
+    private sealed record SymbolAggregate(string Symbol, string File, int Line, int Total, Dictionary<string, int> ByRule);
+
+    /// <summary>
+    /// Aggregates every score entry by symbol so an agent can see which refactoring targets
+    /// carry combined value across multiple rules. A class hit by `writeCapableInterfaceUsedReadOnly`,
+    /// `methodReturnsEntityAcrossSection`, and `dashboardAdminPageName` is one fix worth ~33 points,
+    /// but those entries sit in three different per-rule buckets in the grouped view. This sums them.
+    /// File/line snap to the first entry's location for the symbol (close enough to navigate;
+    /// individual rule entries still carry their own precise locations).
+    /// </summary>
+    private static List<SymbolAggregate> BuildSymbolAggregates(ScoreReport report, string? groupFilter, int max)
+    {
+        var byKey = new Dictionary<string, (string Symbol, string File, int Line, int Total, Dictionary<string, int> ByRule)>(StringComparer.Ordinal);
+
+        foreach (var g in report.Groups.Values)
+        {
+            if (groupFilter is not null && !g.Name.Equals(groupFilter, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            foreach (var e in g.Entries)
+            {
+                // Key on symbol + file so two distinct classes with the same simple name don't merge.
+                var key = $"{e.Symbol}|{e.File}";
+                if (!byKey.TryGetValue(key, out var existing))
+                {
+                    existing = (e.Symbol, e.File, e.Line, 0, new Dictionary<string, int>(StringComparer.Ordinal));
+                    byKey[key] = existing;
+                }
+                existing.Total += e.Points;
+                existing.ByRule[e.Rule] = existing.ByRule.GetValueOrDefault(e.Rule) + e.Points;
+                byKey[key] = existing;
+            }
+        }
+
+        return byKey.Values
+            // Sort by absolute total descending so positives and credits both surface. A symbol
+            // sitting at -15 (heavy canonical-DTO adoption) is just as informative as +33.
+            .OrderByDescending(v => Math.Abs(v.Total))
+            .ThenBy(v => v.Symbol, StringComparer.Ordinal)
+            .Take(max <= 0 ? int.MaxValue : max)
+            .Select(v => new SymbolAggregate(v.Symbol, v.File, v.Line, v.Total, v.ByRule))
+            .ToList();
+    }
+
     // ----------------------- Compact (plain terse) -----------------------
 
-    private static void WriteCompact(ScoreReport report, string? groupFilter, int top)
+    private static void WriteCompact(ScoreReport report, string? groupFilter, int top, int topSymbols)
     {
         Console.WriteLine($"surface-score: total={report.Total} types={report.TypesAnalyzed} groups={report.Groups.Count} config={(report.ConfigPath ?? "(defaults)")}");
 
@@ -139,6 +202,22 @@ public static class SurfaceScoreCommand
             if (report.Diagnostics.Count == 0)
                 Console.WriteLine(groupFilter is null ? "(no scored items)" : $"(no items in group '{groupFilter}')");
             return;
+        }
+
+        // Rule glossary scoped to whatever the agent is looking at. With --group set, only
+        // explain rules that fired in that section — otherwise the glossary lists rules the
+        // agent's report doesn't actually contain.
+        IReadOnlyDictionary<string, int> effectiveByRule = groupFilter is null
+            ? (IReadOnlyDictionary<string, int>)report.ByRule
+            : orderedGroups[0].ByRule;
+        var firedRulesByScore = effectiveByRule.OrderByDescending(kv => kv.Value).Select(kv => kv.Key).ToList();
+        var glossary = SurfaceScoreRuleGlossary.ForFiredRules(firedRulesByScore);
+        if (glossary.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine(groupFilter is null ? "Rules:" : $"Rules (scoped to '{groupFilter}'):");
+            foreach (var kv in glossary)
+                Console.WriteLine($"  {kv.Key,-40} {kv.Value}");
         }
 
         // Section totals first as a one-liner per group, then per-group detail blocks.
@@ -157,7 +236,7 @@ public static class SurfaceScoreCommand
             var topEntries = g.Entries
                 .OrderByDescending(e => e.Points)
                 .ThenBy(e => e.Rule, StringComparer.Ordinal)
-                .Take(top)
+                .Take(top <= 0 ? int.MaxValue : top)
                 .ToList();
             if (topEntries.Count == 0) continue;
 
@@ -168,11 +247,29 @@ public static class SurfaceScoreCommand
                 Console.WriteLine($"  {e.Points,3} {e.Rule,-35} {detail}  ({e.File}:{e.Line})");
             }
         }
+
+        // Top-symbol combination view — surfaces refactoring targets that span multiple rules.
+        var symbolAggs = BuildSymbolAggregates(report, groupFilter, topSymbols);
+        if (symbolAggs.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"Top {symbolAggs.Count} symbols by total score (across rules):");
+            Console.WriteLine();
+            foreach (var s in symbolAggs)
+            {
+                var rules = string.Join(", ", s.ByRule
+                    .OrderByDescending(kv => kv.Value)
+                    .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+                    .Select(kv => $"{kv.Key}={kv.Value}"));
+                Console.WriteLine($"  {s.Total,4} {s.Symbol,-40} {s.File}:{s.Line}");
+                Console.WriteLine($"        {rules}");
+            }
+        }
     }
 
     // ----------------------- Markdown -----------------------
 
-    private static void WriteMarkdown(ScoreReport report, string? groupFilter, int top)
+    private static void WriteMarkdown(ScoreReport report, string? groupFilter, int top, int topSymbols)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# Surface Score");
@@ -211,14 +308,24 @@ public static class SurfaceScoreCommand
             sb.AppendLine($"| {g.Name} | {g.Total} |");
         sb.AppendLine();
 
-        if (groupFilter is null && report.ByRule.Count > 0)
+        // When the agent has filtered to one section, the solution-wide rule totals are
+        // misleading (they include rules that fired outside the section). Scope the totals
+        // table to the selected group; if no filter, keep the solution-wide view.
+        var effectiveByRule = groupFilter is null
+            ? (IReadOnlyDictionary<string, int>)report.ByRule
+            : (orderedGroups.Count > 0 ? orderedGroups[0].ByRule : new Dictionary<string, int>());
+
+        if (effectiveByRule.Count > 0)
         {
-            sb.AppendLine("## Totals by rule");
+            sb.AppendLine(groupFilter is null ? "## Totals by rule" : $"## Totals by rule (scoped to `{groupFilter}`)");
             sb.AppendLine();
-            sb.AppendLine("| Rule | Score |");
-            sb.AppendLine("|---|---:|");
-            foreach (var kv in report.ByRule.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
-                sb.AppendLine($"| `{kv.Key}` | {kv.Value} |");
+            sb.AppendLine("| Rule | Score | What it checks |");
+            sb.AppendLine("|---|---:|---|");
+            foreach (var kv in effectiveByRule.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
+            {
+                var desc = SurfaceScoreRuleGlossary.Descriptions.TryGetValue(kv.Key, out var d) ? d : "";
+                sb.AppendLine($"| `{kv.Key}` | {kv.Value} | {desc} |");
+            }
             sb.AppendLine();
         }
 
@@ -239,7 +346,7 @@ public static class SurfaceScoreCommand
             var topEntries = g.Entries
                 .OrderByDescending(e => e.Points)
                 .ThenBy(e => e.Rule, StringComparer.Ordinal)
-                .Take(top)
+                .Take(top <= 0 ? int.MaxValue : top)
                 .ToList();
             if (topEntries.Count > 0)
             {
@@ -256,6 +363,25 @@ public static class SurfaceScoreCommand
             }
         }
 
+        // Cross-rule symbol aggregation — surfaces refactoring targets that span multiple rules.
+        var symbolAggs = BuildSymbolAggregates(report, groupFilter, topSymbols);
+        if (symbolAggs.Count > 0)
+        {
+            sb.AppendLine($"## Top {symbolAggs.Count} symbols by combined score");
+            sb.AppendLine();
+            sb.AppendLine("| Total | Symbol | Rules | Location |");
+            sb.AppendLine("|---:|---|---|---|");
+            foreach (var s in symbolAggs)
+            {
+                var rules = string.Join(", ", s.ByRule
+                    .OrderByDescending(kv => kv.Value)
+                    .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+                    .Select(kv => $"`{kv.Key}`={kv.Value}"));
+                sb.AppendLine($"| {s.Total} | `{s.Symbol}` | {rules} | `{s.File}:{s.Line}` |");
+            }
+            sb.AppendLine();
+        }
+
         if (groupFilter is null && report.DuplicateOwners.Count > 0)
         {
             sb.AppendLine("## Duplicate DbSet ownership");
@@ -270,9 +396,12 @@ public static class SurfaceScoreCommand
 
     // ----------------------- JSON -----------------------
 
-    private static void WriteJson(ScoreReport report, string? groupFilter, int top)
+    private static void WriteJson(ScoreReport report, string? groupFilter, int top, int topSymbols)
     {
-        var groups = FilterAndOrderGroups(report, groupFilter)
+        var filteredGroups = FilterAndOrderGroups(report, groupFilter);
+        var effectiveTop = top <= 0 ? int.MaxValue : top;
+
+        var groups = filteredGroups
             .Select(g => new
             {
                 name = g.Name,
@@ -284,7 +413,7 @@ public static class SurfaceScoreCommand
                 topEntries = g.Entries
                     .OrderByDescending(e => e.Points)
                     .ThenBy(e => e.Rule, StringComparer.Ordinal)
-                    .Take(top)
+                    .Take(effectiveTop)
                     .Select(e => new
                     {
                         rule = e.Rule,
@@ -298,6 +427,35 @@ public static class SurfaceScoreCommand
             })
             .ToArray();
 
+        // When --group is set, byRule and the rule glossary scope to that group so the
+        // agent's view is self-contained. Solution-wide rule totals would otherwise mix in
+        // counts from rules that fired outside the section.
+        IReadOnlyDictionary<string, int> effectiveByRule = groupFilter is null
+            ? report.ByRule
+            : (filteredGroups.Count > 0 ? filteredGroups[0].ByRule : new Dictionary<string, int>());
+
+        var firedRules = effectiveByRule
+            .OrderByDescending(kv => kv.Value)
+            .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv => kv.Key)
+            .ToList();
+        var ruleGlossary = SurfaceScoreRuleGlossary.ForFiredRules(firedRules)
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        var symbolAggs = BuildSymbolAggregates(report, groupFilter, topSymbols)
+            .Select(s => new
+            {
+                symbol = s.Symbol,
+                file = s.File,
+                line = s.Line,
+                total = s.Total,
+                byRule = s.ByRule
+                    .OrderByDescending(kv => kv.Value)
+                    .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+                    .ToDictionary(kv => kv.Key, kv => kv.Value)
+            })
+            .ToArray();
+
         var payload = new
         {
             command = "surface-score",
@@ -305,11 +463,14 @@ public static class SurfaceScoreCommand
             typesAnalyzed = report.TypesAnalyzed,
             configPath = report.ConfigPath,
             configuredSections = report.ConfiguredSections,
-            byRule = report.ByRule
+            scope = groupFilter is null ? "solution" : $"group:{groupFilter}",
+            byRule = effectiveByRule
                 .OrderByDescending(kv => kv.Value)
                 .ThenBy(kv => kv.Key, StringComparer.Ordinal)
                 .ToDictionary(kv => kv.Key, kv => kv.Value),
+            ruleGlossary,
             groups,
+            topSymbols = symbolAggs,
             duplicateOwners = report.DuplicateOwners,
             diagnostics = report.Diagnostics.Select(d => new { level = d.Level, code = d.Code, message = d.Message }).ToArray()
         };

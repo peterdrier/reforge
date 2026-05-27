@@ -233,6 +233,79 @@ public class SurfaceScoreTests
         // We verify the contract is reachable here; the WriteCompact tests would cover formatting.
     }
 
+    // ---------------- Rule glossary ----------------
+
+    [Fact]
+    public async Task RuleGlossary_HasEntryForEveryFiredRule()
+    {
+        var cfg = SurfaceScoreConfig.Default();
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        Assert.NotEmpty(report.ByRule);
+        // Every rule that contributed to the score must have a factual description so an agent
+        // reading the JSON output knows what each key means without external lookup.
+        foreach (var rule in report.ByRule.Keys)
+        {
+            Assert.True(SurfaceScoreRuleGlossary.Descriptions.ContainsKey(rule),
+                $"Rule '{rule}' fired but has no glossary entry. Add one to SurfaceScoreRuleGlossary.");
+        }
+    }
+
+    [Fact]
+    public void RuleGlossary_DescriptionsAreFactualNotAdvisory()
+    {
+        // Descriptions state WHAT triggers the rule (factual), never WHAT TO DO. Catch
+        // accidental advice in glossary contributions by scanning for imperative-mood
+        // prefixes that would indicate a recommendation slipped in.
+        string[] adviceMarkers =
+        {
+            "consider ", "you should", "should be ", "instead of",
+            "switch to ", "use ", "prefer ", "refactor", "extract ", "split ",
+            "rename ", "move ", "replace "
+        };
+
+        foreach (var (rule, desc) in SurfaceScoreRuleGlossary.Descriptions)
+        {
+            var lower = desc.ToLowerInvariant();
+            foreach (var marker in adviceMarkers)
+            {
+                Assert.False(lower.Contains(marker, StringComparison.Ordinal),
+                    $"Glossary entry for '{rule}' looks advisory ('{marker}'): {desc}");
+            }
+        }
+    }
+
+    // ---------------- Symbol aggregation ----------------
+
+    [Fact]
+    public async Task SymbolAggregation_CollapsesEntriesAcrossRulesPerSymbol()
+    {
+        // Verify the engine actually emits multiple rule entries for some single symbols
+        // (the precondition for cross-rule aggregation to be useful), and that those entries
+        // are addressable per symbol+file.
+        var cfg = SurfaceScoreConfig.Default();
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        var allEntries = report.Groups.Values.SelectMany(g => g.Entries).ToList();
+        var bySymbol = allEntries
+            .GroupBy(e => $"{e.Symbol}|{e.File}", StringComparer.Ordinal)
+            .Select(g => new
+            {
+                Key = g.Key,
+                RuleCount = g.Select(e => e.Rule).Distinct().Count(),
+                Total = g.Sum(e => e.Points)
+            })
+            .OrderByDescending(x => x.RuleCount)
+            .ToList();
+
+        // At least one symbol should fire across multiple rules — that's the combinatorial
+        // refactoring opportunity the aggregation surfaces.
+        Assert.NotEmpty(bySymbol);
+        Assert.Contains(bySymbol, x => x.RuleCount >= 2);
+    }
+
     // ---------------- Canonical DTOs ----------------
 
     [Fact]
