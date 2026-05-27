@@ -160,6 +160,16 @@ public sealed class SurfaceScoreConfig
                 {
                     NamePatterns = new() { "*Job", "*Worker", "*BackgroundService" },
                     Inherits = new() { "BackgroundService", "IHostedService" }
+                },
+                // Used by methodReturnsEntityAcrossSection. A type is treated as an entity
+                // when its declaration file lives under a Models or Entities folder, or its
+                // namespace ends in .Models / .Domain.Entities — i.e. the project's domain layer.
+                // Override or extend in config to match the actual layout.
+                ["entity"] = new ClassificationRule
+                {
+                    NamePatterns = new() { "*Entity" },
+                    Paths = new() { "**/Models/**", "**/Domain/Entities/**", "**/Entities/**" },
+                    Namespaces = new() { }
                 }
             },
             Resources = new ResourceConfig(),
@@ -181,12 +191,15 @@ public sealed class SurfaceScoreConfig
                 ["controllerAction"] = 8,
                 ["backgroundJob"] = 12,
                 ["duplicateDbSetOwner"] = 20,
+                ["canonicalReadDtoReturn"] = -3,
+                ["methodReturnsEntityAcrossSection"] = 15,
 
                 // Dependency use
                 ["sameSectionReadService"] = 0,
                 ["crossSectionReadInterface"] = 2,
                 ["crossSectionFullService"] = 8,
                 ["crossSectionRepository"] = 25,
+                ["writeCapableInterfaceUsedReadOnly"] = 12,
 
                 // Internal shape
                 ["methodParameterOverflow"] = 1, // per param after 2
@@ -229,6 +242,14 @@ public sealed class SectionRule
     public List<string> ServiceInterfaces { get; set; } = new();
     /// <summary>Names that should be treated as read-only service interfaces (auto-classified and section-owned).</summary>
     public List<string> ReadServiceInterfaces { get; set; } = new();
+    /// <summary>
+    /// Canonical read DTOs for this section. When any public method's return type's simple
+    /// name matches one of these (across any section), that method earns the
+    /// <c>canonicalReadDtoReturn</c> credit. Canonical DTOs are also exempt from the
+    /// <c>methodReturnsEntityAcrossSection</c> penalty even if their simple name would
+    /// otherwise match the entity classification.
+    /// </summary>
+    public List<string> CanonicalReadDtos { get; set; } = new();
 }
 
 public sealed class GroupRule

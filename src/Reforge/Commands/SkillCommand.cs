@@ -97,7 +97,11 @@ public static class SkillCommand
               "symbols":    ["Ticket*", "ITicket*"],
               "repositoryInterfaces": ["ITicketRepository", "ITicketTransferRepository"],
               "serviceInterfaces":    ["ITicketService", "ITicketingBudgetService"],
-              "readServiceInterfaces": ["ITicketServiceRead"]
+              "readServiceInterfaces": ["ITicketServiceRead"],
+              // Section-blessed read DTOs. Returning one of these from a public method earns
+              // the `canonicalReadDtoReturn` credit (negative weight). Canonical DTOs are
+              // also exempt from the `methodReturnsEntityAcrossSection` penalty.
+              "canonicalReadDtos": ["TicketOrderInfo", "TicketingBudgetInfo"]
             }
           },
 
@@ -156,11 +160,16 @@ public static class SkillCommand
           //   fullServiceInterfaceMethod (8), repositoryInterfaceMethod (10),
           //   repositoryImplementationMethod (10), newRepositoryInterface (15),
           //   newRepositoryImplementation (15), diRegistration (3), controllerAction (8),
-          //   backgroundJob (12), duplicateDbSetOwner (20)
+          //   backgroundJob (12), duplicateDbSetOwner (20),
+          //   canonicalReadDtoReturn (-3, credit when a method returns a section's canonical DTO),
+          //   methodReturnsEntityAcrossSection (15, method returns a domain entity from a different section)
           //
           // Dependency use (constructor injection across configured groups):
           //   sameSectionReadService (0), crossSectionReadInterface (2),
-          //   crossSectionFullService (8), crossSectionRepository (25)
+          //   crossSectionFullService (8), crossSectionRepository (25),
+          //   writeCapableInterfaceUsedReadOnly (12, full-service interface paired with a read
+          //     interface — via inheritance or "{Full}Read" sibling — where every observed call
+          //     on the injected dep also exists on the read interface)
           //
           // Internal shape (per method):
           //   methodParameterOverflow (1, per param beyond 2), booleanParameter (3),

@@ -233,6 +233,133 @@ public class SurfaceScoreTests
         // We verify the contract is reachable here; the WriteCompact tests would cover formatting.
     }
 
+    // ---------------- Canonical DTOs ----------------
+
+    [Fact]
+    public async Task CanonicalReadDto_ReturnTypeCredits()
+    {
+        // Mark "User" as the canonical DTO for a "Users" section. The Users section is
+        // claimed by symbol pattern so it includes UserService — whose public Get methods
+        // return User, which should now earn the credit.
+        var cfg = new SurfaceScoreConfig();
+        cfg.Sections["Users"] = new SectionRule
+        {
+            Symbols = { "User*", "IUser*" },
+            CanonicalReadDtos = { "User" }
+        };
+        foreach (var (k, v) in SurfaceScoreConfig.Default().Classifications)
+            cfg.Classifications.TryAdd(k, v);
+        foreach (var (k, v) in SurfaceScoreConfig.Default().Weights)
+            cfg.Weights.TryAdd(k, v);
+        cfg.BuildEffectiveSections();
+
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        var users = report.Groups["Users"];
+        var canonical = users.Entries.Where(e => e.Rule == "canonicalReadDtoReturn").ToList();
+        Assert.NotEmpty(canonical);
+        Assert.All(canonical, e => Assert.True(e.Points < 0, "canonicalReadDtoReturn must contribute a credit (negative points)"));
+    }
+
+    // ---------------- methodReturnsEntityAcrossSection ----------------
+
+    [Fact]
+    public async Task MethodReturnsEntityAcrossSection_FiresWhenReturnTypeLivesInDifferentSection()
+    {
+        // Sample-solution layout: User lives in SampleSolution.Core.Models (matched by the
+        // default `entity` classification's "**/Models/**" path). UserService lives in
+        // SampleSolution.Services. We put User into a "Domain" section and UserService into
+        // a "Services" section, so UserService.GetUserAsync returning User is a cross-section
+        // entity leak.
+        var cfg = new SurfaceScoreConfig();
+        cfg.Sections["Domain"] = new SectionRule
+        {
+            Paths = { "**/SampleSolution.Core/Models/**" }
+        };
+        cfg.Sections["Services"] = new SectionRule
+        {
+            Paths = { "**/SampleSolution.Services/**" }
+        };
+        foreach (var (k, v) in SurfaceScoreConfig.Default().Classifications)
+            cfg.Classifications.TryAdd(k, v);
+        foreach (var (k, v) in SurfaceScoreConfig.Default().Weights)
+            cfg.Weights.TryAdd(k, v);
+        cfg.BuildEffectiveSections();
+
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        Assert.True(report.Groups.ContainsKey("Services"),
+            $"Expected 'Services'. Got: {string.Join(", ", report.Groups.Keys)}");
+        var leaks = report.Groups["Services"].Entries
+            .Where(e => e.Rule == "methodReturnsEntityAcrossSection")
+            .ToList();
+        Assert.NotEmpty(leaks);
+        // At least one should reference returning User (the canonical entity in the sample).
+        Assert.Contains(leaks, e => e.Detail?.Contains("User", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
+    public async Task MethodReturnsEntityAcrossSection_ExemptsCanonicalDtos()
+    {
+        // Same setup as above but mark User as a canonical DTO. The entity penalty should
+        // be replaced by the canonical credit — never both for the same method.
+        var cfg = new SurfaceScoreConfig();
+        cfg.Sections["Domain"] = new SectionRule
+        {
+            Paths = { "**/SampleSolution.Core/Models/**" },
+            CanonicalReadDtos = { "User" }
+        };
+        cfg.Sections["Services"] = new SectionRule
+        {
+            Paths = { "**/SampleSolution.Services/**" }
+        };
+        foreach (var (k, v) in SurfaceScoreConfig.Default().Classifications)
+            cfg.Classifications.TryAdd(k, v);
+        foreach (var (k, v) in SurfaceScoreConfig.Default().Weights)
+            cfg.Weights.TryAdd(k, v);
+        cfg.BuildEffectiveSections();
+
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        var services = report.Groups["Services"];
+        var userLeaks = services.Entries
+            .Where(e => e.Rule == "methodReturnsEntityAcrossSection")
+            .Where(e => e.Detail?.Contains("-> User", StringComparison.Ordinal) == true)
+            .ToList();
+        Assert.Empty(userLeaks);
+
+        var userCredits = services.Entries
+            .Where(e => e.Rule == "canonicalReadDtoReturn")
+            .Where(e => e.Detail?.Contains("-> User", StringComparison.Ordinal) == true)
+            .ToList();
+        Assert.NotEmpty(userCredits);
+    }
+
+    // ---------------- writeCapableInterfaceUsedReadOnly ----------------
+
+    [Fact]
+    public async Task WriteCapableUsedReadOnly_FiresOnReadOnlyConsumerOfFullInterface()
+    {
+        // IGreetingService inherits IGreetingServiceRead and adds RecordGreetingAsync (write).
+        // ReadOnlyGreetingConsumer holds IGreetingService but only calls Get methods that
+        // also exist on the read interface — the rule should fire.
+        // FullGreetingConsumer calls RecordGreetingAsync (write) — the rule should NOT fire.
+        var cfg = SurfaceScoreConfig.Default();
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        var allEntries = report.Groups.Values
+            .SelectMany(g => g.Entries)
+            .Where(e => e.Rule == "writeCapableInterfaceUsedReadOnly")
+            .ToList();
+
+        Assert.Contains(allEntries, e => e.Symbol == "ReadOnlyGreetingConsumer");
+        Assert.DoesNotContain(allEntries, e => e.Symbol == "FullGreetingConsumer");
+    }
+
     [Fact]
     public async Task ConfiguredButEmptySection_IsDistinguishableFromUnknownSection()
     {
