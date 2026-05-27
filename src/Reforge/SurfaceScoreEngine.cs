@@ -58,6 +58,11 @@ public sealed class SurfaceScoreEngine
     {
         var report = new ScoreReport();
         var classified = new List<ClassifiedType>();
+        // ToDisplayString is the practical cross-compilation identity (SymbolEqualityComparer
+        // doesn't match symbols from different project compilations). A type that lives in a
+        // shared assembly is seen once per consuming project; without this dedup it would
+        // appear N times in `classified` and crash any downstream ToDictionary keyed by it.
+        var seenByDisplay = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var project in solution.Projects)
         {
@@ -73,6 +78,8 @@ public sealed class SurfaceScoreEngine
                 if (type.IsImplicitlyDeclared) continue;
                 if (type.DeclaredAccessibility == Accessibility.Private) continue;
 
+                if (!seenByDisplay.Add(type.ToDisplayString())) continue;
+
                 var primaryLocation = type.Locations.First(l => l.IsInSource);
                 var filePath = primaryLocation.SourceTree?.FilePath ?? "";
                 var relPath = LocationHelper.NormalizePath(filePath, _solutionDirectory);
@@ -87,14 +94,14 @@ public sealed class SurfaceScoreEngine
 
         report.TypesAnalyzed = classified.Count;
 
+        // Single canonical index — built once, used by both dependency-use and DI-registration
+        // passes. Safe under duplicate ToDisplayString because `classified` is already deduped.
+        var typesByDisplay = classified.ToDictionary(c => c.Type.ToDisplayString(), c => c, StringComparer.Ordinal);
+
         // Pass 1 — durable surface
         ScoreDurableSurface(classified, report);
 
-        // Pass 2 — dependency use (needs classified index keyed by symbol for cross-section
-        // lookups, so compute after pass 1).
-        var typesByDisplay = new Dictionary<string, ClassifiedType>(StringComparer.Ordinal);
-        foreach (var c in classified)
-            typesByDisplay[c.Type.ToDisplayString()] = c;
+        // Pass 2 — dependency use
         ScoreDependencyUse(classified, typesByDisplay, report);
 
         // Pass 3 — internal shape
@@ -103,7 +110,7 @@ public sealed class SurfaceScoreEngine
         // Cross-cutting: duplicate DbSet owners (resource ownership), DI registrations,
         // one-implementation interfaces.
         ScoreDuplicateDbSetOwners(classified, solution, report, ct);
-        await ScoreDiRegistrationsAsync(solution, classified, report, ct);
+        await ScoreDiRegistrationsAsync(solution, typesByDisplay, report, ct);
         ScoreOneImplementationInterfaces(classified, report);
 
         return report;
@@ -569,7 +576,7 @@ public sealed class SurfaceScoreEngine
 
     private async Task ScoreDiRegistrationsAsync(
         Solution solution,
-        List<ClassifiedType> classified,
+        Dictionary<string, ClassifiedType> classifiedByDisplay,
         ScoreReport report,
         CancellationToken ct)
     {
@@ -583,8 +590,6 @@ public sealed class SurfaceScoreEngine
         {
             "AddSingleton", "AddScoped", "AddTransient", "TryAddSingleton", "TryAddScoped", "TryAddTransient"
         };
-
-        var classifiedByDisplay = classified.ToDictionary(c => c.Type.ToDisplayString(), c => c, StringComparer.Ordinal);
 
         foreach (var project in solution.Projects)
         {
