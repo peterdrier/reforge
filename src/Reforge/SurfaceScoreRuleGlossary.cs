@@ -48,7 +48,14 @@ public static class SurfaceScoreRuleGlossary
         ["tupleReturn"] = "A public method's return type is a value tuple.",
         ["optionsBag"] = "A public method takes a single parameter whose type aggregates many public properties (heuristic: name ends in 'Options' with 4+ props, or any type with 6+ public props).",
         ["dashboardAdminPageName"] = "A public method's name contains 'Dashboard', 'ForAdmin', 'ForPage', or 'AdminPage' — caller-shaped naming that often signals a leaked UI concern.",
-        ["oneImplementationInterface"] = "A classified interface has exactly one classified class implementing it."
+        ["oneImplementationInterface"] = "A classified interface has exactly one classified class implementing it.",
+
+        // Internal complexity axis
+        ["longMethod"] = "A method's nonblank line count exceeds 40; points scale with length (steeper past 100 and 180 lines).",
+        ["largeClass"] = "A service/repository/controller class's nonblank line count exceeds 750; points scale with size (steeper past 1500 lines).",
+        ["cognitiveComplexity"] = "A method's SonarSource cognitive-complexity score (nesting-weighted branching) exceeds the threshold; points scale with the excess.",
+        ["actionDispatcher"] = "A method that mutates state dispatches on a parameter via a switch or if-chain whose arms route to different members with disjoint bodies (low arm cohesion); read methods and arms sharing a base body are exempt.",
+        ["flagsControlFlow"] = "A method that mutates state branches on a [Flags] enum parameter via HasFlag or bitwise tests; read methods are exempt."
     };
 
     /// <summary>

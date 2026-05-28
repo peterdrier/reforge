@@ -21,14 +21,22 @@ public sealed record ScoreEntry(
 public sealed class GroupScore
 {
     public string Name { get; init; } = "";
+    /// <summary>Combined total (surface + internal complexity). Informational; not an optimization target.</summary>
     public int Total { get; set; }
+    /// <summary>Durable public-surface + dependency-use + return-shape points.</summary>
+    public int SurfaceTotal { get; set; }
+    /// <summary>Implementation-complexity points (cognitive complexity, size, dispatchers).</summary>
+    public int InternalComplexityTotal { get; set; }
     public Dictionary<string, int> ByRule { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<ScoreEntry> Entries { get; } = new();
 }
 
 public sealed class ScoreReport
 {
+    /// <summary>Combined total (surface + internal complexity). Informational; not an optimization target.</summary>
     public int Total { get; set; }
+    public int SurfaceTotal { get; set; }
+    public int InternalComplexityTotal { get; set; }
     public Dictionary<string, GroupScore> Groups { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, int> ByRule { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> DuplicateOwners { get; } = new();
@@ -37,9 +45,28 @@ public sealed class ScoreReport
     public int TypesAnalyzed { get; set; }
     /// <summary>Configured section names — used by --list-groups and the missing-section diagnostic.</summary>
     public List<string> ConfiguredSections { get; } = new();
+    /// <summary>
+    /// Populated only when a <c>--baseline</c> is supplied. Each entry is a scope (solution or
+    /// a group) where surface improved but internal complexity worsened past the threshold —
+    /// the score-driven-consolidation smell. Empty otherwise.
+    /// </summary>
+    public List<SuspiciousImprovement> SuspiciousImprovements { get; } = new();
 }
 
 public sealed record ScoreDiagnostic(string Level, string Code, string Message);
+
+/// <summary>
+/// A scope where a baseline comparison shows surface dropping while complexity rises past
+/// the gate — i.e. the change looks like progress on the surface axis but is not a Pareto
+/// improvement. <see cref="Improvement"/> is the authoritative verdict the loop should read.
+/// </summary>
+public sealed record SuspiciousImprovement(
+    string Scope,
+    string Kind,
+    string Message,
+    int SurfaceDelta,
+    int InternalDelta,
+    bool Improvement);
 
 /// <summary>
 /// Computes a Surface Score for a Roslyn <see cref="Solution"/> using the supplied
@@ -148,6 +175,10 @@ public sealed class SurfaceScoreEngine
         ScoreDuplicateDbSetOwners(classified, solution, report, ct);
         await ScoreDiRegistrationsAsync(solution, typesByDisplay, report, ct);
         ScoreOneImplementationInterfaces(classified, report);
+
+        // Pass 6 — internal complexity (separate scalar). Cognitive complexity, method/class
+        // size, and structural action-dispatcher detection — the counterweight to surface.
+        ScoreImplementationComplexity(classified, report, ct);
 
         return report;
     }
@@ -974,6 +1005,164 @@ public sealed class SurfaceScoreEngine
         }
     }
 
+    // ---------------- Pass 6: Internal complexity ----------------
+
+    private const int CognitiveThreshold = 15;
+
+    /// <summary>
+    /// Scores the implementation hiding behind the surface: per-method cognitive complexity
+    /// and length, per-class size (services/repos/controllers), and the structural
+    /// action-dispatcher / flags smells. Dispatcher and flags penalties apply only to methods
+    /// that observably mutate state — a read-shape consolidation on a query is exempt by
+    /// behavior, not by parameter naming. All points land on the internal-complexity axis.
+    /// </summary>
+    private void ScoreImplementationComplexity(List<ClassifiedType> classified, ScoreReport report, CancellationToken ct)
+    {
+        var longW = _config.Weight("longMethod");
+        var largeW = _config.Weight("largeClass");
+        var cogW = _config.Weight("cognitiveComplexity");
+        var dispW = _config.Weight("actionDispatcher");
+        var flagsW = _config.Weight("flagsControlFlow");
+        if (longW == 0 && largeW == 0 && cogW == 0 && dispW == 0 && flagsW == 0) return;
+
+        foreach (var c in classified)
+        {
+            if (c.Type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) continue;
+            // Pure data carriers (DTOs) have no implementation to score.
+            if (c.Tags.Contains("dto") && LooksLikeDataCarrier(c.Type)) continue;
+            // Generated code (EF migrations, *.g.cs/*.Designer.cs) is not developer-controlled
+            // implementation complexity — counting its huge Up()/Down() methods would swamp the
+            // internal axis with noise that's also stable across commits (useless to the gate).
+            if (IsGeneratedFile(c.File)) continue;
+
+            if (largeW != 0 && IsSizeTrackedClass(c))
+            {
+                int classLoc = ClassNonBlankLines(c.Type, ct);
+                int pts = ImplementationComplexity.LargeClassPoints(classLoc) * largeW;
+                if (pts != 0)
+                    AddEntry(report, c.Group, "largeClass", pts, c.Type, c.File, c.Line, $"{c.Type.Name} ({classLoc} LOC)");
+            }
+
+            foreach (var member in c.Type.GetMembers())
+            {
+                if (member is not IMethodSymbol m) continue;
+                if (m.MethodKind != MethodKind.Ordinary) continue;
+                if (m.AssociatedSymbol is not null) continue;
+                if (m.IsImplicitlyDeclared) continue;
+
+                var syntax = GetMethodSyntax(m, ct);
+                if (syntax is null) continue;
+
+                var loc = m.Locations.FirstOrDefault(l => l.IsInSource);
+                var (file, line) = LocateMember(loc, c);
+
+                // Size + cognitive complexity apply to every method (private god methods are
+                // exactly how complexity hides behind a shrunken public surface).
+                if (longW != 0)
+                {
+                    int methodLoc = ImplementationComplexity.NonBlankLines(syntax);
+                    int pts = ImplementationComplexity.LongMethodPoints(methodLoc) * longW;
+                    if (pts != 0)
+                        AddEntry(report, c.Group, "longMethod", pts, m, file, line, $"{m.Name} ({methodLoc} LOC)");
+                }
+
+                if (cogW != 0)
+                {
+                    int cc = ImplementationComplexity.Cognitive(syntax);
+                    int over = cc - CognitiveThreshold;
+                    if (over > 0)
+                        AddEntry(report, c.Group, "cognitiveComplexity", over * cogW, m, file, line, $"{m.Name} (CC {cc})");
+                }
+
+                // Dispatcher / flags are surface-level smells — only public-ish methods, and
+                // only when the method mutates. Read methods are exempt by behavior.
+                bool surfaceMethod = m.DeclaredAccessibility
+                    is Accessibility.Public or Accessibility.Internal or Accessibility.ProtectedOrInternal;
+                if (!surfaceMethod) continue;
+                if (IsAllowedDispatcherMethod(c.Type, m)) continue;
+                if (HasAllowedShapeParam(m)) continue;
+                if (!ImplementationComplexity.IsMutation(m, syntax)) continue;
+
+                if (dispW != 0)
+                {
+                    var d = ImplementationComplexity.AnalyzeDispatcher(m, syntax);
+                    if (d.Fires)
+                    {
+                        int basePts = 20 + 5 * (d.ArmCount - 2);
+                        AddEntry(report, c.Group, "actionDispatcher", basePts * dispW, m, file, line,
+                            $"{m.Name} ({d.ArmCount}-arm dispatch; arms route to distinct members)");
+                    }
+                }
+
+                if (flagsW != 0)
+                {
+                    int flagTests = ImplementationComplexity.FlagsTestCount(m, syntax);
+                    if (flagTests > 0)
+                    {
+                        int basePts = 8 + 4 * Math.Max(0, flagTests - 2);
+                        AddEntry(report, c.Group, "flagsControlFlow", basePts * flagsW, m, file, line,
+                            $"{m.Name} ({flagTests} flag tests)");
+                    }
+                }
+            }
+        }
+    }
+
+    private static bool IsGeneratedFile(string file)
+    {
+        if (string.IsNullOrEmpty(file)) return false;
+        var f = file.Replace('\\', '/');
+        return f.Contains("/Migrations/", StringComparison.OrdinalIgnoreCase)
+            || f.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase)
+            || f.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)
+            || f.EndsWith(".generated.cs", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSizeTrackedClass(ClassifiedType c)
+        => c.Tags.Contains("applicationService")
+        || c.Tags.Contains("repositoryImplementation")
+        || c.Tags.Contains("controller")
+        || c.Tags.Contains("backgroundJob");
+
+    private int ClassNonBlankLines(INamedTypeSymbol type, CancellationToken ct)
+    {
+        int total = 0;
+        foreach (var r in type.DeclaringSyntaxReferences)
+        {
+            if (r.GetSyntax(ct) is Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax tds)
+                total += ImplementationComplexity.NonBlankLines(tds);
+        }
+        return total;
+    }
+
+    private static Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax? GetMethodSyntax(IMethodSymbol m, CancellationToken ct)
+    {
+        foreach (var r in m.DeclaringSyntaxReferences)
+            if (r.GetSyntax(ct) is Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax bm)
+                return bm;
+        return null;
+    }
+
+    private bool IsAllowedDispatcherMethod(INamedTypeSymbol type, IMethodSymbol m)
+    {
+        if (_config.AllowedDispatcherMethods.Count == 0) return false;
+        var qualified = $"{type.Name}.{m.Name}";
+        foreach (var pat in _config.AllowedDispatcherMethods)
+            if (GlobMatcher.MatchesName(qualified, pat) || GlobMatcher.MatchesName(m.Name, pat))
+                return true;
+        return false;
+    }
+
+    private bool HasAllowedShapeParam(IMethodSymbol m)
+    {
+        if (_config.AllowedShapeTypes.Count == 0) return false;
+        foreach (var p in m.Parameters)
+            foreach (var pat in _config.AllowedShapeTypes)
+                if (GlobMatcher.MatchesName(p.Type.Name, pat))
+                    return true;
+        return false;
+    }
+
     // ---------------- Helpers ----------------
 
     private (string File, int Line) LocateMember(Location? loc, ClassifiedType fallback)
@@ -1000,6 +1189,19 @@ public sealed class SurfaceScoreEngine
         g.ByRule[rule] = g.ByRule.GetValueOrDefault(rule) + points;
         report.Total += points;
         report.ByRule[rule] = report.ByRule.GetValueOrDefault(rule) + points;
+
+        // Split into the two axes. Surface and internal complexity are tracked separately so
+        // a baseline comparison can apply a Pareto gate instead of netting one against the other.
+        if (SurfaceScoreRuleGroups.IsInternalComplexity(rule))
+        {
+            g.InternalComplexityTotal += points;
+            report.InternalComplexityTotal += points;
+        }
+        else
+        {
+            g.SurfaceTotal += points;
+            report.SurfaceTotal += points;
+        }
     }
 
     private sealed record ClassifiedType(

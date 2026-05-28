@@ -50,6 +50,10 @@ public static class SurfaceScoreCommand
         {
             Description = "List configured sections (from config) and groups discovered in the analysis, then exit."
         };
+        var baselineOption = new Option<string?>("--baseline")
+        {
+            Description = "Path to a prior `surface-score --format json` output. Compares current surface and internal-complexity scores against it and applies a Pareto gate: a surface drop bought with a complexity rise is reported as a 'traded' verdict (not an improvement) plus a Suspicious Improvements section. Run per-commit (parent commit's JSON as baseline) to catch score-driven consolidation at the moment it happens."
+        };
 
         var command = new Command("surface-score",
             "Score a solution's durable surface, dependency use, and internal shape (config-driven). Supports Compact, Markdown, and JSON output.")
@@ -59,7 +63,8 @@ public static class SurfaceScoreCommand
             topOption,
             allOption,
             topSymbolsOption,
-            listGroupsOption
+            listGroupsOption,
+            baselineOption
         };
 
         command.SetAction(async (parseResult, ct) =>
@@ -72,6 +77,7 @@ public static class SurfaceScoreCommand
             var all = parseResult.GetValue(allOption);
             var topSymbols = parseResult.GetValue(topSymbolsOption);
             var listGroups = parseResult.GetValue(listGroupsOption);
+            var baselinePath = parseResult.GetValue(baselineOption);
             var format = parseResult.GetValue(formatOption);
 
             // --all is an alias for --top 0 (no cap). int.MaxValue is the sentinel for "show
@@ -87,6 +93,21 @@ public static class SurfaceScoreCommand
                 var engine = new SurfaceScoreEngine(config, solutionDir);
                 var report = await engine.ScoreAsync(solution, ct);
                 report.ConfigPath = loadedFrom;
+
+                BaselineComparison? baseline = null;
+                if (baselinePath is not null)
+                {
+                    if (File.Exists(baselinePath))
+                    {
+                        baseline = SurfaceScoreBaseline.Compare(report, baselinePath);
+                        report.SuspiciousImprovements.AddRange(baseline.Suspicious);
+                    }
+                    else
+                    {
+                        report.Diagnostics.Add(new ScoreDiagnostic("warning", "baseline-not-found",
+                            $"--baseline '{baselinePath}' does not exist; skipping Pareto comparison."));
+                    }
+                }
 
                 // Build a missing-group diagnostic *before* writing output so every format
                 // surfaces the same signal. Two distinct cases:
@@ -120,15 +141,15 @@ public static class SurfaceScoreCommand
                 }
                 else if (format == OutputFormat.Json)
                 {
-                    WriteJson(report, groupFilter, top, topSymbols);
+                    WriteJson(report, groupFilter, top, topSymbols, baseline);
                 }
                 else if (format == OutputFormat.Markdown)
                 {
-                    WriteMarkdown(report, groupFilter, top, topSymbols);
+                    WriteMarkdown(report, groupFilter, top, topSymbols, baseline);
                 }
                 else
                 {
-                    WriteCompact(report, groupFilter, top, topSymbols);
+                    WriteCompact(report, groupFilter, top, topSymbols, baseline);
                 }
 
                 sw.Stop();
@@ -189,12 +210,26 @@ public static class SurfaceScoreCommand
 
     // ----------------------- Compact (plain terse) -----------------------
 
-    private static void WriteCompact(ScoreReport report, string? groupFilter, int top, int topSymbols)
+    private static void WriteCompact(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
     {
-        Console.WriteLine($"surface-score: total={report.Total} types={report.TypesAnalyzed} groups={report.Groups.Count} config={(report.ConfigPath ?? "(defaults)")}");
+        Console.WriteLine($"surface-score: surface={report.SurfaceTotal} internalComplexity={report.InternalComplexityTotal} combined={report.Total} (informational) types={report.TypesAnalyzed} groups={report.Groups.Count} config={(report.ConfigPath ?? "(defaults)")}");
 
         foreach (var d in report.Diagnostics)
             Console.WriteLine($"! {d.Level}: {d.Message}");
+
+        if (baseline is not null)
+        {
+            var s = baseline.Solution;
+            Console.WriteLine();
+            Console.WriteLine($"vs baseline ({Path.GetFileName(baseline.BaselinePath)}): verdict={s.Verdict} improvement={s.Improvement} " +
+                              $"surface {s.BaseSurface}->{s.NowSurface} ({s.SurfaceDelta:+0;-0;0}) internalComplexity {s.BaseInternal}->{s.NowInternal} ({s.InternalDelta:+0;-0;0})");
+            if (report.SuspiciousImprovements.Count > 0)
+            {
+                Console.WriteLine("Suspicious improvements:");
+                foreach (var si in report.SuspiciousImprovements)
+                    Console.WriteLine($"  ! [{si.Kind}] {si.Message}");
+            }
+        }
 
         var orderedGroups = FilterAndOrderGroups(report, groupFilter);
         if (orderedGroups.Count == 0)
@@ -269,16 +304,21 @@ public static class SurfaceScoreCommand
 
     // ----------------------- Markdown -----------------------
 
-    private static void WriteMarkdown(ScoreReport report, string? groupFilter, int top, int topSymbols)
+    private static void WriteMarkdown(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# Surface Score");
         sb.AppendLine();
-        sb.AppendLine($"- **Total**: {report.Total}");
+        sb.AppendLine($"- **Surface Score**: {report.SurfaceTotal}");
+        sb.AppendLine($"- **Internal Complexity Score**: {report.InternalComplexityTotal}");
+        sb.AppendLine($"- **Combined Score** (informational, not an optimization target): {report.Total}");
         sb.AppendLine($"- **Types analyzed**: {report.TypesAnalyzed}");
         sb.AppendLine($"- **Groups**: {report.Groups.Count}");
         sb.AppendLine($"- **Config**: {(report.ConfigPath ?? "(defaults, no reforge.surface-score.json found)")}");
         sb.AppendLine();
+
+        if (baseline is not null)
+            WriteBaselineMarkdown(sb, report, baseline);
 
         if (report.Diagnostics.Count > 0)
         {
@@ -331,7 +371,7 @@ public static class SurfaceScoreCommand
 
         foreach (var g in orderedGroups)
         {
-            sb.AppendLine($"## {g.Name} — {g.Total}");
+            sb.AppendLine($"## {g.Name} — surface {g.SurfaceTotal}, complexity {g.InternalComplexityTotal} (combined {g.Total})");
             sb.AppendLine();
 
             if (g.ByRule.Count > 0)
@@ -394,9 +434,45 @@ public static class SurfaceScoreCommand
         Console.WriteLine(sb.ToString());
     }
 
+    private static void WriteBaselineMarkdown(StringBuilder sb, ScoreReport report, BaselineComparison baseline)
+    {
+        var s = baseline.Solution;
+        sb.AppendLine($"## Baseline comparison (`{Path.GetFileName(baseline.BaselinePath)}`)");
+        sb.AppendLine();
+        sb.AppendLine($"- **Verdict**: `{s.Verdict}` — **improvement: {s.Improvement}** (Pareto: surface non-worse AND complexity non-worse)");
+        sb.AppendLine($"- **Surface**: {s.BaseSurface} → {s.NowSurface} ({s.SurfaceDelta:+0;-0;0})");
+        sb.AppendLine($"- **Internal complexity**: {s.BaseInternal} → {s.NowInternal} ({s.InternalDelta:+0;-0;0})");
+        sb.AppendLine();
+
+        if (report.SuspiciousImprovements.Count > 0)
+        {
+            sb.AppendLine("### Suspicious Improvements");
+            sb.AppendLine();
+            foreach (var si in report.SuspiciousImprovements)
+                sb.AppendLine($"- **{si.Scope}** (`{si.Kind}`): {si.Message}");
+            sb.AppendLine();
+        }
+
+        var changed = baseline.Groups
+            .Where(g => g.SurfaceDelta != 0 || g.InternalDelta != 0)
+            .OrderBy(g => g.Verdict == "traded" ? 0 : g.Verdict == "regressed" ? 1 : 2)
+            .ThenByDescending(g => g.InternalDelta)
+            .ToList();
+        if (changed.Count > 0)
+        {
+            sb.AppendLine("### Per-group deltas");
+            sb.AppendLine();
+            sb.AppendLine("| Group | Verdict | Surface Δ | Complexity Δ |");
+            sb.AppendLine("|---|---|---:|---:|");
+            foreach (var g in changed)
+                sb.AppendLine($"| {g.Scope} | `{g.Verdict}` | {g.SurfaceDelta:+0;-0;0} | {g.InternalDelta:+0;-0;0} |");
+            sb.AppendLine();
+        }
+    }
+
     // ----------------------- JSON -----------------------
 
-    private static void WriteJson(ScoreReport report, string? groupFilter, int top, int topSymbols)
+    private static void WriteJson(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
     {
         var filteredGroups = FilterAndOrderGroups(report, groupFilter);
         var effectiveTop = top <= 0 ? int.MaxValue : top;
@@ -405,6 +481,8 @@ public static class SurfaceScoreCommand
             .Select(g => new
             {
                 name = g.Name,
+                surfaceTotal = g.SurfaceTotal,
+                internalComplexityTotal = g.InternalComplexityTotal,
                 total = g.Total,
                 byRule = g.ByRule
                     .OrderByDescending(kv => kv.Value)
@@ -456,10 +534,26 @@ public static class SurfaceScoreCommand
             })
             .ToArray();
 
+        object? baselinePayload = baseline is null ? null : new
+        {
+            path = baseline.BaselinePath,
+            verdict = baseline.Solution.Verdict,
+            improvement = baseline.Solution.Improvement,
+            surface = new { @base = baseline.Solution.BaseSurface, now = baseline.Solution.NowSurface, delta = baseline.Solution.SurfaceDelta },
+            internalComplexity = new { @base = baseline.Solution.BaseInternal, now = baseline.Solution.NowInternal, delta = baseline.Solution.InternalDelta },
+            groups = baseline.Groups
+                .Where(g => g.SurfaceDelta != 0 || g.InternalDelta != 0)
+                .Select(g => new { scope = g.Scope, verdict = g.Verdict, improvement = g.Improvement, surfaceDelta = g.SurfaceDelta, internalDelta = g.InternalDelta })
+                .ToArray()
+        };
+
         var payload = new
         {
             command = "surface-score",
             total = report.Total,
+            surfaceTotal = report.SurfaceTotal,
+            internalComplexityTotal = report.InternalComplexityTotal,
+            combinedTotal = report.Total,
             typesAnalyzed = report.TypesAnalyzed,
             configPath = report.ConfigPath,
             configuredSections = report.ConfiguredSections,
@@ -472,6 +566,10 @@ public static class SurfaceScoreCommand
             groups,
             topSymbols = symbolAggs,
             duplicateOwners = report.DuplicateOwners,
+            baseline = baselinePayload,
+            suspiciousImprovements = report.SuspiciousImprovements
+                .Select(si => new { scope = si.Scope, kind = si.Kind, message = si.Message, surfaceDelta = si.SurfaceDelta, internalDelta = si.InternalDelta, improvement = si.Improvement })
+                .ToArray(),
             diagnostics = report.Diagnostics.Select(d => new { level = d.Level, code = d.Code, message = d.Message }).ToArray()
         };
 

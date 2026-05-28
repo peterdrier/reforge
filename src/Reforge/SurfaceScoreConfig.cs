@@ -29,6 +29,22 @@ public sealed class SurfaceScoreConfig
     public ResourceConfig Resources { get; set; } = new();
     public Dictionary<string, int> Weights { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Glob patterns matched against a dispatcher parameter's <i>type</i> name. These act
+    /// only as a tie-breaker — the read/write decision is made behaviorally (does the
+    /// method mutate?), so a shape type cannot be used to evade a penalty on a mutation by
+    /// renaming. Listing a type here additionally exempts borderline read methods whose
+    /// behavior is ambiguous. Mutations are never exempted regardless of this list.
+    /// </summary>
+    public List<string> AllowedShapeTypes { get; set; } = new();
+
+    /// <summary>
+    /// Glob patterns matched against <c>Type.Method</c> (e.g. <c>RotaService.GetRotaAsync</c>).
+    /// A matching method is fully exempt from the structural dispatcher / flags penalties —
+    /// the escape hatch for a genuinely cohesive dispatcher the heuristic misjudges.
+    /// </summary>
+    public List<string> AllowedDispatcherMethods { get; set; } = new();
+
     [JsonIgnore] public bool GroupByNamespaceFallback { get; set; } = true;
 
     /// <summary>
@@ -201,13 +217,24 @@ public sealed class SurfaceScoreConfig
                 ["crossSectionRepository"] = 25,
                 ["writeCapableInterfaceUsedReadOnly"] = 12,
 
-                // Internal shape
+                // Internal shape (surface axis — method/return shape smells)
                 ["methodParameterOverflow"] = 1, // per param after 2
                 ["booleanParameter"] = 3,
                 ["tupleReturn"] = 4,
                 ["optionsBag"] = 8,
                 ["dashboardAdminPageName"] = 6,
-                ["oneImplementationInterface"] = 8
+                ["oneImplementationInterface"] = 8,
+
+                // Internal complexity axis — implementation cost hiding behind the surface.
+                // These weights are MULTIPLIERS over base points computed from syntax
+                // (cognitive complexity, LOC tiers, dispatcher arm count); default 1 applies
+                // the base points as-is, 0 disables the rule. They are tracked on a separate
+                // scalar (internalComplexityTotal) and are never added into the surface score.
+                ["longMethod"] = 1,
+                ["largeClass"] = 1,
+                ["cognitiveComplexity"] = 1,
+                ["actionDispatcher"] = 1,
+                ["flagsControlFlow"] = 1
             }
         };
         config.BuildEffectiveSections();

@@ -433,6 +433,131 @@ public class SurfaceScoreTests
         Assert.DoesNotContain(allEntries, e => e.Symbol == "FullGreetingConsumer");
     }
 
+    // ---------------- Internal complexity: dispatcher / read-shape ----------------
+
+    [Fact]
+    public async Task ActionDispatcher_FiresOnMutationThatDispatchesToDistinctMembers()
+    {
+        // SignupWorkflowService.ApplyAsync switches on an enum and routes each arm to a
+        // distinct member; it mutates (command shape). Expected: actionDispatcher fires.
+        var report = await ScoreDefaultAsync();
+        var entries = AllEntries(report).Where(e => e.Rule == "actionDispatcher").ToList();
+        Assert.Contains(entries, e => e.Symbol == "ApplyAsync");
+    }
+
+    [Fact]
+    public async Task ActionDispatcher_DoesNotFireOnReadShapeConsolidation()
+    {
+        // GreetingQueryService.GetGreetingsAsync switches on a read-shape enum but returns
+        // data (a read) and its arms share a base query. The behavioral gate must exempt it.
+        var report = await ScoreDefaultAsync();
+        var entries = AllEntries(report).Where(e => e.Rule == "actionDispatcher").ToList();
+        Assert.DoesNotContain(entries, e => e.Symbol == "GetGreetingsAsync");
+    }
+
+    [Fact]
+    public async Task GodMethod_FiresLongMethodAndCognitiveComplexity()
+    {
+        var report = await ScoreDefaultAsync();
+        var entries = AllEntries(report).ToList();
+        Assert.Contains(entries, e => e.Rule == "longMethod" && e.Symbol == "BuildEverything");
+        Assert.Contains(entries, e => e.Rule == "cognitiveComplexity" && e.Symbol == "BuildEverything");
+    }
+
+    [Fact]
+    public async Task FlagsControlFlow_FiresOnFlagsDrivenMutation_ButNotAsDispatcher()
+    {
+        var report = await ScoreDefaultAsync();
+        var entries = AllEntries(report).ToList();
+        Assert.Contains(entries, e => e.Rule == "flagsControlFlow" && e.Symbol == "UpdateAsync");
+        Assert.DoesNotContain(entries, e => e.Rule == "actionDispatcher" && e.Symbol == "UpdateAsync");
+    }
+
+    [Fact]
+    public async Task ScoreAxes_AreTrackedSeparately_AndCombinedIsTheirSum()
+    {
+        var report = await ScoreDefaultAsync();
+        Assert.True(report.SurfaceTotal > 0, "expected surface points");
+        Assert.True(report.InternalComplexityTotal > 0, "expected internal-complexity points from fixtures");
+        Assert.Equal(report.SurfaceTotal + report.InternalComplexityTotal, report.Total);
+    }
+
+    // ---------------- Pareto gate (baseline comparison) ----------------
+
+    [Fact]
+    public void Pareto_SurfaceDownComplexityUp_IsTradedAndSuspicious()
+    {
+        // Bad consolidation: surface dropped 48 but complexity rose 63 (>25% and >abs threshold).
+        var basePath = WriteBaseline(surface: 1000, internalC: 50, byRule: new() { ["applicationServiceMethod"] = 80 });
+        var now = MakeReport(surface: 952, internalC: 113, byRule: new() { ["applicationServiceMethod"] = 80, ["actionDispatcher"] = 30 });
+
+        var cmp = SurfaceScoreBaseline.Compare(now, basePath);
+
+        Assert.Equal("traded", cmp.Solution.Verdict);
+        Assert.False(cmp.Solution.Improvement);
+        Assert.Contains(cmp.Suspicious, s => s.Kind == "complexity-traded-for-surface");
+    }
+
+    [Fact]
+    public void Pareto_SurfaceDownComplexityFlat_IsImprovementWithNoSuspicion()
+    {
+        // Good DTO consolidation: surface dropped, complexity unchanged.
+        var basePath = WriteBaseline(surface: 1000, internalC: 50, byRule: new() { ["applicationServiceMethod"] = 80 });
+        var now = MakeReport(surface: 990, internalC: 50, byRule: new() { ["applicationServiceMethod"] = 70 });
+
+        var cmp = SurfaceScoreBaseline.Compare(now, basePath);
+
+        Assert.Equal("improved", cmp.Solution.Verdict);
+        Assert.True(cmp.Solution.Improvement);
+        Assert.Empty(cmp.Suspicious);
+    }
+
+    [Fact]
+    public void Pareto_MethodSurfaceDownDispatcherUp_FlagsConsolidation()
+    {
+        var basePath = WriteBaseline(surface: 1000, internalC: 0, byRule: new() { ["applicationServiceMethod"] = 60 });
+        var now = MakeReport(surface: 985, internalC: 30, byRule: new() { ["applicationServiceMethod"] = 30, ["actionDispatcher"] = 30 });
+
+        var cmp = SurfaceScoreBaseline.Compare(now, basePath);
+
+        Assert.Contains(cmp.Suspicious, s => s.Kind == "dispatcher-up-methods-down");
+    }
+
+    // ---------------- helpers ----------------
+
+    private async Task<ScoreReport> ScoreDefaultAsync()
+    {
+        var cfg = SurfaceScoreConfig.Default();
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        return await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+    }
+
+    private static IEnumerable<ScoreEntry> AllEntries(ScoreReport report)
+        => report.Groups.Values.SelectMany(g => g.Entries);
+
+    private static ScoreReport MakeReport(int surface, int internalC, Dictionary<string, int> byRule)
+    {
+        var r = new ScoreReport { SurfaceTotal = surface, InternalComplexityTotal = internalC, Total = surface + internalC };
+        foreach (var (k, v) in byRule) r.ByRule[k] = v;
+        return r;
+    }
+
+    private static string WriteBaseline(int surface, int internalC, Dictionary<string, int> byRule)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"reforge-baseline-{Guid.NewGuid():N}.json");
+        var payload = new
+        {
+            total = surface + internalC,
+            surfaceTotal = surface,
+            internalComplexityTotal = internalC,
+            combinedTotal = surface + internalC,
+            byRule,
+            groups = Array.Empty<object>()
+        };
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(payload));
+        return path;
+    }
+
     [Fact]
     public async Task ConfiguredButEmptySection_IsDistinguishableFromUnknownSection()
     {
