@@ -10,13 +10,25 @@ public enum GreetingReadShape { Basic, WithHistory, WithStats }
 [Flags]
 public enum UpdateFlags { None = 0, Name = 1, Email = 2, Status = 4 }
 
+public enum RouteMode { North, South, East }
+
+public enum ThingCreationMode { Self, Voluntell }
+
+public enum WorkflowAction { Submit, Approve, Cancel }
+
 /// <summary>
-/// BAD consolidation: three explicit commands (Approve/Refuse/Bail) collapsed behind one
-/// generic ApplyAsync that dispatches on an enum and routes each arm to a distinct member.
-/// The method mutates (command shape, returns Task), so the behavioral gate does NOT exempt
-/// it. Expected: actionDispatcher fires.
+/// BAD generic dispatcher: three explicit commands collapsed behind one generic-verb method
+/// (Apply*) that dispatches on an enum and routes each arm to a distinct member. Declared on
+/// an interface, so the smell must be attributed to BOTH the interface and the implementation.
+/// Expected: genericActionDispatcher fires on ISignupWorkflowService.ApplyAsync and
+/// SignupWorkflowService.ApplyAsync.
 /// </summary>
-public class SignupWorkflowService
+public interface ISignupWorkflowService
+{
+    Task ApplyAsync(Guid id, SignupAction action, string? reason = null);
+}
+
+public class SignupWorkflowService : ISignupWorkflowService
 {
     public Task ApplyAsync(Guid id, SignupAction action, string? reason = null) => action switch
     {
@@ -32,10 +44,78 @@ public class SignupWorkflowService
 }
 
 /// <summary>
+/// A structural dispatcher whose name is NOT a generic verb. Still routes arms to distinct
+/// members, so it's the plain actionDispatcher (not genericActionDispatcher).
+/// </summary>
+public class RouteService
+{
+    public Task RouteAsync(Guid id, RouteMode mode) => mode switch
+    {
+        RouteMode.North => GoNorthAsync(id),
+        RouteMode.South => GoSouthAsync(id),
+        RouteMode.East => GoEastAsync(id),
+        _ => Task.CompletedTask
+    };
+
+    private Task GoNorthAsync(Guid id) => Task.CompletedTask;
+    private Task GoSouthAsync(Guid id) => Task.CompletedTask;
+    private Task GoEastAsync(Guid id) => Task.CompletedTask;
+}
+
+/// <summary>
+/// A generic-verb mutation that carries a mode enum but whose body is small and does NOT
+/// delegate to distinct members (inline branching). Caught by mutationModeParameter, not by
+/// the structural dispatcher rules.
+/// </summary>
+public class ThingService
+{
+    private readonly List<string> _names = new();
+
+    public Task CreateThingAsync(Guid id, ThingCreationMode mode)
+    {
+        var name = "thing";
+        if (mode == ThingCreationMode.Self) name = $"self-{id}";
+        else if (mode == ThingCreationMode.Voluntell) name = $"vt-{id}";
+        _names.Add(name);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// A real state-machine entry point: generic verb + action enum + a switch, BUT it validates
+/// the current state and uses transition vocabulary. The asymmetric rule must exempt it from
+/// ALL dispatcher/mode penalties (it may still draw ordinary complexity).
+/// Expected: no genericActionDispatcher / actionDispatcher / mutationModeParameter.
+/// </summary>
+public class WorkflowService
+{
+    public Task ApplyWorkflowTransitionAsync(Guid id, WorkflowAction action)
+    {
+        var current = LoadState(id);
+        if (!CanTransition(current, action))
+            throw new InvalidOperationException("illegal transition");
+
+        var next = action switch
+        {
+            WorkflowAction.Submit => "Submitted",
+            WorkflowAction.Approve => "Approved",
+            WorkflowAction.Cancel => "Cancelled",
+            _ => current
+        };
+        ApplyTransition(id, current, next);
+        return Task.CompletedTask;
+    }
+
+    private string LoadState(Guid id) => "Draft";
+    private bool CanTransition(string from, WorkflowAction action) => true;
+    private void ApplyTransition(Guid id, string from, string to) { }
+}
+
+/// <summary>
 /// GOOD consolidation: several include-shape read methods collapsed into one GetGreetingsAsync
 /// taking a read-shape enum. The arms share a base query and differ only by projection/order,
 /// and the method returns data (a read), so the behavioral gate exempts it.
-/// Expected: actionDispatcher does NOT fire even though it switches on a parameter.
+/// Expected: no dispatcher penalty even though it switches on a parameter.
 /// </summary>
 public class GreetingQueryService
 {
@@ -130,9 +210,9 @@ public class ReportBuilder
 }
 
 /// <summary>
-/// A mutation method whose control flow is driven by a [Flags] enum. The branches don't
-/// delegate to distinct members (so it isn't an action dispatcher), but it tests flags to
-/// decide what to mutate. Expected: flagsControlFlow fires; actionDispatcher does NOT.
+/// A mutation method whose control flow is driven by a [Flags] enum. Expected: flagsControlFlow
+/// fires; actionDispatcher / genericActionDispatcher do NOT (no delegation to distinct members),
+/// and mutationModeParameter does NOT (flags are owned by flagsControlFlow).
 /// </summary>
 public class FlagUpdateService
 {

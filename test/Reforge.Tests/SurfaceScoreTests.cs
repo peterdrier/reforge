@@ -436,13 +436,49 @@ public class SurfaceScoreTests
     // ---------------- Internal complexity: dispatcher / read-shape ----------------
 
     [Fact]
-    public async Task ActionDispatcher_FiresOnMutationThatDispatchesToDistinctMembers()
+    public async Task GenericActionDispatcher_FiresOnImplAndInterface()
     {
-        // SignupWorkflowService.ApplyAsync switches on an enum and routes each arm to a
-        // distinct member; it mutates (command shape). Expected: actionDispatcher fires.
+        // SignupWorkflowService.ApplyAsync: generic verb + SignupAction enum + switch that
+        // delegates arms to distinct members. Must fire genericActionDispatcher AND be
+        // attributed to the interface method it implements.
         var report = await ScoreDefaultAsync();
-        var entries = AllEntries(report).Where(e => e.Rule == "actionDispatcher").ToList();
-        Assert.Contains(entries, e => e.Symbol == "ApplyAsync");
+        var gad = AllEntries(report).Where(e => e.Rule == "genericActionDispatcher" && e.Symbol == "ApplyAsync").ToList();
+        Assert.True(gad.Count >= 2, $"expected genericActionDispatcher on both impl and interface ApplyAsync; got {gad.Count}");
+        // It must NOT also be double-counted as the plain actionDispatcher.
+        Assert.DoesNotContain(AllEntries(report), e => e.Rule == "actionDispatcher" && e.Symbol == "ApplyAsync");
+    }
+
+    [Fact]
+    public async Task ActionDispatcher_FiresOnNonGenericStructuralDispatch()
+    {
+        // RouteService.RouteAsync dispatches structurally but its name isn't a generic verb.
+        var report = await ScoreDefaultAsync();
+        var entries = AllEntries(report).ToList();
+        Assert.Contains(entries, e => e.Rule == "actionDispatcher" && e.Symbol == "RouteAsync");
+        Assert.DoesNotContain(entries, e => e.Rule == "genericActionDispatcher" && e.Symbol == "RouteAsync");
+    }
+
+    [Fact]
+    public async Task MutationModeParameter_FiresOnInlineModeMutation()
+    {
+        // ThingService.CreateThingAsync: generic verb + mode enum but inline (no delegation).
+        var report = await ScoreDefaultAsync();
+        var entries = AllEntries(report).ToList();
+        Assert.Contains(entries, e => e.Rule == "mutationModeParameter" && e.Symbol == "CreateThingAsync");
+        Assert.DoesNotContain(entries, e => e.Rule == "genericActionDispatcher" && e.Symbol == "CreateThingAsync");
+        Assert.DoesNotContain(entries, e => e.Rule == "actionDispatcher" && e.Symbol == "CreateThingAsync");
+    }
+
+    [Fact]
+    public async Task StateEngine_IsExemptFromAllDispatcherRules()
+    {
+        // WorkflowService.ApplyWorkflowTransitionAsync switches on an action enum but validates
+        // current state and uses transition vocabulary — a real state machine, exempt.
+        var report = await ScoreDefaultAsync();
+        var entries = AllEntries(report).Where(e => e.Symbol == "ApplyWorkflowTransitionAsync").ToList();
+        Assert.DoesNotContain(entries, e => e.Rule == "genericActionDispatcher");
+        Assert.DoesNotContain(entries, e => e.Rule == "actionDispatcher");
+        Assert.DoesNotContain(entries, e => e.Rule == "mutationModeParameter");
     }
 
     [Fact]
@@ -471,6 +507,8 @@ public class SurfaceScoreTests
         var entries = AllEntries(report).ToList();
         Assert.Contains(entries, e => e.Rule == "flagsControlFlow" && e.Symbol == "UpdateAsync");
         Assert.DoesNotContain(entries, e => e.Rule == "actionDispatcher" && e.Symbol == "UpdateAsync");
+        // [Flags] is owned by flagsControlFlow — must not also fire mutationModeParameter.
+        Assert.DoesNotContain(entries, e => e.Rule == "mutationModeParameter" && e.Symbol == "UpdateAsync");
     }
 
     [Fact]
@@ -487,9 +525,10 @@ public class SurfaceScoreTests
     [Fact]
     public void Pareto_SurfaceDownComplexityUp_IsTradedAndSuspicious()
     {
-        // Bad consolidation: surface dropped 48 but complexity rose 63 (>25% and >abs threshold).
+        // Bad consolidation: surface dropped 48 but complexity rose 63, driven by longMethod
+        // (a god-method growth, not a dispatcher) — so the kind is complexity-traded-for-surface.
         var basePath = WriteBaseline(surface: 1000, internalC: 50, byRule: new() { ["applicationServiceMethod"] = 80 });
-        var now = MakeReport(surface: 952, internalC: 113, byRule: new() { ["applicationServiceMethod"] = 80, ["actionDispatcher"] = 30 });
+        var now = MakeReport(surface: 952, internalC: 113, byRule: new() { ["applicationServiceMethod"] = 80, ["longMethod"] = 63 });
 
         var cmp = SurfaceScoreBaseline.Compare(now, basePath);
 
@@ -513,13 +552,50 @@ public class SurfaceScoreTests
     }
 
     [Fact]
-    public void Pareto_MethodSurfaceDownDispatcherUp_FlagsConsolidation()
+    public void Pareto_TradedWithSmallInternalRise_StillEmitsSuspicious_WithSymbolAttribution()
     {
-        var basePath = WriteBaseline(surface: 1000, internalC: 0, byRule: new() { ["applicationServiceMethod"] = 60 });
-        var now = MakeReport(surface: 985, internalC: 30, byRule: new() { ["applicationServiceMethod"] = 30, ["actionDispatcher"] = 30 });
+        // Regression for PR #820 a51bfc62b: surfaceDelta -80, internalDelta only +10, verdict
+        // traded — but suspiciousImprovements was empty (old threshold gated it out). A traded
+        // verdict must ALWAYS be non-empty AND name the dispatcher symbol.
+        var basePath = WriteBaselineJson(new
+        {
+            total = 1050,
+            surfaceTotal = 1000,
+            internalComplexityTotal = 50,
+            byRule = new Dictionary<string, int> { ["fullServiceInterfaceMethod"] = 200 },
+            groups = new[]
+            {
+                new { name = "Shifts", surfaceTotal = 300, internalComplexityTotal = 50, byRule = new Dictionary<string, int> { ["fullServiceInterfaceMethod"] = 120 } }
+            }
+        });
+
+        var now = new ScoreReport { SurfaceTotal = 920, InternalComplexityTotal = 60, Total = 980 };
+        now.ByRule["fullServiceInterfaceMethod"] = 120;
+        now.ByRule["genericActionDispatcher"] = 40;
+        var g = new GroupScore { Name = "Shifts", SurfaceTotal = 220, InternalComplexityTotal = 60 };
+        g.ByRule["genericActionDispatcher"] = 40;
+        g.Entries.Add(new ScoreEntry("genericActionDispatcher", 40, "ApplySignupActionAsync", "Shifts", "ShiftSignupService.cs", 42, "ApplySignupActionAsync (3-arm generic dispatch)"));
+        now.Groups["Shifts"] = g;
 
         var cmp = SurfaceScoreBaseline.Compare(now, basePath);
 
+        Assert.NotEmpty(cmp.Suspicious);
+        Assert.Contains(cmp.Suspicious, s => s.Message.Contains("ApplySignupActionAsync", StringComparison.Ordinal));
+        Assert.Contains(cmp.Suspicious, s => s.Scope == "Shifts" && s.Kind == "generic-dispatcher-consolidation");
+    }
+
+    [Fact]
+    public void Pareto_MethodSurfaceDownDispatcherUp_FlagsConsolidation()
+    {
+        // The sneaky non-traded case: complexity net IMPROVES (longMethod fell more than the
+        // dispatcher rose), so the verdict isn't "traded" — but a dispatcher appeared while
+        // public method surface shrank. The early-warning detector must still flag it.
+        var basePath = WriteBaseline(surface: 1000, internalC: 50, byRule: new() { ["applicationServiceMethod"] = 60, ["longMethod"] = 50 });
+        var now = MakeReport(surface: 985, internalC: 40, byRule: new() { ["applicationServiceMethod"] = 30, ["actionDispatcher"] = 30, ["longMethod"] = 10 });
+
+        var cmp = SurfaceScoreBaseline.Compare(now, basePath);
+
+        Assert.Equal("improved", cmp.Solution.Verdict); // net complexity fell
         Assert.Contains(cmp.Suspicious, s => s.Kind == "dispatcher-up-methods-down");
     }
 
@@ -540,6 +616,13 @@ public class SurfaceScoreTests
         var r = new ScoreReport { SurfaceTotal = surface, InternalComplexityTotal = internalC, Total = surface + internalC };
         foreach (var (k, v) in byRule) r.ByRule[k] = v;
         return r;
+    }
+
+    private static string WriteBaselineJson(object payload)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"reforge-baseline-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(payload));
+        return path;
     }
 
     private static string WriteBaseline(int surface, int internalC, Dictionary<string, int> byRule)

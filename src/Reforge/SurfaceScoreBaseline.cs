@@ -36,7 +36,6 @@ public static class SurfaceScoreBaseline
     // A trade is only flagged when complexity worsens by BOTH an absolute and a relative
     // margin — otherwise a tiny section where one method moved would spam false suspicions.
     private const int AbsThreshold = 15;
-    private const double RelThreshold = 0.25;
     private const int DispatcherAbsThreshold = 10; // one dispatcher fire is ~20pts
 
     private static readonly string[] MethodSurfaceRules =
@@ -71,13 +70,14 @@ public static class SurfaceScoreBaseline
         var comparison = new BaselineComparison { BaselinePath = baselineJsonPath };
 
         var nowSolution = new BaselineScope(now.SurfaceTotal, now.InternalComplexityTotal, now.ByRule);
-        comparison.Solution = Evaluate("solution", baseSolution, nowSolution, comparison.Suspicious);
+        var allEntries = now.Groups.Values.SelectMany(g => g.Entries).ToList();
+        comparison.Solution = Evaluate("solution", baseSolution, nowSolution, allEntries, comparison.Suspicious);
 
         foreach (var (name, g) in now.Groups)
         {
             var baseScope = baseGroups.TryGetValue(name, out var b) ? b : new BaselineScope(0, 0, new());
             var nowScope = new BaselineScope(g.SurfaceTotal, g.InternalComplexityTotal, g.ByRule);
-            comparison.Groups.Add(Evaluate(name, baseScope, nowScope, comparison.Suspicious));
+            comparison.Groups.Add(Evaluate(name, baseScope, nowScope, g.Entries, comparison.Suspicious));
         }
         // Sections that existed in the baseline but produced nothing now (deleted/emptied) —
         // surface dropped to zero, complexity to zero: a clean Pareto improvement, nothing to flag.
@@ -85,7 +85,8 @@ public static class SurfaceScoreBaseline
         return comparison;
     }
 
-    private static ScopeDelta Evaluate(string scope, BaselineScope b, BaselineScope now, List<SuspiciousImprovement> sink)
+    private static ScopeDelta Evaluate(string scope, BaselineScope b, BaselineScope now,
+        IReadOnlyList<ScoreEntry> nowEntries, List<SuspiciousImprovement> sink)
     {
         int dSurface = now.Surface - b.Surface;     // negative = surface improved
         int dInternal = now.Internal - b.Internal;  // positive = complexity worsened
@@ -114,25 +115,29 @@ public static class SurfaceScoreBaseline
             verdict = "neutral"; improvement = false;
         }
 
-        // Suspicious-improvement signals — only when the surface looks like it improved.
-        if (surfaceBetter)
+        // A "traded" verdict ALWAYS produces a suspicious entry — surface dropped while
+        // complexity rose, which is never a real improvement regardless of magnitude. The
+        // message attributes the regression to the specific rules/symbols that rose (so the
+        // report says "ApplySignupActionAsync is a generic dispatcher", not "complexity went up").
+        if (verdict == "traded")
         {
-            if (internalWorse && dInternal >= AbsThreshold
-                && (b.Internal <= 0 || dInternal >= RelThreshold * b.Internal))
-            {
-                sink.Add(new SuspiciousImprovement(scope, "complexity-traded-for-surface",
-                    $"{scope}: surface improved by {-dSurface} points, but implementation complexity increased by {dInternal} points. " +
-                    "This may indicate score-driven consolidation rather than architectural simplification.",
-                    dSurface, dInternal, false));
-            }
-
+            var (kind, drivers) = Attribute(b, now, nowEntries);
+            sink.Add(new SuspiciousImprovement(scope, kind,
+                $"{scope}: surface improved by {-dSurface} points, but implementation complexity worsened by {dInternal} " +
+                $"(verdict: traded — not an improvement).{drivers}",
+                dSurface, dInternal, false));
+        }
+        else if (surfaceBetter)
+        {
+            // Surface improved and the verdict isn't "traded" (complexity didn't worsen net) —
+            // but watch for a sneaky composition: dispatchers/god-methods rose while other
+            // complexity fell enough to mask it. Early-warning, threshold-gated to avoid spam.
             int dMethodSurface = SumRules(now.ByRule, MethodSurfaceRules) - SumRules(b.ByRule, MethodSurfaceRules);
             int dDispatcher = SumRules(now.ByRule, DispatcherRules) - SumRules(b.ByRule, DispatcherRules);
             if (dMethodSurface < 0 && dDispatcher >= DispatcherAbsThreshold)
             {
                 sink.Add(new SuspiciousImprovement(scope, "dispatcher-up-methods-down",
-                    $"{scope}: public method surface dropped by {-dMethodSurface} points while generic-dispatcher penalties rose by {dDispatcher}. " +
-                    "Explicit methods may have been collapsed into a generic action dispatcher.",
+                    $"{scope}: public method surface dropped by {-dMethodSurface} points while dispatcher penalties rose by {dDispatcher}.{Attribute(b, now, nowEntries).Drivers}",
                     dSurface, dInternal, false));
             }
 
@@ -141,13 +146,44 @@ public static class SurfaceScoreBaseline
             if (dInterface < 0 && dGod >= AbsThreshold)
             {
                 sink.Add(new SuspiciousImprovement(scope, "godmethod-up-interface-down",
-                    $"{scope}: interface-method surface dropped by {-dInterface} points while long/complex-method penalties rose by {dGod}. " +
-                    "Interface methods may have been folded into larger, more complex method bodies.",
+                    $"{scope}: interface-method surface dropped by {-dInterface} points while long/complex-method penalties rose by {dGod}.",
                     dSurface, dInternal, false));
             }
         }
 
         return new ScopeDelta(scope, b.Surface, now.Surface, dSurface, b.Internal, now.Internal, dInternal, verdict, improvement);
+    }
+
+    /// <summary>
+    /// Builds the per-rule / per-symbol attribution for a regression: which internal-complexity
+    /// rules rose, by how much, and which symbols carry them now. This is the "why" the report
+    /// must surface — specific attribution, not just a net number.
+    /// </summary>
+    private static (string Kind, string Drivers) Attribute(BaselineScope b, BaselineScope now, IReadOnlyList<ScoreEntry> nowEntries)
+    {
+        var increased = SurfaceScoreRuleGroups.InternalComplexity
+            .Select(r => (Rule: r, Delta: now.ByRule.GetValueOrDefault(r) - b.ByRule.GetValueOrDefault(r)))
+            .Where(x => x.Delta > 0)
+            .OrderByDescending(x => x.Delta)
+            .ToList();
+        if (increased.Count == 0) return ("complexity-traded-for-surface", "");
+
+        var parts = new List<string>();
+        foreach (var (rule, delta) in increased.Take(3))
+        {
+            var syms = nowEntries.Where(e => e.Rule == rule)
+                .OrderByDescending(e => e.Points)
+                .Select(e => e.Symbol)
+                .Distinct(StringComparer.Ordinal)
+                .Take(3)
+                .ToList();
+            parts.Add(syms.Count > 0 ? $"{rule} +{delta} [{string.Join(", ", syms)}]" : $"{rule} +{delta}");
+        }
+
+        var kind = increased.Any(x => x.Rule is "genericActionDispatcher" or "mutationModeParameter" or "actionDispatcher")
+            ? "generic-dispatcher-consolidation"
+            : "complexity-traded-for-surface";
+        return (kind, " Drivers: " + string.Join("; ", parts) + ".");
     }
 
     private static int SumRules(IReadOnlyDictionary<string, int> byRule, string[] rules)

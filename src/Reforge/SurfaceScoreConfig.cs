@@ -234,6 +234,8 @@ public sealed class SurfaceScoreConfig
                 ["largeClass"] = 1,
                 ["cognitiveComplexity"] = 1,
                 ["actionDispatcher"] = 1,
+                ["genericActionDispatcher"] = 1,
+                ["mutationModeParameter"] = 1,
                 ["flagsControlFlow"] = 1
             }
         };

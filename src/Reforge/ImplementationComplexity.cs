@@ -21,6 +21,8 @@ public static class SurfaceScoreRuleGroups
         "largeClass",
         "cognitiveComplexity",
         "actionDispatcher",
+        "genericActionDispatcher",
+        "mutationModeParameter",
         "flagsControlFlow"
     };
 
@@ -416,12 +418,75 @@ public static class ImplementationComplexity
 
     // ---------------- Shared helpers ----------------
 
+    // Read/query "shape" enums steer projection, not mutation. They must NOT be treated as
+    // dispatch parameters — otherwise Get*(RotaReadShape) / Search*(ShiftEventQueryFlags) would
+    // be falsely penalized. Note QueryFlags ends in "Flags" and SearchScope ends in "Scope",
+    // both of which are dispatch suffixes, so this exclusion has to run first.
+    private static readonly string[] ReadShapeSuffixes = { "ReadShape", "QueryFlags", "Filter", "SearchScope", "Query" };
+
+    private static readonly string[] GenericVerbs = { "Apply", "Handle", "Process", "Execute", "Create", "Save" };
+
+    public static bool IsReadShapeType(ITypeSymbol t)
+    {
+        var n = t.Name;
+        return ReadShapeSuffixes.Any(s => n.EndsWith(s, StringComparison.Ordinal));
+    }
+
     public static bool IsDispatchParam(IParameterSymbol p)
     {
+        if (IsReadShapeType(p.Type)) return false;
         if (p.Type.TypeKind == TypeKind.Enum) return true;
         if (DispatchParamNames.Contains(p.Name)) return true;
         var tn = p.Type.Name;
         return DispatchTypeSuffixes.Any(s => tn.EndsWith(s, StringComparison.Ordinal));
+    }
+
+    /// <summary>An enum parameter whose type/name marks it as an action/mode selector (not a read shape).</summary>
+    public static bool IsDispatchEnumParam(IParameterSymbol p)
+        => p.Type.TypeKind == TypeKind.Enum
+           && !IsReadShapeType(p.Type)
+           && (DispatchTypeSuffixes.Any(s => p.Type.Name.EndsWith(s, StringComparison.Ordinal))
+               || DispatchParamNames.Contains(p.Name));
+
+    public static IReadOnlyList<IParameterSymbol> DispatchEnumParams(IMethodSymbol m)
+        => m.Parameters.Where(IsDispatchEnumParam).ToList();
+
+    /// <summary>Method name (less any Async suffix) begins with a generic, content-free verb.</summary>
+    public static bool IsGenericVerb(string methodName)
+    {
+        var n = StripAsync(methodName);
+        return GenericVerbs.Any(v => n.StartsWith(v, StringComparison.Ordinal));
+    }
+
+    private static readonly string[] StateEngineVocab =
+    {
+        "Transition", "CanTransition", "StateMachine", "FromState", "ToState",
+        "AllowedTransitions", "WorkflowState", "ApplyTransition"
+    };
+
+    /// <summary>
+    /// Heuristic: does the body read like a real state-machine entry point rather than a thin
+    /// action dispatcher? A transition engine validates current state and centralizes transition
+    /// rules/side-effects (transition tables, a domain ApplyTransition, From/To state). Those are
+    /// legitimate and should NOT draw the generic-dispatcher penalty — the asymmetry is
+    /// deliberate: a generic action method is bad <i>unless</i> it proves it is a transition engine.
+    /// </summary>
+    public static bool LooksLikeStateEngine(BaseMethodDeclarationSyntax syntax)
+    {
+        SyntaxNode? body = (SyntaxNode?)syntax.Body ?? syntax.ExpressionBody?.Expression;
+        if (body is null) return false;
+        foreach (var node in body.DescendantNodes())
+        {
+            string? name = node switch
+            {
+                IdentifierNameSyntax id => id.Identifier.Text,
+                MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,
+                _ => null
+            };
+            if (name is not null && StateEngineVocab.Any(v => name.Contains(v, StringComparison.Ordinal)))
+                return true;
+        }
+        return false;
     }
 
     public static bool IsFlagsEnum(ITypeSymbol t)

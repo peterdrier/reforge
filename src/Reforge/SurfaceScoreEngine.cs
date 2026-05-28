@@ -1022,8 +1022,15 @@ public sealed class SurfaceScoreEngine
         var largeW = _config.Weight("largeClass");
         var cogW = _config.Weight("cognitiveComplexity");
         var dispW = _config.Weight("actionDispatcher");
+        var gadW = _config.Weight("genericActionDispatcher");
+        var mmpW = _config.Weight("mutationModeParameter");
         var flagsW = _config.Weight("flagsControlFlow");
-        if (longW == 0 && largeW == 0 && cogW == 0 && dispW == 0 && flagsW == 0) return;
+        if (longW == 0 && largeW == 0 && cogW == 0 && dispW == 0 && gadW == 0 && mmpW == 0 && flagsW == 0) return;
+
+        // For interface propagation: where does each classified type live, and what file.
+        var groupByType = new Dictionary<string, (string Group, string File)>(StringComparer.Ordinal);
+        foreach (var ct2 in classified)
+            groupByType[ct2.Type.ToDisplayString()] = (ct2.Group, ct2.File);
 
         foreach (var c in classified)
         {
@@ -1081,17 +1088,51 @@ public sealed class SurfaceScoreEngine
                 if (!surfaceMethod) continue;
                 if (IsAllowedDispatcherMethod(c.Type, m)) continue;
                 if (HasAllowedShapeParam(m)) continue;
+                // Read methods (including *ReadShape / *Query shaped reads) are exempt by behavior.
                 if (!ImplementationComplexity.IsMutation(m, syntax)) continue;
 
-                if (dispW != 0)
+                var d = ImplementationComplexity.AnalyzeDispatcher(m, syntax);
+                var dispatchEnumParams = ImplementationComplexity.DispatchEnumParams(m);
+                bool genericVerb = ImplementationComplexity.IsGenericVerb(m.Name);
+                bool stateEngine = ImplementationComplexity.LooksLikeStateEngine(syntax);
+                bool structuralFired = false;
+
+                if (d.Fires && !stateEngine)
                 {
-                    var d = ImplementationComplexity.AnalyzeDispatcher(m, syntax);
-                    if (d.Fires)
+                    if (genericVerb && dispatchEnumParams.Count > 0 && gadW != 0)
+                    {
+                        // genericActionDispatcher: named generic verb + action/mode enum + a body
+                        // that switches and delegates arms to distinct members. The strongest,
+                        // most-attributable dispatcher smell — also flagged on the interface method.
+                        bool appSvc = c.Tags.Contains("applicationService") || IsApplicationServiceType(c.Type);
+                        int basePts = 20 + 8 * Math.Max(0, d.ArmCount - 2) + (appSvc ? 10 : 0) + 10 /* mutation */;
+                        int pts = basePts * gadW;
+                        var detail = $"{m.Name} ({d.ArmCount}-arm generic dispatch on {EnumParamNames(dispatchEnumParams)}; arms route to distinct members)";
+                        AddEntry(report, c.Group, "genericActionDispatcher", pts, m, file, line, detail);
+                        PropagateDispatcherToInterfaces(report, c.Type, m, "genericActionDispatcher", pts, detail, groupByType);
+                        structuralFired = true;
+                    }
+                    else if (dispW != 0)
                     {
                         int basePts = 20 + 5 * (d.ArmCount - 2);
                         AddEntry(report, c.Group, "actionDispatcher", basePts * dispW, m, file, line,
                             $"{m.Name} ({d.ArmCount}-arm dispatch; arms route to distinct members)");
+                        structuralFired = true;
                     }
+                }
+
+                // mutationModeParameter: a mutation carrying an action/mode enum selector that
+                // folds distinct operations behind one signature, even when the body is small and
+                // doesn't delegate (so it isn't caught structurally above). [Flags] params are
+                // excluded — flagsControlFlow already owns that smell. State engines are exempt.
+                var modeParams = dispatchEnumParams.Where(p => !ImplementationComplexity.IsFlagsEnum(p.Type)).ToList();
+                if (!structuralFired && !stateEngine && modeParams.Count > 0 && mmpW != 0)
+                {
+                    int basePts = 10 + 5 * modeParams.Count + (genericVerb ? 10 : 0);
+                    int pts = basePts * mmpW;
+                    var detail = $"{m.Name} ({EnumParamNames(modeParams)} mode/action param)";
+                    AddEntry(report, c.Group, "mutationModeParameter", pts, m, file, line, detail);
+                    PropagateDispatcherToInterfaces(report, c.Type, m, "mutationModeParameter", pts, detail, groupByType);
                 }
 
                 if (flagsW != 0)
@@ -1104,6 +1145,46 @@ public sealed class SurfaceScoreEngine
                             $"{m.Name} ({flagTests} flag tests)");
                     }
                 }
+            }
+        }
+    }
+
+    private static string EnumParamNames(IReadOnlyList<IParameterSymbol> ps)
+        => string.Join("/", ps.Select(p => p.Type.Name).Distinct());
+
+    private static bool IsApplicationServiceType(INamedTypeSymbol type)
+        => type.Name == "IApplicationService"
+        || type.AllInterfaces.Any(i => i.Name == "IApplicationService");
+
+    /// <summary>
+    /// When a dispatcher/mode smell fires on an implementation method, also attribute it to the
+    /// interface method(s) it implements — the durable public surface is the interface, and an
+    /// agent reading the report needs to see that <c>IShiftSignupService.ApplySignupActionAsync</c>
+    /// is the generic dispatcher, not just the concrete class.
+    /// </summary>
+    private void PropagateDispatcherToInterfaces(ScoreReport report, INamedTypeSymbol implType,
+        IMethodSymbol implMethod, string rule, int points, string detail,
+        Dictionary<string, (string Group, string File)> groupByType)
+    {
+        foreach (var iface in implType.AllInterfaces)
+        {
+            if (!groupByType.TryGetValue(iface.ToDisplayString(), out var info)) continue;
+            foreach (var im in iface.GetMembers().OfType<IMethodSymbol>())
+            {
+                if (im.Name != implMethod.Name) continue;
+                var impl = implType.FindImplementationForInterfaceMember(im);
+                if (!SymbolEqualityComparer.Default.Equals(impl, implMethod)) continue;
+
+                var iloc = im.Locations.FirstOrDefault(l => l.IsInSource);
+                string file; int line;
+                if (iloc is not null)
+                {
+                    var ls = iloc.GetLineSpan();
+                    file = LocationHelper.NormalizePath(ls.Path, _solutionDirectory);
+                    line = ls.StartLinePosition.Line + 1;
+                }
+                else { file = info.File; line = 0; }
+                AddEntry(report, info.Group, rule, points, im, file, line, detail);
             }
         }
     }

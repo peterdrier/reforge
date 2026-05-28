@@ -55,6 +55,8 @@ public static class SurfaceScoreRuleGlossary
         ["largeClass"] = "A service/repository/controller class's nonblank line count exceeds 750; points scale with size (steeper past 1500 lines).",
         ["cognitiveComplexity"] = "A method's SonarSource cognitive-complexity score (nesting-weighted branching) exceeds the threshold; points scale with the excess.",
         ["actionDispatcher"] = "A method that mutates state dispatches on a parameter via a switch or if-chain whose arms route to different members with disjoint bodies (low arm cohesion); read methods and arms sharing a base body are exempt.",
+        ["genericActionDispatcher"] = "A generic-verb-named mutation method (Apply/Handle/Process/Execute/Create/Save) takes an action/mode enum parameter and its implementation switches on it, delegating arms to different members; flagged on both the interface method and its implementation. State-machine entry points (transition validation/vocabulary) are exempt.",
+        ["mutationModeParameter"] = "A public mutation method takes an action/mode enum parameter that selects behavior, even when the body is small and does not delegate; the parameter folds multiple distinct operations behind one signature.",
         ["flagsControlFlow"] = "A method that mutates state branches on a [Flags] enum parameter via HasFlag or bitwise tests; read methods are exempt."
     };
 
