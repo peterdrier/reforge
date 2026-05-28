@@ -90,64 +90,7 @@ public sealed class SurfaceScoreEngine
     {
         var report = new ScoreReport();
         report.ConfiguredSections.AddRange(_config.EffectiveSections.Select(s => s.Name));
-        var classified = new List<ClassifiedType>();
-        // ToDisplayString is the practical cross-compilation identity (SymbolEqualityComparer
-        // doesn't match symbols from different project compilations). A type that lives in a
-        // shared assembly is seen once per consuming project; without this dedup it would
-        // appear N times in `classified` and crash any downstream ToDictionary keyed by it.
-        var seenByDisplay = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var project in solution.Projects)
-        {
-            if (project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            var compilation = await project.GetCompilationAsync(ct);
-            if (compilation is null) continue;
-
-            foreach (var type in EnumerateTypes(compilation.GlobalNamespace))
-            {
-                if (!type.Locations.Any(l => l.IsInSource)) continue;
-                if (type.IsImplicitlyDeclared) continue;
-                if (type.DeclaredAccessibility == Accessibility.Private) continue;
-
-                if (!seenByDisplay.Add(type.ToDisplayString())) continue;
-
-                var primaryLocation = type.Locations.First(l => l.IsInSource);
-                var filePath = primaryLocation.SourceTree?.FilePath ?? "";
-                var relPath = LocationHelper.NormalizePath(filePath, _solutionDirectory);
-                var nsName = type.ContainingNamespace?.ToDisplayString() ?? "";
-
-                var (group, sectionMatch) = ResolveSection(type, relPath, nsName);
-                var tags = Classify(type, relPath, nsName);
-
-                // Auto-classify types named in a section's RepositoryInterfaces / ServiceInterfaces /
-                // ReadServiceInterfaces lists. This is sugar: the user doesn't have to write a
-                // matching classification entry — and these lists are usually the most accurate
-                // (hand-curated) signal we have about what role each interface plays.
-                if (sectionMatch?.MatchKind == SectionMatchKind.RepositoryInterface)
-                {
-                    tags.Add("repositoryInterface");
-                    tags.Remove("fullServiceInterface");
-                    tags.Remove("readServiceInterface");
-                }
-                else if (sectionMatch?.MatchKind == SectionMatchKind.ReadServiceInterface)
-                {
-                    tags.Add("readServiceInterface");
-                    tags.Remove("fullServiceInterface");
-                    tags.Remove("repositoryInterface");
-                }
-                else if (sectionMatch?.MatchKind == SectionMatchKind.ServiceInterface)
-                {
-                    tags.Add("fullServiceInterface");
-                    tags.Remove("readServiceInterface");
-                    tags.Remove("repositoryInterface");
-                }
-
-                classified.Add(new ClassifiedType(type, group, tags, relPath, primaryLocation));
-            }
-        }
-
+        var classified = (await SolutionClassifier.ClassifyAsync(solution, _config, _solutionDirectory, ct)).ToList();
         report.TypesAnalyzed = classified.Count;
 
         // Single canonical index — built once, used by both dependency-use and DI-registration
@@ -186,132 +129,6 @@ public sealed class SurfaceScoreEngine
         await ScoreInlineParameterObjectConstructionAsync(typesByDisplay, solution, report, ct);
 
         return report;
-    }
-
-    private static IEnumerable<INamedTypeSymbol> EnumerateTypes(INamespaceSymbol ns)
-    {
-        foreach (var m in ns.GetMembers())
-        {
-            switch (m)
-            {
-                case INamespaceSymbol child:
-                    foreach (var t in EnumerateTypes(child)) yield return t;
-                    break;
-                case INamedTypeSymbol type:
-                    yield return type;
-                    foreach (var nested in type.GetTypeMembers())
-                        yield return nested;
-                    break;
-            }
-        }
-    }
-
-    private (string Group, SectionMatchResult? MatchResult) ResolveSection(
-        INamedTypeSymbol type, string filePath, string namespaceName)
-    {
-        foreach (var rule in _config.EffectiveSections)
-        {
-            // Exact-name lists first — they're the most precise signal and need to win even
-            // when a less-specific Symbols pattern from another section would match.
-            if (rule.RepositoryInterfaces.Contains(type.Name, StringComparer.Ordinal))
-                return (rule.Name, new SectionMatchResult(SectionMatchKind.RepositoryInterface));
-            if (rule.ReadServiceInterfaces.Contains(type.Name, StringComparer.Ordinal))
-                return (rule.Name, new SectionMatchResult(SectionMatchKind.ReadServiceInterface));
-            if (rule.ServiceInterfaces.Contains(type.Name, StringComparer.Ordinal))
-                return (rule.Name, new SectionMatchResult(SectionMatchKind.ServiceInterface));
-
-            foreach (var p in rule.Paths)
-                if (GlobMatcher.MatchesPath(filePath, p))
-                    return (rule.Name, new SectionMatchResult(SectionMatchKind.Path));
-            foreach (var n in rule.Namespaces)
-                if (namespaceName.StartsWith(n, StringComparison.Ordinal))
-                    return (rule.Name, new SectionMatchResult(SectionMatchKind.Namespace));
-            foreach (var s in rule.Symbols)
-                if (GlobMatcher.MatchesName(type.Name, s))
-                    return (rule.Name, new SectionMatchResult(SectionMatchKind.Symbol));
-        }
-
-        if (_config.GroupByNamespaceFallback && !string.IsNullOrEmpty(namespaceName))
-        {
-            // Heuristic: top-level segment after the assembly/root namespace is the section.
-            // e.g. "MyApp.Application.Tickets.Services" -> "Tickets" when there are 3+ parts;
-            // shorter namespaces fall back to the deepest segment.
-            var parts = namespaceName.Split('.');
-            if (parts.Length >= 3) return (parts[2], null);
-            if (parts.Length >= 2) return (parts[1], null);
-            return (parts[0], null);
-        }
-
-        return ("(ungrouped)", null);
-    }
-
-    private enum SectionMatchKind { Path, Namespace, Symbol, RepositoryInterface, ServiceInterface, ReadServiceInterface }
-    private sealed record SectionMatchResult(SectionMatchKind MatchKind);
-
-    private HashSet<string> Classify(INamedTypeSymbol type, string filePath, string namespaceName)
-    {
-        var tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var (name, rule) in _config.Classifications)
-        {
-            if (Matches(rule, type, filePath, namespaceName))
-                tags.Add(name);
-        }
-
-        // Resolve precedence: a concrete *Repository class also matches *Service via the
-        // generic defaults. Repository wins over applicationService; interface tags win
-        // over implementation tags on interfaces.
-        if (type.TypeKind == TypeKind.Interface)
-        {
-            tags.Remove("repositoryImplementation");
-            tags.Remove("applicationService");
-            tags.Remove("controller");
-            tags.Remove("backgroundJob");
-            // Read-service interface is a refinement of full-service; keep only the more specific tag.
-            if (tags.Contains("readServiceInterface"))
-                tags.Remove("fullServiceInterface");
-            if (tags.Contains("repositoryInterface"))
-                tags.Remove("fullServiceInterface");
-        }
-        else
-        {
-            tags.Remove("readServiceInterface");
-            tags.Remove("fullServiceInterface");
-            tags.Remove("repositoryInterface");
-            if (tags.Contains("repositoryImplementation"))
-                tags.Remove("applicationService");
-        }
-
-        return tags;
-    }
-
-    private static bool Matches(ClassificationRule rule, INamedTypeSymbol type, string filePath, string namespaceName)
-    {
-        // Any single criterion matching is enough — rules are inclusive disjunctions.
-        foreach (var p in rule.NamePatterns)
-            if (GlobMatcher.MatchesName(type.Name, p)) return true;
-        foreach (var p in rule.Paths)
-            if (GlobMatcher.MatchesPath(filePath, p)) return true;
-        foreach (var n in rule.Namespaces)
-            if (namespaceName.StartsWith(n, StringComparison.Ordinal)) return true;
-        foreach (var i in rule.Inherits)
-            if (InheritsByName(type, i)) return true;
-        foreach (var a in rule.AttributeNames)
-            if (type.GetAttributes().Any(at => at.AttributeClass?.Name == a || at.AttributeClass?.Name == a + "Attribute")) return true;
-        return false;
-    }
-
-    private static bool InheritsByName(INamedTypeSymbol type, string name)
-    {
-        var current = type.BaseType;
-        while (current is not null)
-        {
-            if (current.Name == name) return true;
-            current = current.BaseType;
-        }
-        foreach (var iface in type.AllInterfaces)
-            if (iface.Name == name) return true;
-        return false;
     }
 
     // ---------------- Pass 1: Durable Surface ----------------
@@ -831,7 +648,7 @@ public sealed class SurfaceScoreEngine
         }
     }
 
-    private Dictionary<string, ClassifiedType> BuildFullToReadPairs(
+    internal static Dictionary<string, ClassifiedType> BuildFullToReadPairs(
         List<ClassifiedType> classified,
         Dictionary<string, ClassifiedType> typesByDisplay)
     {
@@ -1431,13 +1248,4 @@ public sealed class SurfaceScoreEngine
         }
     }
 
-    private sealed record ClassifiedType(
-        INamedTypeSymbol Type,
-        string Group,
-        HashSet<string> Tags,
-        string File,
-        Location PrimaryLocation)
-    {
-        public int Line => PrimaryLocation.GetLineSpan().StartLinePosition.Line + 1;
-    }
 }
