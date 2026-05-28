@@ -711,6 +711,50 @@ public class SurfaceScoreTests
     }
 
     [Fact]
+    public void LoadOrDefault_ParsesSectionMetadata()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-metadata");
+        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "reforge.surface-score.json");
+        File.WriteAllText(configPath, """
+            {
+              "sections": {
+                "Camp": {
+                  "repositoryInterfaces": ["ICampRepository"],
+                  "serviceInterfaces": ["ICampService"],
+                  "readServiceInterfaces": ["ICampServiceRead"],
+                  "primaryInfoDto": "CampInfo",
+                  "settingsInfoDto": "CampSettingsInfo",
+                  "cacheDto": "CampInfo",
+                  "readShards": [ { "name": "ShiftsByRota", "purpose": "rota-scoped" } ],
+                  "requiresReadSurface": true,
+                  "grandfatheredDependencies": [
+                    { "dependency": "PlacementService->ICampService", "reason": "legacy", "since": "2026-03", "owner": "camps" }
+                  ],
+                  "escapeHatchReadMethods": [
+                    { "method": "ICampServiceRead.MigrateLegacy*", "reason": "one-shot", "since": "2026-02" }
+                  ]
+                }
+              }
+            }
+            """);
+
+        var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
+        var camp = cfg.EffectiveSections.Single(s => s.Name == "Camp");
+
+        Assert.Equal("CampInfo", camp.PrimaryInfoDto);
+        Assert.Equal("CampSettingsInfo", camp.SettingsInfoDto);
+        Assert.Equal("CampInfo", camp.CacheDto);
+        Assert.Equal("ShiftsByRota", camp.ReadShards.Single().Name);
+        Assert.Equal("rota-scoped", camp.ReadShards.Single().Purpose);
+        Assert.True(camp.RequiresReadSurface);
+        Assert.Equal("PlacementService->ICampService", camp.GrandfatheredDependencies.Single().Dependency);
+        Assert.Equal("legacy", camp.GrandfatheredDependencies.Single().Reason);
+        Assert.Equal("ICampServiceRead.MigrateLegacy*", camp.EscapeHatchReadMethods.Single().Method);
+    }
+
+    [Fact]
     public async Task ConfiguredButEmptySection_IsDistinguishableFromUnknownSection()
     {
         var cfg = new SurfaceScoreConfig();

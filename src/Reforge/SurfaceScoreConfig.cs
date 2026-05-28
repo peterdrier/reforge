@@ -287,6 +287,29 @@ public sealed class SectionRule
     /// otherwise match the entity classification.
     /// </summary>
     public List<string> CanonicalReadDtos { get; set; } = new();
+
+    /// <summary>Primary read/cache DTO for this section. Default convention: "&lt;Section&gt;Info".</summary>
+    public string? PrimaryInfoDto { get; set; }
+    /// <summary>Settings DTO for this section. Default convention: "&lt;Section&gt;SettingsInfo".</summary>
+    public string? SettingsInfoDto { get; set; }
+    /// <summary>Cache value DTO. Default: == PrimaryInfoDto; else inferred from a caching decorator.</summary>
+    public string? CacheDto { get; set; }
+    /// <summary>Documented read shards (narrow read models intentionally split off the primary read surface).</summary>
+    public List<ReadShard> ReadShards { get; set; } = new();
+    /// <summary>Override: does this section require a read surface? Null = inferred from repo-backed.</summary>
+    public bool? RequiresReadSurface { get; set; }
+    /// <summary>Override: does this section require a write/full surface? Null = inferred from repo-backed.</summary>
+    public bool? RequiresWriteSurface { get; set; }
+    /// <summary>Override: does this section require a primary Info DTO? Null = inferred from repo-backed.</summary>
+    public bool? RequiresPrimaryInfoDto { get; set; }
+    /// <summary>Cross-section write/full dependencies exempt from crossSectionWriteSurface (visible debt).</summary>
+    public List<GrandfatheredDependency> GrandfatheredDependencies { get; set; } = new();
+    /// <summary>Read methods exempt from readSurfaceProjectionMethod (visible debt).</summary>
+    public List<EscapeHatchReadMethod> EscapeHatchReadMethods { get; set; } = new();
+
+    /// <summary>True when the section owns at least one repository by config. The engine widens this
+    /// with classified repositories resolved into the section (see SolutionClassifier).</summary>
+    public bool HasConfiguredRepository => RepositoryInterfaces.Count > 0;
 }
 
 public sealed class GroupRule
@@ -318,6 +341,30 @@ public sealed class ResourceConfig
 public sealed class DbSetConfig
 {
     public Dictionary<string, string> OwnerByName { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class ReadShard
+{
+    public string Name { get; set; } = "";
+    public string Purpose { get; set; } = "";
+}
+
+public sealed class GrandfatheredDependency
+{
+    /// <summary>"CallerType" or "CallerType-&gt;ICalleeInterface".</summary>
+    public string Dependency { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public string Since { get; set; } = "";
+    public string? Owner { get; set; }
+}
+
+public sealed class EscapeHatchReadMethod
+{
+    /// <summary>Glob over "Interface.Method" or "Method".</summary>
+    public string Method { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public string Since { get; set; } = "";
+    public string? Owner { get; set; }
 }
 
 /// <summary>
