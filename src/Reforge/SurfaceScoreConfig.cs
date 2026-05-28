@@ -210,6 +210,14 @@ public sealed class SurfaceScoreConfig
                 ["canonicalReadDtoReturn"] = -3,
                 ["methodReturnsEntityAcrossSection"] = 15,
 
+                // Boundary-input surface — a parameter-object refactor can dodge
+                // methodParameterOverflow by moving a long argument list into an input/command
+                // object. These charge for that object as durable boundary surface (multipliers
+                // over base points computed from the symbol model; default 1, 0 disables).
+                ["publicInputWithHiddenState"] = 1,
+                ["parameterBagInput"] = 1,
+                ["inlineParameterObjectConstruction"] = 1,
+
                 // Dependency use
                 ["sameSectionReadService"] = 0,
                 ["crossSectionReadInterface"] = 2,

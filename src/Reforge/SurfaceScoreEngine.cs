@@ -180,6 +180,11 @@ public sealed class SurfaceScoreEngine
         // size, and structural action-dispatcher detection — the counterweight to surface.
         ScoreImplementationComplexity(classified, report, ct);
 
+        // Pass 7 — boundary-input surface. Charges for parameter/command objects that hide a
+        // long argument list (so a parameter-object refactor can't game methodParameterOverflow).
+        ScoreBoundaryInputs(classified, typesByDisplay, report, ct);
+        await ScoreInlineParameterObjectConstructionAsync(typesByDisplay, solution, report, ct);
+
         return report;
     }
 
@@ -1148,6 +1153,147 @@ public sealed class SurfaceScoreEngine
             }
         }
     }
+
+    // ---------------- Pass 7: Boundary-input surface ----------------
+
+    private sealed class BoundaryUsage
+    {
+        public BoundaryUsage(INamedTypeSymbol type) => Type = type;
+        public INamedTypeSymbol Type { get; }
+        public int MethodCount { get; set; }
+        public HashSet<string> Families { get; } = new(StringComparer.Ordinal);
+        public int MinBusinessParams { get; set; } = int.MaxValue;
+    }
+
+    /// <summary>
+    /// Charges for parameter/command/request objects on the public boundary. A refactor that
+    /// replaces <c>CreateCampAsync(a, b, c, d, e, f)</c> with
+    /// <c>CreateCampAsync(CampRegistrationInput input)</c> drops methodParameterOverflow but the
+    /// object still carries the same durable surface — and hides it if its accessors are
+    /// internal. These rules (surface axis) restore that charge so the trade is visible.
+    /// </summary>
+    private void ScoreBoundaryInputs(List<ClassifiedType> classified,
+        Dictionary<string, ClassifiedType> typesByDisplay, ScoreReport report, CancellationToken ct)
+    {
+        var hiddenW = _config.Weight("publicInputWithHiddenState");
+        var bagW = _config.Weight("parameterBagInput");
+        if (hiddenW == 0 && bagW == 0) return;
+
+        // How is each boundary type used as a parameter of public / interface methods?
+        var usage = new Dictionary<string, BoundaryUsage>(StringComparer.Ordinal);
+        foreach (var c in classified)
+        {
+            bool isInterface = c.Type.TypeKind == TypeKind.Interface;
+            foreach (var m in c.Type.GetMembers().OfType<IMethodSymbol>())
+            {
+                if (m.MethodKind != MethodKind.Ordinary) continue;
+                if (m.AssociatedSymbol is not null || m.IsImplicitlyDeclared) continue;
+                if (!(isInterface || m.DeclaredAccessibility == Accessibility.Public)) continue;
+
+                int businessParams = m.Parameters.Count(p => p.Type.Name != "CancellationToken");
+                foreach (var p in m.Parameters)
+                {
+                    if (p.Type is not INamedTypeSymbol pt) continue;
+                    if (!pt.Locations.Any(l => l.IsInSource)) continue;
+                    if (!BoundaryInput.IsBoundaryName(pt.Name)) continue;
+
+                    var key = pt.ToDisplayString();
+                    if (!usage.TryGetValue(key, out var u))
+                    {
+                        u = new BoundaryUsage(pt);
+                        usage[key] = u;
+                    }
+                    u.MethodCount++;
+                    u.Families.Add(StripAsyncName(m.Name));
+                    u.MinBusinessParams = Math.Min(u.MinBusinessParams, businessParams);
+                }
+            }
+        }
+
+        foreach (var u in usage.Values)
+        {
+            if (!typesByDisplay.TryGetValue(u.Type.ToDisplayString(), out var c)) continue;
+            var t = u.Type;
+
+            int dataMembers = BoundaryInput.DataMemberCount(t);
+            int publicReadable = BoundaryInput.PublicReadableCount(t);
+            int hidden = Math.Max(0, dataMembers - publicReadable);
+            bool isPublic = t.DeclaredAccessibility == Accessibility.Public;
+
+            if (hiddenW != 0 && isPublic && dataMembers >= 2 && publicReadable * 2 < dataMembers)
+            {
+                int basePts = 15 + 2 * Math.Max(0, hidden - 2);
+                AddEntry(report, c.Group, "publicInputWithHiddenState", basePts * hiddenW, t, c.File, c.Line,
+                    $"{t.Name} ({publicReadable}/{dataMembers} members publicly readable)");
+            }
+
+            bool publicOrInternal = t.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal;
+            int ctorParams = BoundaryInput.WidestCtorParamCount(t);
+            int members = Math.Max(ctorParams, dataMembers);
+            if (bagW != 0 && publicOrInternal && (ctorParams >= 4 || dataMembers >= 4)
+                && !BoundaryInput.HasBehavior(t) && BoundaryInput.CtorIsDirectAssignment(t, ct)
+                && u.MinBusinessParams <= 2)
+            {
+                int basePts = 12 + 2 * Math.Max(0, members - 4) + (u.Families.Count == 1 ? 8 : 0);
+                AddEntry(report, c.Group, "parameterBagInput", basePts * bagW, t, c.File, c.Line,
+                    $"{t.Name} ({members} members, no behavior; used by {string.Join("/", u.Families)})");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Counts call sites that construct a boundary input object inline inside a method call
+    /// (<c>Foo(new XInput(a, b, c, d))</c>) — the complexity moved from the signature to the
+    /// construction site rather than disappearing. +5 per site, capped at +25 per type.
+    /// </summary>
+    private async Task ScoreInlineParameterObjectConstructionAsync(
+        Dictionary<string, ClassifiedType> typesByDisplay, Solution solution, ScoreReport report, CancellationToken ct)
+    {
+        var w = _config.Weight("inlineParameterObjectConstruction");
+        if (w == 0) return;
+
+        var siteCountByType = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var project in solution.Projects)
+        {
+            if (project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase)) continue;
+            var compilation = await project.GetCompilationAsync(ct);
+            if (compilation is null) continue;
+
+            foreach (var tree in compilation.SyntaxTrees)
+            {
+                var root = await tree.GetRootAsync(ct);
+                var model = compilation.GetSemanticModel(tree);
+
+                foreach (var inv in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+                {
+                    if (inv.ArgumentList is null) continue;
+                    foreach (var arg in inv.ArgumentList.Arguments)
+                    {
+                        if (arg.Expression is not BaseObjectCreationExpressionSyntax oc) continue;
+                        if (model.GetTypeInfo(oc, ct).Type is not INamedTypeSymbol t) continue;
+                        if (!BoundaryInput.IsBoundaryName(t.Name)) continue;
+                        int count = Math.Max(oc.ArgumentList?.Arguments.Count ?? 0, oc.Initializer?.Expressions.Count ?? 0);
+                        if (count < 4) continue;
+                        var key = t.ToDisplayString();
+                        siteCountByType[key] = siteCountByType.GetValueOrDefault(key) + 1;
+                    }
+                }
+            }
+        }
+
+        foreach (var (display, sites) in siteCountByType)
+        {
+            if (!typesByDisplay.TryGetValue(display, out var c)) continue;
+            int pts = Math.Min(25, 5 * sites) * w;
+            if (pts == 0) continue;
+            AddEntry(report, c.Group, "inlineParameterObjectConstruction", pts, c.Type, c.File, c.Line,
+                $"{c.Type.Name} constructed inline at {sites} call site(s)");
+        }
+    }
+
+    private static string StripAsyncName(string name)
+        => name.EndsWith("Async", StringComparison.Ordinal) && name.Length > 5 ? name[..^5] : name;
 
     private static string EnumParamNames(IReadOnlyList<IParameterSymbol> ps)
         => string.Join("/", ps.Select(p => p.Type.Name).Distinct());

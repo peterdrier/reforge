@@ -520,6 +520,75 @@ public class SurfaceScoreTests
         Assert.Equal(report.SurfaceTotal + report.InternalComplexityTotal, report.Total);
     }
 
+    // ---------------- Boundary-input surface ----------------
+
+    [Fact]
+    public async Task PublicInputWithHiddenState_FiresOnInternalGetterInput()
+    {
+        // CampRegistrationInput: public, used as a public-method param, all 6 members internal.
+        var report = await ScoreDefaultAsync();
+        var entries = AllEntries(report).ToList();
+        Assert.Contains(entries, e => e.Rule == "publicInputWithHiddenState" && e.Symbol == "CampRegistrationInput");
+        Assert.Contains(entries, e => e.Rule == "parameterBagInput" && e.Symbol == "CampRegistrationInput");
+    }
+
+    [Fact]
+    public async Task InlineParameterObjectConstruction_FiresAtCallSite()
+    {
+        var report = await ScoreDefaultAsync();
+        Assert.Contains(AllEntries(report),
+            e => e.Rule == "inlineParameterObjectConstruction" && e.Symbol == "CampRegistrationInput");
+    }
+
+    [Fact]
+    public async Task GoodRequestRecord_WithPublicStateAndValidation_IsNotPenalized()
+    {
+        // CampRegistrationRequest: public readable record + Validate() behavior. None of the
+        // boundary-input rules should fire on it.
+        var report = await ScoreDefaultAsync();
+        var entries = AllEntries(report).Where(e => e.Symbol == "CampRegistrationRequest").ToList();
+        Assert.DoesNotContain(entries, e => e.Rule == "publicInputWithHiddenState");
+        Assert.DoesNotContain(entries, e => e.Rule == "parameterBagInput");
+    }
+
+    [Fact]
+    public async Task BoundaryInputRules_AreOnSurfaceAxis_NotInternalComplexity()
+    {
+        // The whole point: these counter a surface reduction, so they must land on surface.
+        var report = await ScoreDefaultAsync();
+        foreach (var rule in new[] { "publicInputWithHiddenState", "parameterBagInput", "inlineParameterObjectConstruction" })
+            Assert.False(SurfaceScoreRuleGroups.IsInternalComplexity(rule), $"{rule} must be a surface rule");
+    }
+
+    [Fact]
+    public void Pareto_ParameterBagConsolidation_IsFlaggedEvenWhenInternalFlat()
+    {
+        // methodParameterOverflow falls (signature shortened) but equivalent input-bag surface
+        // appears — flagged regardless of verdict, even with internal complexity unchanged.
+        var basePath = WriteBaselineJson(new
+        {
+            total = 1000,
+            surfaceTotal = 1000,
+            internalComplexityTotal = 0,
+            byRule = new Dictionary<string, int> { ["methodParameterOverflow"] = 30 }
+        });
+
+        var now = new ScoreReport { SurfaceTotal = 1010, InternalComplexityTotal = 0, Total = 1010 };
+        now.ByRule["methodParameterOverflow"] = 6;
+        now.ByRule["parameterBagInput"] = 24;
+        now.ByRule["publicInputWithHiddenState"] = 23;
+        var g = new GroupScore { Name = "Camps", SurfaceTotal = 1010, InternalComplexityTotal = 0 };
+        g.ByRule["methodParameterOverflow"] = 6;
+        g.ByRule["parameterBagInput"] = 24;
+        g.Entries.Add(new ScoreEntry("parameterBagInput", 24, "CampRegistrationInput", "Camps", "CampFixtures.cs", 1, "CampRegistrationInput"));
+        now.Groups["Camps"] = g;
+
+        var cmp = SurfaceScoreBaseline.Compare(now, basePath);
+
+        Assert.Contains(cmp.Suspicious, s => s.Kind == "parameter-bag-consolidation"
+            && s.Message.Contains("CampRegistrationInput", StringComparison.Ordinal));
+    }
+
     // ---------------- Pareto gate (baseline comparison) ----------------
 
     [Fact]

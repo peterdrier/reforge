@@ -49,6 +49,7 @@ public static class SurfaceScoreBaseline
     };
     private static readonly string[] DispatcherRules = { "actionDispatcher", "flagsControlFlow" };
     private static readonly string[] GodMethodRules = { "longMethod", "cognitiveComplexity", "largeClass" };
+    private static readonly string[] ParamBagRules = { "publicInputWithHiddenState", "parameterBagInput", "inlineParameterObjectConstruction" };
 
     public static BaselineComparison Compare(ScoreReport now, string baselineJsonPath)
     {
@@ -149,6 +150,25 @@ public static class SurfaceScoreBaseline
                     $"{scope}: interface-method surface dropped by {-dInterface} points while long/complex-method penalties rose by {dGod}.",
                     dSurface, dInternal, false));
             }
+        }
+
+        // Parameter-bag consolidation: methodParameterOverflow fell but equivalent input/command
+        // surface was introduced. Flagged regardless of verdict — the trade can keep surface flat
+        // (the bag offsets the param reduction) and need not touch internal complexity at all.
+        int dOverflow = now.ByRule.GetValueOrDefault("methodParameterOverflow") - b.ByRule.GetValueOrDefault("methodParameterOverflow");
+        int dParamBag = SumRules(now.ByRule, ParamBagRules) - SumRules(b.ByRule, ParamBagRules);
+        if (dOverflow < 0 && dParamBag > 0)
+        {
+            var types = nowEntries.Where(e => ParamBagRules.Contains(e.Rule, StringComparer.Ordinal))
+                .OrderByDescending(e => e.Points)
+                .Select(e => e.Symbol)
+                .Distinct(StringComparer.Ordinal)
+                .Take(3)
+                .ToList();
+            var typeStr = types.Count > 0 ? $": {string.Join(", ", types)}" : "";
+            sink.Add(new SuspiciousImprovement(scope, "parameter-bag-consolidation",
+                $"{scope}: method parameter score decreased by {-dOverflow}, but equivalent input/parameter-bag surface was introduced (+{dParamBag}){typeStr}.",
+                dSurface, dInternal, false));
         }
 
         return new ScopeDelta(scope, b.Surface, now.Surface, dSurface, b.Internal, now.Internal, dInternal, verdict, improvement);
