@@ -53,8 +53,9 @@ public static class ReadSurface
 
     private static bool IsScalarFact(ITypeSymbol t)
     {
+        // bool is caught as Predicate before this is called, so it's intentionally excluded here.
         if (t.SpecialType is SpecialType.System_String or SpecialType.System_Int32
-            or SpecialType.System_Int64 or SpecialType.System_Boolean or SpecialType.System_Double
+            or SpecialType.System_Int64 or SpecialType.System_Double
             or SpecialType.System_Decimal) return true;
         var n = t.Name;
         return n is "Guid" or "DateTime" or "DateTimeOffset" or "DateOnly" or "TimeOnly";

@@ -14,6 +14,7 @@ public class ReadSurfaceTests
             public sealed class CampSummary { public string Name { get; set; } }
             public sealed class CampSearchHit { public Guid Id { get; set; } }
             public sealed class CampSearchQuery { public string Term { get; set; } public int Page { get; set; } }
+            public sealed class CampDetailData { public string Html { get; set; } }
             public interface {{iface}} { {{member}} }
             """);
         var comp = CSharpCompilation.Create("t", new[] { tree },
@@ -29,6 +30,7 @@ public class ReadSurfaceTests
     [InlineData("Task<CampInfo> GetByIdAsync(Guid id);", ReadMethodKind.PrimitiveRead)]
     [InlineData("Task<CampSettingsInfo> GetSettingsAsync(Guid c);", ReadMethodKind.SettingsRead)]
     [InlineData("Task<List<CampSearchHit>> SearchAsync(CampSearchQuery q);", ReadMethodKind.Search)]
+    [InlineData("Task<CampDetailData> GetDetailAsync(Guid id);", ReadMethodKind.UiBuilder)]
     public void Classify_AssignsExpectedKind(string member, ReadMethodKind expected)
     {
         var m = Method("ICampServiceRead", member);
