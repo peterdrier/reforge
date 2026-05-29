@@ -83,8 +83,7 @@ public static class ReadSurface
         return n.EndsWith("SearchHit", StringComparison.Ordinal)
             || n.EndsWith("Hit", StringComparison.Ordinal)
             || n.EndsWith("SearchResult", StringComparison.Ordinal)
-            || n.EndsWith("Result", StringComparison.Ordinal)
-            || n.EndsWith("Page", StringComparison.Ordinal);
+            || n.EndsWith("SearchPage", StringComparison.Ordinal);
     }
 
     private static ITypeSymbol UnwrapTaskLike(ITypeSymbol t)
