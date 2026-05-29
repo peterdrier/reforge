@@ -69,3 +69,60 @@ public sealed record CampRegistrationRequest(
             throw new ArgumentException("Name is required.", nameof(Name));
     }
 }
+
+// --- Section-architecture fixtures (read/full pair + nested canonical Info DTO) ---
+
+public interface ICampServiceRead
+{
+    Task<CampInfo> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<CampSettingsInfo> GetSettingsAsync(Guid campId, CancellationToken ct = default);
+    Task<bool> IsUserCampLeadAsync(Guid campId, Guid userId, CancellationToken ct = default);            // predicate (charged)
+    Task<List<CampSummary>> GetCampSummariesForYearAsync(int year, CancellationToken ct = default);      // projection (charged)
+}
+
+public interface ICampSectionService : ICampServiceRead
+{
+    Task RenameAsync(Guid id, string name, CancellationToken ct = default);
+}
+
+public sealed class CampSectionService : ICampSectionService
+{
+    public Task<CampInfo> GetByIdAsync(Guid id, CancellationToken ct = default) => Task.FromResult(new CampInfo());
+    public Task<CampSettingsInfo> GetSettingsAsync(Guid campId, CancellationToken ct = default) => Task.FromResult(new CampSettingsInfo());
+    public Task<bool> IsUserCampLeadAsync(Guid campId, Guid userId, CancellationToken ct = default) => Task.FromResult(false);
+    public Task<List<CampSummary>> GetCampSummariesForYearAsync(int year, CancellationToken ct = default) => Task.FromResult(new List<CampSummary>());
+    public Task RenameAsync(Guid id, string name, CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public sealed class CampInfo
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = "";
+    public List<CampSeasonInfo> Seasons { get; set; } = new();
+    public CampSeasonInfo? CurrentSeason { get; set; }
+    public List<string> ImageUrls { get; set; } = new();
+}
+
+public sealed class CampSeasonInfo
+{
+    public int Year { get; set; }
+    public List<CampMemberInfo> Members { get; set; } = new();
+}
+
+public sealed class CampMemberInfo
+{
+    public Guid UserId { get; set; }
+    public bool IsLead { get; set; }
+}
+
+public sealed class CampSettingsInfo
+{
+    public int CurrentYear { get; set; }
+    public DateTime NameLockDate { get; set; }
+}
+
+public sealed class CampSummary
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = "";
+}
