@@ -56,6 +56,11 @@ public sealed class ScoreReport
     /// the score-driven-consolidation smell. Empty otherwise.
     /// </summary>
     public List<SuspiciousImprovement> SuspiciousImprovements { get; } = new();
+    /// <summary>
+    /// Per-section conservation anchors (canonical DTOs + read/full interfaces) the Plan C gate
+    /// holds refactors to. Always emitted (report-level, independent of any top-symbols cap).
+    /// </summary>
+    public List<ConservationAnchor> ConservationAnchors { get; set; } = new();
 }
 
 public sealed record ScoreDiagnostic(string Level, string Code, string Message);
@@ -72,6 +77,21 @@ public sealed record SuspiciousImprovement(
     int SurfaceDelta,
     int InternalDelta,
     bool Improvement);
+
+public sealed record ConservationAnchorMethod(string Name, string Returns);
+
+/// <summary>
+/// A fully-qualified, section-keyed anchor the conservation gate can hold a refactor to: a
+/// canonical DTO (with its recursive member paths) or a read/full service interface (with its
+/// method signatures). <see cref="ByRule"/> carries the surface points attributed to the anchor.
+/// </summary>
+public sealed record ConservationAnchor(
+    string Key,
+    string Section,
+    string Role,
+    IReadOnlyList<string> Paths,
+    IReadOnlyList<ConservationAnchorMethod> Methods,
+    Dictionary<string, int> ByRule);
 
 /// <summary>
 /// Computes a Surface Score for a Roslyn <see cref="Solution"/> using the supplied
@@ -101,6 +121,11 @@ public sealed class SurfaceScoreEngine
         // Single canonical index — built once, used by both dependency-use and DI-registration
         // passes. Safe under duplicate ToDisplayString because `classified` is already deduped.
         var typesByDisplay = classified.ToDictionary(c => c.Type.ToDisplayString(), c => c, StringComparer.Ordinal);
+
+        // Section architecture (Plan B): resolve each configured section's shape once. Used to
+        // score the five section rules and to emit conservation anchors. Computed before Pass 5
+        // so the cross-section specialization can suppress the generic rule for the same pairs.
+        var architecture = await SectionShapeAnalyzer.AnalyzeAsync(solution, classified, _config, _solutionDirectory, ct);
 
         // Pass 1 — durable surface
         ScoreDurableSurface(classified, report);
@@ -132,6 +157,10 @@ public sealed class SurfaceScoreEngine
         // long argument list (so a parameter-object refactor can't game methodParameterOverflow).
         ScoreBoundaryInputs(classified, typesByDisplay, report, ct);
         await ScoreInlineParameterObjectConstructionAsync(typesByDisplay, solution, report, ct);
+
+        // Section-architecture scored rules (surface axis) + conservation anchors.
+        ScoreSectionArchitecture(architecture, report);
+        report.ConservationAnchors = BuildConservationAnchors(architecture, report);
 
         // Build health: detect a degraded (unbuilt/erroring) compilation so a partial
         // score is never mistaken for a complete one. Reuses the per-project compilations
@@ -981,6 +1010,39 @@ public sealed class SurfaceScoreEngine
         }
     }
 
+    // ---------------- Section architecture (Plan B) ----------------
+
+    /// <summary>
+    /// Scores the section shapes onto the surface axis: the <c>readSurfaceProjectionMethod</c>
+    /// surcharge for charged read methods, the repo-backed <c>missing*</c> rules, and the
+    /// cross-section <c>crossSectionWriteSurface</c> rule. Only configured sections produce shapes,
+    /// so default-config runs (no sections) add nothing here.
+    /// </summary>
+    private void ScoreSectionArchitecture(SectionArchitecture arch, ScoreReport report)
+    {
+        var projW = _config.Weight("readSurfaceProjectionMethod");
+        foreach (var section in arch.Sections)
+        {
+            // Projection surcharge: only when the section has a resolved primary Info DTO — without
+            // that anchor a primitive read can't be distinguished from a projection.
+            if (projW != 0 && section.PrimaryInfoDto is not null)
+            {
+                foreach (var rm in section.ChargedReadMethods)
+                {
+                    if (rm.EscapeHatch) continue;
+                    var detail = $"{rm.Interface}.{rm.Method} ({rm.Kind})";
+                    if (rm.Symbol is not null)
+                        AddEntry(report, section.Name, "readSurfaceProjectionMethod", projW, rm.Symbol, rm.File, rm.Line, detail);
+                    else
+                        AddEntryByName(report, section.Name, "readSurfaceProjectionMethod", projW, rm.Method, rm.File, rm.Line, detail);
+                }
+            }
+        }
+    }
+
+    /// <summary>Stub until Task 6 — the conservation-anchor model is finalized, the builder lands later.</summary>
+    private List<ConservationAnchor> BuildConservationAnchors(SectionArchitecture arch, ScoreReport report) => new();
+
     // ---------------- Pass 7: Boundary-input surface ----------------
 
     private sealed class BoundaryUsage
@@ -1230,6 +1292,14 @@ public sealed class SurfaceScoreEngine
 
     private static void AddEntry(ScoreReport report, string groupName, string rule, int points,
         ISymbol symbol, string file, int line, string? detail)
+        => AddEntryByName(report, groupName, rule, points, symbol.Name, file, line, detail);
+
+    /// <summary>
+    /// Section-level entries (missing surfaces, cross-section uses) aren't tied to a single
+    /// declared symbol, so they carry an explicit name instead of an <see cref="ISymbol"/>.
+    /// </summary>
+    private static void AddEntryByName(ScoreReport report, string groupName, string rule, int points,
+        string symbolName, string file, int line, string? detail)
     {
         if (points == 0) return;
         if (!report.Groups.TryGetValue(groupName, out var g))
@@ -1237,7 +1307,7 @@ public sealed class SurfaceScoreEngine
             g = new GroupScore { Name = groupName };
             report.Groups[groupName] = g;
         }
-        var entry = new ScoreEntry(rule, points, symbol.Name, groupName, file, line, detail);
+        var entry = new ScoreEntry(rule, points, symbolName, groupName, file, line, detail);
         g.Entries.Add(entry);
         g.Total += points;
         g.ByRule[rule] = g.ByRule.GetValueOrDefault(rule) + points;

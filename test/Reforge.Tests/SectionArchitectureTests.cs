@@ -16,21 +16,30 @@ public class SectionArchitectureTests
     private string Dir => LocationHelper.GetSolutionDirectory(_fixture.Solution);
 
     /// <summary>A config that maps the Camp fixtures into a repo-backed "Camp" section.</summary>
-    private static SurfaceScoreConfig CampConfig()
+    private static SurfaceScoreConfig CampConfig() => WithDefaults(new SurfaceScoreConfig
     {
-        var cfg = new SurfaceScoreConfig
+        Sections =
         {
-            Sections =
+            ["Camp"] = new SectionRule
             {
-                ["Camp"] = new SectionRule
-                {
-                    RepositoryInterfaces = { "ICampRepository" },
-                    ServiceInterfaces = { "ICampSectionService" },
-                    ReadServiceInterfaces = { "ICampServiceRead" }
-                    // primaryInfoDto / settingsInfoDto left to convention -> CampInfo / CampSettingsInfo
-                }
+                RepositoryInterfaces = { "ICampRepository" },
+                ServiceInterfaces = { "ICampSectionService" },
+                ReadServiceInterfaces = { "ICampServiceRead" }
+                // primaryInfoDto / settingsInfoDto left to convention -> CampInfo / CampSettingsInfo
             }
-        };
+        }
+    });
+
+    /// <summary>
+    /// Merges default classifications + weights into a hand-built section config (as
+    /// <see cref="SurfaceScoreConfig.LoadOrDefault"/> does in production) and finalizes the
+    /// effective-section list. Section rules need the default weights to score.
+    /// </summary>
+    private static SurfaceScoreConfig WithDefaults(SurfaceScoreConfig cfg)
+    {
+        var defaults = SurfaceScoreConfig.Default();
+        foreach (var (k, v) in defaults.Classifications) cfg.Classifications.TryAdd(k, v);
+        foreach (var (k, v) in defaults.Weights) cfg.Weights.TryAdd(k, v);
         cfg.BuildEffectiveSections();
         return cfg;
     }
@@ -66,5 +75,45 @@ public class SectionArchitectureTests
             Assert.True(SurfaceScoreRuleGlossary.Descriptions.ContainsKey(rule), $"missing glossary: {rule}");
             Assert.False(SurfaceScoreRuleGroups.IsInternalComplexity(rule), $"should be surface axis: {rule}");
         }
+    }
+
+    // ---------------- Task 3: readSurfaceProjectionMethod surcharge ----------------
+
+    [Fact]
+    public async Task ReadSurfaceProjectionMethod_ChargesProjectionAndPredicateReads()
+    {
+        var report = await Score(CampConfig());
+
+        Assert.True(report.ByRule.TryGetValue("readSurfaceProjectionMethod", out var pts) && pts > 0);
+        var camp = report.Groups["Camp"];
+        // two charged methods (predicate + projection) x weight 4 = 8
+        Assert.Equal(8, camp.ByRule["readSurfaceProjectionMethod"]);
+        // surcharge is on the surface axis, not internal complexity
+        Assert.False(SurfaceScoreRuleGroups.IsInternalComplexity("readSurfaceProjectionMethod"));
+    }
+
+    [Fact]
+    public async Task ReadSurfaceProjectionMethod_ExemptsEscapeHatch()
+    {
+        var cfg = WithDefaults(new SurfaceScoreConfig
+        {
+            Sections =
+            {
+                ["Camp"] = new SectionRule
+                {
+                    RepositoryInterfaces = { "ICampRepository" },
+                    ServiceInterfaces = { "ICampSectionService" },
+                    ReadServiceInterfaces = { "ICampServiceRead" },
+                    EscapeHatchReadMethods =
+                    {
+                        new EscapeHatchReadMethod { Method = "ICampServiceRead.IsUserCampLeadAsync", Reason = "legacy", Since = "2026-02" }
+                    }
+                }
+            }
+        });
+        var report = await Score(cfg);
+
+        // only the projection method remains charged -> 4
+        Assert.Equal(4, report.Groups["Camp"].ByRule["readSurfaceProjectionMethod"]);
     }
 }
