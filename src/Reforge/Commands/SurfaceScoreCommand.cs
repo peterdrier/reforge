@@ -94,6 +94,16 @@ public static class SurfaceScoreCommand
                 var report = await engine.ScoreAsync(solution, ct);
                 report.ConfigPath = loadedFrom;
 
+                // Build-health: when the analyzed solution did not compile cleanly, the
+                // score is partial. Surface it in every format (diagnostics array -> compact
+                // & markdown render it) and shout to stderr (never stdout, which may be JSON).
+                if (report.BuildHealth.Degraded)
+                {
+                    var buildMsg = BuildInspector.DescribeDegraded(report.BuildHealth);
+                    report.Diagnostics.Add(new ScoreDiagnostic("warning", "degraded-build", buildMsg));
+                    Console.Error.WriteLine($"WARNING: {buildMsg}");
+                }
+
                 BaselineComparison? baseline = null;
                 if (baselinePath is not null)
                 {
@@ -555,6 +565,13 @@ public static class SurfaceScoreCommand
             internalComplexityTotal = report.InternalComplexityTotal,
             combinedTotal = report.Total,
             typesAnalyzed = report.TypesAnalyzed,
+            build = new
+            {
+                degraded = report.BuildHealth.Degraded,
+                compilationErrorCount = report.BuildHealth.CompilationErrorCount,
+                unresolvedReferenceCount = report.BuildHealth.UnresolvedReferenceCount,
+                appearsUnbuilt = report.BuildHealth.AppearsUnbuilt
+            },
             configPath = report.ConfigPath,
             configuredSections = report.ConfiguredSections,
             scope = groupFilter is null ? "solution" : $"group:{groupFilter}",
