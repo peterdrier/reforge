@@ -183,3 +183,18 @@ public sealed class CampDelegator
     public Task HandOffAsync() => Consume(_camp);            // escapes: passed as an argument
     private static Task Consume(ICampServiceRead svc) => Task.CompletedTask;
 }
+
+// --- Cache-inference fixture: a caching decorator whose cache value is its OWN DTO (not CampInfo) ---
+
+public sealed class CampCacheEntry { public Guid Id { get; set; } public string Name { get; set; } = ""; }
+
+public sealed class CachedCampReadService : ICampServiceRead
+{
+    private readonly Dictionary<Guid, CampCacheEntry> _cache = new();
+    private readonly ICampServiceRead _inner;
+    public CachedCampReadService(ICampServiceRead inner) => _inner = inner;
+    public Task<CampInfo> GetByIdAsync(Guid id, CancellationToken ct = default) => _inner.GetByIdAsync(id, ct);
+    public Task<CampSettingsInfo> GetSettingsAsync(Guid campId, CancellationToken ct = default) => _inner.GetSettingsAsync(campId, ct);
+    public Task<bool> IsUserCampLeadAsync(Guid campId, Guid userId, CancellationToken ct = default) => _inner.IsUserCampLeadAsync(campId, userId, ct);
+    public Task<List<CampSummary>> GetCampSummariesForYearAsync(int year, CancellationToken ct = default) => _inner.GetCampSummariesForYearAsync(year, ct);
+}

@@ -149,7 +149,8 @@ public static class SectionShapeAnalyzer
                 : new DtoAnchor(settingsSym.ToDisplayString(), rule.Name, "settingsInfoDto",
                     DtoInventory.Build(settingsSym, canonicalDtoNames));
 
-            // Cache DTO: configured -> that; else (inference is Task 7) default to primary; else none.
+            // Cache DTO resolution: configured -> inferred from a caching decorator -> default to
+            // primary -> none.
             DtoAnchor? cacheAnchor = null;
             var cacheProvenance = "none";
             if (rule.CacheDto is not null)
@@ -160,6 +161,15 @@ public static class SectionShapeAnalyzer
                     cacheAnchor = new DtoAnchor(cacheSym.ToDisplayString(), rule.Name, "cacheDto",
                         DtoInventory.Build(cacheSym, canonicalDtoNames));
                     cacheProvenance = "configured";
+                }
+            }
+            if (cacheAnchor is null)
+            {
+                var inferred = InferCacheDto(readIfaceTypes, classified, canonicalDtoNames, rule.Name);
+                if (inferred is not null)
+                {
+                    cacheAnchor = inferred.Value.Anchor;
+                    cacheProvenance = inferred.Value.Provenance;
                 }
             }
             if (cacheAnchor is null && primaryAnchor is not null)
@@ -448,6 +458,54 @@ public static class SectionShapeAnalyzer
             if (GlobMatcher.MatchesName($"{ifaceName}.{methodName}", e.Method) || GlobMatcher.MatchesName(methodName, e.Method))
                 return (true, e.Reason);
         return (false, null);
+    }
+
+    /// <summary>
+    /// Infers the cache DTO from a caching decorator: a class named <c>Cached*</c>/<c>*CachingDecorator</c>/
+    /// <c>*Cache</c> that implements one of the section's read interfaces and holds a cache field whose
+    /// value type is a source-declared DTO. Returns the decorator-provenance anchor, or null.
+    /// </summary>
+    private static (DtoAnchor Anchor, string Provenance)? InferCacheDto(
+        List<ClassifiedType> readIfaceTypes, List<ClassifiedType> classified,
+        IReadOnlySet<string> canonicalDtoNames, string section)
+    {
+        var readSymbols = readIfaceTypes.Select(c => c.Type).ToList();
+        if (readSymbols.Count == 0) return null;
+
+        foreach (var c in classified)
+        {
+            if (c.Type.TypeKind != TypeKind.Class) continue;
+            if (!IsCachingDecoratorName(c.Type.Name)) continue;
+            if (!c.Type.AllInterfaces.Any(i => readSymbols.Any(r => SymbolEqualityComparer.Default.Equals(i, r)))) continue;
+
+            foreach (var f in c.Type.GetMembers().OfType<IFieldSymbol>())
+            {
+                if (CacheValueType(f.Type) is INamedTypeSymbol vt && vt.Locations.Any(l => l.IsInSource))
+                {
+                    var anchor = new DtoAnchor(vt.ToDisplayString(), section, "cacheDto", DtoInventory.Build(vt, canonicalDtoNames));
+                    return (anchor, $"inferred:{c.Type.Name}");
+                }
+            }
+        }
+        return null;
+    }
+
+    private static bool IsCachingDecoratorName(string name)
+        => GlobMatcher.MatchesName(name, "Cached*")
+        || GlobMatcher.MatchesName(name, "*CachingDecorator")
+        || GlobMatcher.MatchesName(name, "*Cache");
+
+    /// <summary>The value type carried by a cache field (Dictionary/ConcurrentDictionary value, or single generic arg).</summary>
+    private static INamedTypeSymbol? CacheValueType(ITypeSymbol fieldType)
+    {
+        if (fieldType is not INamedTypeSymbol n || !n.IsGenericType) return null;
+        var od = n.OriginalDefinition.ToDisplayString();
+        bool collection = od.StartsWith("System.Collections.Generic.", StringComparison.Ordinal)
+                       || od.StartsWith("System.Collections.Concurrent.", StringComparison.Ordinal);
+        if (!collection) return null;
+        if (n.TypeArguments.Length == 2) return n.TypeArguments[1] as INamedTypeSymbol; // keyed cache -> value
+        if (n.TypeArguments.Length == 1) return n.TypeArguments[0] as INamedTypeSymbol; // set/list cache -> element
+        return null;
     }
 
     /// <summary>A pure data carrier: class/struct with public properties and no public methods.</summary>
