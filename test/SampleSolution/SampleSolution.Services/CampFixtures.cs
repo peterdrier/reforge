@@ -72,6 +72,12 @@ public sealed record CampRegistrationRequest(
 
 // --- Section-architecture fixtures (read/full pair + nested canonical Info DTO) ---
 
+// Repository so the Camp section is repo-backed (drives requiresX defaults).
+public interface ICampRepository
+{
+    Task<CampInfo?> FindAsync(Guid id, CancellationToken ct = default);
+}
+
 public interface ICampServiceRead
 {
     Task<CampInfo> GetByIdAsync(Guid id, CancellationToken ct = default);
