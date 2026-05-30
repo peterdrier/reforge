@@ -198,3 +198,11 @@ public sealed class CachedCampReadService : ICampServiceRead
     public Task<bool> IsUserCampLeadAsync(Guid campId, Guid userId, CancellationToken ct = default) => _inner.IsUserCampLeadAsync(campId, userId, ct);
     public Task<List<CampSummary>> GetCampSummariesForYearAsync(int year, CancellationToken ct = default) => _inner.GetCampSummariesForYearAsync(year, ct);
 }
+
+// --- Conservation-gate fixture: a static stateless helper (a helper-extraction sink) ---
+
+public static class CampReadModelProjection
+{
+    public static string BuildCampDetail(CampInfo info) => info.Name;
+    public static bool IsUserCampLead(CampInfo info, Guid userId) => false;
+}

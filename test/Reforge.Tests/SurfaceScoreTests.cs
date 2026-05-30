@@ -411,6 +411,18 @@ public class SurfaceScoreTests
         Assert.NotEmpty(userCredits);
     }
 
+    // ---------------- helperCandidates (conservation gate) ----------------
+
+    [Fact]
+    public async Task HelperCandidates_IncludeStatelessSinks()
+    {
+        var report = await ScoreDefaultAsync();
+        // A static helper class with public methods is a helper candidate; a service with
+        // instance fields (UserService) is not.
+        Assert.Contains(report.HelperCandidates, h => h.Display.EndsWith("CampReadModelProjection"));
+        Assert.DoesNotContain(report.HelperCandidates, h => h.Display.EndsWith("UserService"));
+    }
+
     // ---------------- writeCapableInterfaceUsedReadOnly ----------------
 
     [Fact]

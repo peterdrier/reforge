@@ -596,7 +596,8 @@ public static class SurfaceScoreCommand
                 paths = a.Paths,
                 methods = a.Methods.Select(m => new { name = m.Name, returns = m.Returns }).ToArray(),
                 byRule = a.ByRule
-            }).ToArray()
+            }).ToArray(),
+            helperCandidates = report.HelperCandidates.Select(h => new { display = h.Display, methods = h.Methods }).ToArray()
         };
 
         Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));

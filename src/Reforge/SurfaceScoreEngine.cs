@@ -61,6 +61,12 @@ public sealed class ScoreReport
     /// holds refactors to. Always emitted (report-level, independent of any top-symbols cap).
     /// </summary>
     public List<ConservationAnchor> ConservationAnchors { get; set; } = new();
+    /// <summary>
+    /// Stateless sink classes (static/extension/fieldless) and their public methods — the baseline
+    /// conservation gate diffs these against the baseline to detect a NEW helper absorbing a
+    /// removed read/service method (helper-extraction gaming).
+    /// </summary>
+    public List<HelperCandidate> HelperCandidates { get; set; } = new();
 }
 
 public sealed record ScoreDiagnostic(string Level, string Code, string Message);
@@ -79,6 +85,13 @@ public sealed record SuspiciousImprovement(
     bool Improvement);
 
 public sealed record ConservationAnchorMethod(string Name, string Returns);
+
+/// <summary>
+/// A stateless sink (static class, extension holder, or fieldless non-interface-backed class) and
+/// its public method names — a candidate destination for helper-extraction gaming that the
+/// baseline conservation gate watches for (a removed read method reappearing on a new helper).
+/// </summary>
+public sealed record HelperCandidate(string Display, IReadOnlyList<string> Methods);
 
 /// <summary>
 /// A fully-qualified, section-keyed anchor the conservation gate can hold a refactor to: a
@@ -169,6 +182,7 @@ public sealed class SurfaceScoreEngine
         // Section-architecture scored rules (surface axis) + conservation anchors.
         ScoreSectionArchitecture(architecture, report);
         report.ConservationAnchors = BuildConservationAnchors(architecture, report);
+        report.HelperCandidates = BuildHelperCandidates(classified);
 
         // Build health: detect a degraded (unbuilt/erroring) compilation so a partial
         // score is never mistaken for a complete one. Reuses the per-project compilations
@@ -1111,6 +1125,32 @@ public sealed class SurfaceScoreEngine
                     new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)));
         }
         return anchors;
+    }
+
+    /// <summary>
+    /// Collects stateless-sink classes (static class, or a class with no instance fields that is not
+    /// backed by a source interface) and their public method names. Broad by design — the spec wants
+    /// any new stateless sink to count as a helper-extraction destination, not one narrow shape.
+    /// </summary>
+    private static List<HelperCandidate> BuildHelperCandidates(List<ClassifiedType> classified)
+    {
+        var helpers = new List<HelperCandidate>();
+        foreach (var c in classified)
+        {
+            if (c.Type.TypeKind != TypeKind.Class) continue;
+            bool hasInstanceField = c.Type.GetMembers().OfType<IFieldSymbol>().Any(f => !f.IsStatic && !f.IsImplicitlyDeclared);
+            bool interfaceBacked = c.Type.AllInterfaces.Any(i => i.Locations.Any(l => l.IsInSource));
+            bool stateless = c.Type.IsStatic || (!hasInstanceField && !interfaceBacked);
+            if (!stateless) continue;
+
+            var methods = c.Type.GetMembers().OfType<IMethodSymbol>()
+                .Where(m => m.MethodKind == MethodKind.Ordinary && m.AssociatedSymbol is null
+                            && !m.IsImplicitlyDeclared && m.DeclaredAccessibility == Accessibility.Public)
+                .Select(m => m.Name).ToList();
+            if (methods.Count == 0) continue;
+            helpers.Add(new HelperCandidate(c.Type.ToDisplayString(), methods));
+        }
+        return helpers;
     }
 
     /// <summary>Best-effort: sum the points of entries in a group whose symbol is one of the anchor's methods.</summary>
