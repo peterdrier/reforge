@@ -151,4 +151,58 @@ public class SectionArchitectureTests
         Assert.False(report.Groups["Lodge"].ByRule.ContainsKey("missingPrimaryInfoDto"));
         Assert.False(report.Groups["Lodge"].ByRule.ContainsKey("missingWriteSurface"));
     }
+
+    // ---------------- Task 5: crossSectionWriteSurface + unverified advisory + escape analysis ----------------
+
+    private static SurfaceScoreConfig CampReportingConfig(params GrandfatheredDependency[] grandfathered)
+    {
+        var reporting = new SectionRule { Symbols = { "*ReportBuilder", "*Delegator" } };
+        foreach (var g in grandfathered) reporting.GrandfatheredDependencies.Add(g);
+        return WithDefaults(new SurfaceScoreConfig
+        {
+            Sections =
+            {
+                ["Camp"] = new SectionRule
+                {
+                    RepositoryInterfaces = { "ICampRepository" },
+                    ServiceInterfaces = { "ICampSectionService" },
+                    ReadServiceInterfaces = { "ICampServiceRead" }
+                },
+                ["Reporting"] = reporting
+            }
+        });
+    }
+
+    [Fact]
+    public async Task CrossSectionWriteSurface_FiresOnCrossSectionReadOnlyConsumer_SuppressesGeneric()
+    {
+        var report = await Score(CampReportingConfig());
+
+        var reporting = report.Groups["Reporting"];
+        Assert.True(reporting.ByRule.ContainsKey("crossSectionWriteSurface"));
+        // generic writeCapableInterfaceUsedReadOnly is suppressed for that same dependency (CampReportBuilder)
+        Assert.DoesNotContain(reporting.Entries, e => e.Rule == "writeCapableInterfaceUsedReadOnly" && e.Symbol == "CampReportBuilder");
+        // the confident penalty is attributed to the cross-section caller
+        Assert.Contains(reporting.Entries, e => e.Rule == "crossSectionWriteSurface" && e.Symbol == "CampReportBuilder");
+    }
+
+    [Fact]
+    public async Task CrossSectionWriteSurfaceUnverified_WhenDependencyEscapes_NoConfidentPenalty()
+    {
+        var report = await Score(CampReportingConfig());
+
+        // CampDelegator passes the dep onward -> NOT a confident crossSectionWriteSurface; an advisory diagnostic instead.
+        var reporting = report.Groups["Reporting"];
+        Assert.DoesNotContain(reporting.Entries, e => e.Rule == "crossSectionWriteSurface" && e.Symbol == "CampDelegator");
+        Assert.Contains(report.Diagnostics, d => d.Code == "crossSectionWriteSurfaceUnverified" && d.Message.Contains("CampDelegator"));
+    }
+
+    [Fact]
+    public async Task CrossSectionWriteSurface_GrandfatheredDependency_IsSuppressed()
+    {
+        var report = await Score(CampReportingConfig(
+            new GrandfatheredDependency { Dependency = "CampReportBuilder->ICampSectionService", Reason = "legacy", Since = "2026-03", Owner = "camps" }));
+
+        Assert.DoesNotContain(report.Groups["Reporting"].Entries, e => e.Rule == "crossSectionWriteSurface" && e.Symbol == "CampReportBuilder");
+    }
 }

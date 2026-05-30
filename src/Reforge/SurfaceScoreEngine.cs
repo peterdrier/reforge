@@ -127,6 +127,14 @@ public sealed class SurfaceScoreEngine
         // so the cross-section specialization can suppress the generic rule for the same pairs.
         var architecture = await SectionShapeAnalyzer.AnalyzeAsync(solution, classified, _config, _solutionDirectory, ct);
 
+        // Confident cross-section read-only pairs (caller, full-interface simple name) — the generic
+        // writeCapableInterfaceUsedReadOnly rule is suppressed for these in favor of the
+        // section-specialized crossSectionWriteSurface penalty.
+        var crossSectionSuppress = new HashSet<(string Caller, string Dependency)>();
+        foreach (var s in architecture.Sections)
+            foreach (var use in s.WriteSurfaceCallers)
+                crossSectionSuppress.Add((use.Caller, use.Dependency));
+
         // Pass 1 — durable surface
         ScoreDurableSurface(classified, report);
 
@@ -141,7 +149,7 @@ public sealed class SurfaceScoreEngine
 
         // Pass 5 — write-capable interface used read-only. Needs the semantic model and
         // is the most expensive pass, so it runs last.
-        await ScoreWriteCapableUsedReadOnlyAsync(classified, typesByDisplay, solution, report, ct);
+        await ScoreWriteCapableUsedReadOnlyAsync(classified, typesByDisplay, solution, report, crossSectionSuppress, ct);
 
         // Cross-cutting: duplicate DbSet owners (resource ownership), DI registrations,
         // one-implementation interfaces.
@@ -585,6 +593,7 @@ public sealed class SurfaceScoreEngine
         Dictionary<string, ClassifiedType> typesByDisplay,
         Solution solution,
         ScoreReport report,
+        HashSet<(string Caller, string Dependency)> crossSectionSuppress,
         CancellationToken ct)
     {
         var weight = _config.Weight("writeCapableInterfaceUsedReadOnly");
@@ -674,6 +683,11 @@ public sealed class SurfaceScoreEngine
 
                     if (fullOnlyCalls == 0 && readCalls > 0)
                     {
+                        // Cross-section read-only use is scored as crossSectionWriteSurface instead;
+                        // skip the generic rule for those confident pairs.
+                        if (crossSectionSuppress.Contains((c.Type.Name, param.Type.Name)))
+                            continue;
+
                         var readName = pairs[fullDisplay].Type.Name;
                         var fullName = param.Type.Name;
                         var loc = param.Locations.FirstOrDefault(l => l.IsInSource)
@@ -1045,6 +1059,18 @@ public sealed class SurfaceScoreEngine
                 if (w == 0) continue;
                 AddEntryByName(report, section.Name, miss.Rule, w, section.Name, "", 0, miss.Detail);
             }
+
+            // Cross-section write-surface: confident penalties (generic rule already suppressed).
+            var csW = _config.Weight("crossSectionWriteSurface");
+            if (csW != 0)
+                foreach (var use in section.WriteSurfaceCallers)
+                    AddEntryByName(report, section.Name, "crossSectionWriteSurface", csW, use.Caller, use.File, use.Line,
+                        $"{use.Caller} <- {use.Dependency} (use {use.SuggestedReadInterface}; cross-section, all reads)");
+
+            // Escape-analysis advisory: read-only use unconfirmed (the dependency escapes). No penalty.
+            foreach (var use in section.WriteSurfaceUnverified)
+                report.Diagnostics.Add(new ScoreDiagnostic("info", "crossSectionWriteSurfaceUnverified",
+                    $"{use.Caller} <- {use.Dependency}: read-only use unconfirmed (dependency escapes analysis); advisory only."));
         }
     }
 

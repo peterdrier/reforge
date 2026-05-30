@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Reforge;
 
@@ -93,9 +94,14 @@ public sealed record SectionArchitecture(
 /// </summary>
 public static class SectionShapeAnalyzer
 {
-    public static Task<SectionArchitecture> AnalyzeAsync(Solution solution,
+    public static async Task<SectionArchitecture> AnalyzeAsync(Solution solution,
         List<ClassifiedType> classified, SurfaceScoreConfig config, string solutionDirectory, CancellationToken ct)
     {
+        var typesByDisplay = classified.ToDictionary(c => c.Type.ToDisplayString(), c => c, StringComparer.Ordinal);
+
+        // Cross-section write-surface use (with escape analysis), keyed by consumer section.
+        var crossUses = await AnalyzeCrossSectionUsesAsync(solution, classified, typesByDisplay, config, solutionDirectory, ct);
+
         // Which sections own a classified repository (interface or implementation)? Drives RepoBacked.
         var repoSectionNames = new HashSet<string>(
             classified.Where(c => c.Tags.Contains("repositoryInterface") || c.Tags.Contains("repositoryImplementation"))
@@ -194,6 +200,10 @@ public static class SectionShapeAnalyzer
 
             var shards = rule.ReadShards.Select(s => new ShardAnchor(s.Name, s.Purpose, Array.Empty<string>())).ToList();
 
+            var (writeCallers, writeUnverified) = crossUses.TryGetValue(rule.Name, out var cu)
+                ? cu
+                : (new List<CrossSectionUse>(), new List<CrossSectionUse>());
+
             shapes.Add(new SectionShape
             {
                 Name = rule.Name,
@@ -207,6 +217,8 @@ public static class SectionShapeAnalyzer
                 CacheDto = cacheAnchor,
                 CacheDtoProvenance = cacheProvenance,
                 ReadShards = shards,
+                WriteSurfaceCallers = writeCallers,
+                WriteSurfaceUnverified = writeUnverified,
                 Missing = missing,
                 Grandfathered = rule.GrandfatheredDependencies,
                 EscapeHatches = rule.EscapeHatchReadMethods,
@@ -226,7 +238,190 @@ public static class SectionShapeAnalyzer
             .Select(g => g.First())
             .ToList();
 
-        return Task.FromResult(new SectionArchitecture(shapes, dedupDtos, interfaceAnchors, shardAnchors));
+        return new SectionArchitecture(shapes, dedupDtos, interfaceAnchors, shardAnchors);
+    }
+
+    // ---------------- Cross-section write-surface use + escape analysis ----------------
+
+    /// <summary>
+    /// For each consumer class in a configured section that injects ANOTHER section's full
+    /// (write) interface paired with a read interface, classifies how the dependency is used:
+    /// every observed call read-covered with no escape -> confident <c>crossSectionWriteSurface</c>
+    /// candidate; the dependency escapes analysis (passed onward, returned, captured) -> an
+    /// "unverified" advisory instead of a confident penalty.
+    /// </summary>
+    private static async Task<Dictionary<string, (List<CrossSectionUse> Confident, List<CrossSectionUse> Unverified)>>
+        AnalyzeCrossSectionUsesAsync(Solution solution, List<ClassifiedType> classified,
+            Dictionary<string, ClassifiedType> typesByDisplay, SurfaceScoreConfig config, string dir, CancellationToken ct)
+    {
+        var result = new Dictionary<string, (List<CrossSectionUse>, List<CrossSectionUse>)>(StringComparer.OrdinalIgnoreCase);
+        var configuredSections = new Dictionary<string, SectionRule>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in config.EffectiveSections) configuredSections[s.Name] = s;
+        if (configuredSections.Count == 0) return result;
+
+        var pairs = SurfaceScoreEngine.BuildFullToReadPairs(classified, typesByDisplay);
+        if (pairs.Count == 0) return result;
+
+        var readNamesByFull = pairs.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value.Type.GetMembers().OfType<IMethodSymbol>()
+                    .Where(m => m.MethodKind == MethodKind.Ordinary)
+                    .Select(m => m.Name).ToHashSet(StringComparer.Ordinal),
+            StringComparer.Ordinal);
+
+        foreach (var c in classified)
+        {
+            if (c.Type.TypeKind != TypeKind.Class) continue;
+            // Only configured consumer sections produce shapes to attach to / grandfathering to check.
+            if (!configuredSections.TryGetValue(c.Group, out var consumerRule)) continue;
+
+            foreach (var ctor in c.Type.Constructors)
+            {
+                if (ctor.IsImplicitlyDeclared) continue;
+                foreach (var param in ctor.Parameters)
+                {
+                    var d = param.Type.ToDisplayString();
+                    if (!pairs.TryGetValue(d, out var readIface)) continue;
+                    if (!typesByDisplay.TryGetValue(d, out var depFull)) continue;
+                    if (string.Equals(depFull.Group, c.Group, StringComparison.OrdinalIgnoreCase)) continue; // same section
+
+                    var (observed, escaped, file, line) = await AnalyzeDependencyUsageAsync(c, param, solution, dir, ct);
+
+                    var use = new CrossSectionUse(c.Type.Name, c.Group, param.Type.Name, depFull.Group, readIface.Type.Name, observed)
+                    {
+                        File = file,
+                        Line = line
+                    };
+
+                    if (!result.TryGetValue(c.Group, out var bucket))
+                    {
+                        bucket = (new List<CrossSectionUse>(), new List<CrossSectionUse>());
+                        result[c.Group] = bucket;
+                    }
+
+                    if (escaped)
+                    {
+                        bucket.Item2.Add(use); // unverified advisory
+                        continue;
+                    }
+
+                    var readNames = readNamesByFull[d];
+                    bool allReadCovered = observed.Count > 0 && observed.All(readNames.Contains);
+                    bool grandfathered = IsGrandfathered(consumerRule, c.Type.Name, param.Type.Name);
+                    if (allReadCovered && !grandfathered)
+                        bucket.Item1.Add(use); // confident penalty (also suppresses the generic rule)
+                    // else: a full-only call, no call, or grandfathered -> the generic rule handles it.
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Walks a consumer's body and classifies every reference to the injected dependency (via its
+    /// backing field or the ctor parameter): a method-call receiver is an observed call; anything
+    /// else that consumes the reference as a value (argument, return, capture, reassignment) is an
+    /// escape. The backing-field assignment itself is not an escape.
+    /// </summary>
+    private static async Task<(List<string> Observed, bool Escaped, string File, int Line)>
+        AnalyzeDependencyUsageAsync(ClassifiedType c, IParameterSymbol param, Solution solution, string dir, CancellationToken ct)
+    {
+        var observed = new List<string>();
+        var escaped = false;
+
+        var ploc = param.Locations.FirstOrDefault(l => l.IsInSource) ?? c.PrimaryLocation;
+        var pls = ploc.GetLineSpan();
+        var file = LocationHelper.NormalizePath(pls.Path, dir);
+        var line = pls.StartLinePosition.Line + 1;
+
+        var backing = ResolveBackingField(c.Type, param);
+
+        foreach (var declRef in c.Type.DeclaringSyntaxReferences)
+        {
+            var tree = declRef.SyntaxTree;
+            var project = solution.Projects.FirstOrDefault(p => p.Documents.Any(doc => doc.FilePath == tree.FilePath));
+            if (project is null) continue;
+            var compilation = await project.GetCompilationAsync(ct);
+            if (compilation is null) continue;
+            var model = compilation.GetSemanticModel(tree);
+            var classNode = await declRef.GetSyntaxAsync(ct);
+
+            foreach (var id in classNode.DescendantNodes().OfType<IdentifierNameSyntax>())
+            {
+                var sym = model.GetSymbolInfo(id, ct).Symbol;
+                if (sym is null) continue;
+                bool isDep = (backing is not null && SymbolEqualityComparer.Default.Equals(sym, backing))
+                          || SymbolEqualityComparer.Default.Equals(sym, param);
+                if (!isDep) continue;
+
+                // The dependency-denoting expression: `_camp`, or `this._camp` (member access).
+                ExpressionSyntax e = id;
+                if (id.Parent is MemberAccessExpressionSyntax pma && pma.Name == id)
+                    e = pma;
+
+                if (IsFieldWriteTarget(e)) continue;                       // writing TO the field (incl. backing init)
+                if (IsBackingAssignmentSource(e, backing, model, ct)) continue; // ctor `_field = param`
+                if (IsCallReceiver(e, out var calledName)) { observed.Add(calledName); continue; }
+                escaped = true;
+            }
+        }
+
+        return (observed, escaped, file, line);
+    }
+
+    private static IFieldSymbol? ResolveBackingField(INamedTypeSymbol type, IParameterSymbol param)
+    {
+        foreach (var ctor in type.Constructors)
+        foreach (var declRef in ctor.DeclaringSyntaxReferences)
+        foreach (var asn in declRef.GetSyntax().DescendantNodes().OfType<AssignmentExpressionSyntax>())
+        {
+            if (asn.Right is not IdentifierNameSyntax rid || rid.Identifier.Text != param.Name) continue;
+            var fieldName = asn.Left switch
+            {
+                IdentifierNameSyntax lid => lid.Identifier.Text,
+                MemberAccessExpressionSyntax lma => lma.Name.Identifier.Text,
+                _ => null
+            };
+            if (fieldName is null) continue;
+            var f = type.GetMembers(fieldName).OfType<IFieldSymbol>().FirstOrDefault();
+            if (f is not null) return f;
+        }
+        return null;
+    }
+
+    private static bool IsFieldWriteTarget(ExpressionSyntax e)
+        => e.Parent is AssignmentExpressionSyntax asn && asn.Left == e;
+
+    private static bool IsBackingAssignmentSource(ExpressionSyntax e, IFieldSymbol? backing, SemanticModel model, CancellationToken ct)
+    {
+        if (backing is null) return false;
+        if (e.Parent is not AssignmentExpressionSyntax asn || asn.Right != e) return false;
+        return SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(asn.Left, ct).Symbol, backing);
+    }
+
+    private static bool IsCallReceiver(ExpressionSyntax e, out string calledName)
+    {
+        calledName = "";
+        if (e.Parent is MemberAccessExpressionSyntax ma && ma.Expression == e
+            && ma.Parent is InvocationExpressionSyntax inv && inv.Expression == ma)
+        {
+            calledName = ma.Name switch
+            {
+                GenericNameSyntax g => g.Identifier.Text,
+                _ => ma.Name.Identifier.Text
+            };
+            return true;
+        }
+        return false;
+    }
+
+    private static bool IsGrandfathered(SectionRule rule, string caller, string fullInterface)
+    {
+        foreach (var g in rule.GrandfatheredDependencies)
+            if (g.Dependency == $"{caller}->{fullInterface}" || g.Dependency == caller)
+                return true;
+        return false;
     }
 
     private static InterfaceAnchor BuildInterfaceAnchor(ClassifiedType iface, string section, string role)

@@ -160,3 +160,26 @@ public sealed class BookingOrchestrator : IBookingOrchestrator
     public BookingOrchestrator(ICampSectionService camp) => _camp = camp;
     public Task RunAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
+
+// --- Cross-section write-surface fixtures (consumer injects Camp's full interface) ---
+
+// Cross-section caller that injects the Camp full interface but only READS -> crossSectionWriteSurface.
+public sealed class CampReportBuilder
+{
+    private readonly ICampSectionService _camp;
+    public CampReportBuilder(ICampSectionService camp) => _camp = camp;
+    public async Task<string> BuildAsync(Guid id)
+    {
+        var info = await _camp.GetByIdAsync(id);   // read-covered (exists on ICampServiceRead)
+        return info.Name;
+    }
+}
+
+// Cross-section caller that PASSES the injected dependency onward -> unknown usage (advisory, not penalty).
+public sealed class CampDelegator
+{
+    private readonly ICampSectionService _camp;
+    public CampDelegator(ICampSectionService camp) => _camp = camp;
+    public Task HandOffAsync() => Consume(_camp);            // escapes: passed as an argument
+    private static Task Consume(ICampServiceRead svc) => Task.CompletedTask;
+}
