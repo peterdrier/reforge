@@ -132,3 +132,31 @@ public sealed class CampSummary
     public Guid Id { get; set; }
     public string Name { get; set; } = "";
 }
+
+// --- Missing-surface fixtures (repo-backed sections each lacking one expected surface) ---
+
+// Repo-backed section missing a READ interface (has repo + full write service, no *ServiceRead).
+public interface ILodgeRepository { Task<LodgeInfo?> FindAsync(Guid id, CancellationToken ct = default); }
+public interface ILodgeService { Task RenameAsync(Guid id, string name, CancellationToken ct = default); }
+public sealed class LodgeService : ILodgeService { public Task RenameAsync(Guid id, string name, CancellationToken ct = default) => Task.CompletedTask; }
+public sealed class LodgeInfo { public Guid Id { get; set; } public string Name { get; set; } = ""; }
+
+// Repo-backed section missing a WRITE/full interface (has repo + read, no full service).
+public interface IDormRepository { Task<DormInfo?> FindAsync(Guid id, CancellationToken ct = default); }
+public interface IDormServiceRead { Task<DormInfo> GetByIdAsync(Guid id, CancellationToken ct = default); }
+public sealed class DormInfo { public Guid Id { get; set; } public string Name { get; set; } = ""; }
+
+// Repo-backed section missing a primary Info DTO (has repo + read + full, no TentInfo).
+public interface ITentRepository { Task FindAsync(Guid id, CancellationToken ct = default); }
+public interface ITentServiceRead { Task<bool> ExistsAsync(Guid id, CancellationToken ct = default); }
+public interface ITentService { Task PitchAsync(Guid id, CancellationToken ct = default); }
+public sealed class TentService : ITentService { public Task PitchAsync(Guid id, CancellationToken ct = default) => Task.CompletedTask; }
+
+// Orchestrator-only section (NO repository) - must NOT trip any missing* rule.
+public interface IBookingOrchestrator { Task RunAsync(CancellationToken ct = default); }
+public sealed class BookingOrchestrator : IBookingOrchestrator
+{
+    private readonly ICampSectionService _camp;
+    public BookingOrchestrator(ICampSectionService camp) => _camp = camp;
+    public Task RunAsync(CancellationToken ct = default) => Task.CompletedTask;
+}

@@ -1037,6 +1037,14 @@ public sealed class SurfaceScoreEngine
                         AddEntryByName(report, section.Name, "readSurfaceProjectionMethod", projW, rm.Method, rm.File, rm.Line, detail);
                 }
             }
+
+            // Missing surfaces — already gated to repo-backed expectations by the analyzer.
+            foreach (var miss in section.Missing)
+            {
+                var w = _config.Weight(miss.Rule);
+                if (w == 0) continue;
+                AddEntryByName(report, section.Name, miss.Rule, w, section.Name, "", 0, miss.Detail);
+            }
         }
     }
 

@@ -116,4 +116,39 @@ public class SectionArchitectureTests
         // only the projection method remains charged -> 4
         Assert.Equal(4, report.Groups["Camp"].ByRule["readSurfaceProjectionMethod"]);
     }
+
+    // ---------------- Task 4: missing* rules (repo-backed gated) ----------------
+
+    [Fact]
+    public async Task MissingSurfaceRules_FireOnlyForRepoBackedSections()
+    {
+        var cfg = WithDefaults(new SurfaceScoreConfig
+        {
+            Sections =
+            {
+                ["Lodge"] = new SectionRule { RepositoryInterfaces = { "ILodgeRepository" }, ServiceInterfaces = { "ILodgeService" } },
+                ["Dorm"] = new SectionRule { RepositoryInterfaces = { "IDormRepository" }, ReadServiceInterfaces = { "IDormServiceRead" } },
+                ["Tent"] = new SectionRule { RepositoryInterfaces = { "ITentRepository" }, ServiceInterfaces = { "ITentService" }, ReadServiceInterfaces = { "ITentServiceRead" } },
+                ["Booking"] = new SectionRule { Symbols = { "*Orchestrator" } }
+            }
+        });
+        var report = await Score(cfg);
+
+        Assert.True(report.Groups["Lodge"].ByRule.ContainsKey("missingReadSurface"));
+        Assert.True(report.Groups["Dorm"].ByRule.ContainsKey("missingWriteSurface"));
+        Assert.True(report.Groups["Tent"].ByRule.ContainsKey("missingPrimaryInfoDto"));
+
+        // Orchestrator-only: none of the missing* rules
+        var booking = report.Groups.TryGetValue("Booking", out var b) ? b : null;
+        if (booking is not null)
+        {
+            Assert.False(booking.ByRule.ContainsKey("missingReadSurface"));
+            Assert.False(booking.ByRule.ContainsKey("missingWriteSurface"));
+            Assert.False(booking.ByRule.ContainsKey("missingPrimaryInfoDto"));
+        }
+
+        // Lodge has LodgeInfo + write but no read; must NOT be charged missingPrimaryInfoDto or missingWriteSurface
+        Assert.False(report.Groups["Lodge"].ByRule.ContainsKey("missingPrimaryInfoDto"));
+        Assert.False(report.Groups["Lodge"].ByRule.ContainsKey("missingWriteSurface"));
+    }
 }
