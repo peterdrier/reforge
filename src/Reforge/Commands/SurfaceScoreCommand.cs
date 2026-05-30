@@ -111,6 +111,9 @@ public static class SurfaceScoreCommand
                     {
                         baseline = SurfaceScoreBaseline.Compare(report, baselinePath);
                         report.SuspiciousImprovements.AddRange(baseline.Suspicious);
+                        if (baseline.BaselineAnchorsMissing)
+                            report.Diagnostics.Add(new ScoreDiagnostic("info", "baseline-anchors-missing",
+                                "Baseline JSON predates conservationAnchors (v0.19+); conservation coverage degraded to ambiguous."));
                     }
                     else
                     {
@@ -597,7 +600,22 @@ public static class SurfaceScoreCommand
                 methods = a.Methods.Select(m => new { name = m.Name, returns = m.Returns }).ToArray(),
                 byRule = a.ByRule
             }).ToArray(),
-            helperCandidates = report.HelperCandidates.Select(h => new { display = h.Display, methods = h.Methods }).ToArray()
+            helperCandidates = report.HelperCandidates.Select(h => new { display = h.Display, methods = h.Methods }).ToArray(),
+            conservationEvidence = baseline is null ? Array.Empty<object>() : baseline.ConservationVerdicts.Select(v => new
+            {
+                section = v.Section,
+                kind = v.Kind,
+                improvement = v.Improvement,
+                message = v.Message,
+                methods = v.Methods.Select(m => new
+                {
+                    removedMethod = m.RemovedMethod,
+                    coverageKind = m.CoverageKind,
+                    targetDto = m.TargetDto,
+                    coveredBy = m.CoveredBy,
+                    missingInfoFacts = m.MissingInfoFacts.Select(f => new { fact = f.Fact, targetDto = f.TargetDto }).ToArray()
+                }).ToArray()
+            }).ToArray<object>()
         };
 
         Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
