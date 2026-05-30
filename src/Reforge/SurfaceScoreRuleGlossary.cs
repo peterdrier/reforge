@@ -45,6 +45,13 @@ public static class SurfaceScoreRuleGlossary
         ["crossSectionRepository"] = "A constructor dependency on a repository interface or implementation owned by a different section.",
         ["writeCapableInterfaceUsedReadOnly"] = "A class injects a full-service interface that is paired (by inheritance or by a same-namespace 'Read'-suffixed sibling) with a read-only interface, and every observed invocation on the injected dependency targets a method that also exists on the read interface.",
 
+        // Section architecture (surface axis)
+        ["crossSectionWriteSurface"] = "A class in one section injects another section's write/full service interface but every observed call targets a method that also exists on that section's read interface.",
+        ["missingReadSurface"] = "A repo-backed section has no read-only service interface.",
+        ["missingWriteSurface"] = "A repo-backed section has no write/full service interface.",
+        ["missingPrimaryInfoDto"] = "A repo-backed section has no DTO matching its primary Info DTO name.",
+        ["readSurfaceProjectionMethod"] = "A read-service-interface method returns a projection, predicate, scalar fact, or composed view rather than the section's primary Info DTO.",
+
         // Internal shape
         ["methodParameterOverflow"] = "A public method has more than two parameters; points scale per parameter beyond two.",
         ["booleanParameter"] = "A public method has a boolean parameter (often a control flag that splits the method into hidden branches).",

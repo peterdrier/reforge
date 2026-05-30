@@ -225,6 +225,13 @@ public sealed class SurfaceScoreConfig
                 ["crossSectionRepository"] = 25,
                 ["writeCapableInterfaceUsedReadOnly"] = 12,
 
+                // Section architecture (surface axis)
+                ["crossSectionWriteSurface"] = 15,
+                ["missingReadSurface"] = 10,
+                ["missingWriteSurface"] = 10,
+                ["missingPrimaryInfoDto"] = 10,
+                ["readSurfaceProjectionMethod"] = 4,
+
                 // Internal shape (surface axis — method/return shape smells)
                 ["methodParameterOverflow"] = 1, // per param after 2
                 ["booleanParameter"] = 3,
