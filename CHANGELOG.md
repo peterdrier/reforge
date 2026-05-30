@@ -2,6 +2,36 @@
 
 What changed and why. Newest first.
 
+## v0.20.0 - conservation gate
+
+Under `--baseline`, surface-score now classifies what happened to read/service behavior
+that was removed in a diff, per section. Why: the Pareto gate already catches a surface
+drop bought with complexity, but it can't tell a real consolidation ("deleted a read
+method; its fact already lived on the canonical DTO") from gaming ("the method moved
+sideways into a helper") or harm ("the capability evaporated"). This is the lesson from
+the Humans Camps refactor, generalized.
+
+- Three `SuspiciousImprovement` verdict kinds per section: `canonical-consolidation`
+  (improvement) when every removed method's fact is covered by the primary/cache/settings
+  DTO inventory or a documented shard; `helperExtractionNoConceptDeleted` (not an
+  improvement) when a NEW stateless sink absorbed a removed method; `capability-evaporation`
+  (not an improvement) when a removed fact is uncovered. Helper absorption is checked FIRST,
+  so a sideways move can't be laundered into a consolidation by ambiguous coverage.
+- Coverage is checked against the Plan B `conservationAnchors` inventories (recursive DTO
+  member paths + interface method lists), never inferred from score deltas — so the gate is
+  immune to unrelated DTO churn and is fully auditable. Settings/config facts consolidate
+  into `settingsInfoDto`, camp data into `primaryInfoDto`/`cacheDto`.
+- Per-method evidence rows (`conservationEvidence` in `--format json`):
+  `{ removedMethod, coverageKind (existingDtoFact|addedDtoFact|documentedShard|helper|
+  uncovered|ambiguous), targetDto, coveredBy, missingInfoFacts }` — the audit trail behind
+  each verdict. Ambiguous coverage leans toward consolidation but is surfaced as advisory.
+- New additive `helperCandidates` key in `--format json` (stateless sink classes + their
+  public methods) so the gate can diff baseline vs current to find a NEW helper.
+- A baseline JSON predating `conservationAnchors` (pre-v0.19) degrades coverage to ambiguous
+  with a `baseline-anchors-missing` precision diagnostic rather than guessing.
+- No new scored rules: the gate emits improvement verdicts and zero-point advisories only,
+  policing trades rather than adding another gameable hill to climb.
+
 ## v0.19.0 - section architecture
 
 surface-score now understands section architecture: it resolves each configured section's
