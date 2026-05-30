@@ -234,4 +234,63 @@ public class SectionArchitectureTests
         Assert.Contains(report.ConservationAnchors, a => a.Role == "readServiceInterface");
         Assert.Contains(report.ConservationAnchors, a => a.Role == "primaryInfoDto");
     }
+
+    // ---------------- Plan C: conservation gate end-to-end through real anchors ----------------
+
+    [Fact]
+    public async Task ConservationGate_EndToEnd_ExistingFactConsolidation()
+    {
+        var now = await Score(CampConfig());
+
+        // Baseline = the current real anchors + an EXTRA removed read method "GetMembersAsync"
+        // whose fact "Members" is already on CampInfo.Seasons[].Members[...] in both the baseline
+        // and current inventories -> existingDtoFact -> canonical-consolidation.
+        var path = Path.GetTempFileName();
+        File.WriteAllText(path, BuildBaselineJson(now, "Camp", ("GetMembersAsync", "List<CampMemberInfo>")));
+        try
+        {
+            var cmp = SurfaceScoreBaseline.Compare(now, path);
+            var v = cmp.ConservationVerdicts.Single(x => x.Section == "Camp");
+            Assert.Equal("canonical-consolidation", v.Kind);
+            Assert.True(v.Improvement);
+            Assert.Contains(v.Methods, m => m.RemovedMethod == "GetMembersAsync" && m.CoverageKind == "existingDtoFact");
+        }
+        finally { File.Delete(path); }
+    }
+
+    /// <summary>
+    /// Serializes a real report into a baseline JSON, appending one extra "removed" read method to
+    /// the section's read-interface anchor (and bumping its read-surface points) so the gate sees a drop.
+    /// </summary>
+    private static string BuildBaselineJson(ScoreReport now, string section, (string name, string returns) extraMethod)
+    {
+        var anchors = now.ConservationAnchors.Select(a =>
+        {
+            var methods = a.Methods.Select(m => new { name = m.Name, returns = m.Returns }).ToList();
+            if (a.Section == section && a.Role == "readServiceInterface")
+                methods.Add(new { name = extraMethod.name, returns = extraMethod.returns });
+            return new { key = a.Key, section = a.Section, role = a.Role, paths = a.Paths, methods };
+        }).ToArray();
+
+        var baseline = new
+        {
+            total = now.Total,
+            surfaceTotal = now.SurfaceTotal,
+            internalComplexityTotal = now.InternalComplexityTotal,
+            byRule = now.ByRule,
+            groups = now.Groups.Values.Select(g => new
+            {
+                name = g.Name,
+                total = g.Total,
+                surfaceTotal = g.Name == section ? g.SurfaceTotal + 6 : g.SurfaceTotal,
+                internalComplexityTotal = g.InternalComplexityTotal,
+                byRule = g.Name == section
+                    ? g.ByRule.ToDictionary(kv => kv.Key, kv => kv.Key == "readServiceInterfaceMethod" ? kv.Value + 6 : kv.Value)
+                    : g.ByRule.ToDictionary(kv => kv.Key, kv => kv.Value)
+            }).ToArray(),
+            conservationAnchors = anchors,
+            helperCandidates = now.HelperCandidates.Select(h => new { display = h.Display, methods = h.Methods }).ToArray()
+        };
+        return System.Text.Json.JsonSerializer.Serialize(baseline);
+    }
 }
