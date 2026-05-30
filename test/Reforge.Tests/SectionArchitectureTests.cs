@@ -222,4 +222,16 @@ public class SectionArchitectureTests
         // per-anchor byRule points exist for the read interface (readServiceInterfaceMethod + readSurfaceProjectionMethod)
         Assert.True(read.ByRule.ContainsKey("readServiceInterfaceMethod"));
     }
+
+    [Fact]
+    public async Task ConservationAnchors_AreReportLevel_IndependentOfTopCap()
+    {
+        // The engine emits conservationAnchors at the report level; no command --top/--top-symbols
+        // cap can suppress them. Assert the list is populated straight off the engine.
+        var report = await Score(CampConfig());
+
+        Assert.NotEmpty(report.ConservationAnchors);
+        Assert.Contains(report.ConservationAnchors, a => a.Role == "readServiceInterface");
+        Assert.Contains(report.ConservationAnchors, a => a.Role == "primaryInfoDto");
+    }
 }
