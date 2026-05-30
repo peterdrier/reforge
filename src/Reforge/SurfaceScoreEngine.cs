@@ -43,6 +43,11 @@ public sealed class ScoreReport
     public List<ScoreDiagnostic> Diagnostics { get; } = new();
     public string? ConfigPath { get; set; }
     public int TypesAnalyzed { get; set; }
+    /// <summary>
+    /// Compilation health of the analyzed solution. Defaults to a non-degraded value
+    /// so the JSON `build` object is always present. Populated by ScoreAsync.
+    /// </summary>
+    public BuildHealth BuildHealth { get; set; } = new(false, 0, 0, false);
     /// <summary>Configured section names — used by --list-groups and the missing-section diagnostic.</summary>
     public List<string> ConfiguredSections { get; } = new();
     /// <summary>
@@ -127,6 +132,11 @@ public sealed class SurfaceScoreEngine
         // long argument list (so a parameter-object refactor can't game methodParameterOverflow).
         ScoreBoundaryInputs(classified, typesByDisplay, report, ct);
         await ScoreInlineParameterObjectConstructionAsync(typesByDisplay, solution, report, ct);
+
+        // Build health: detect a degraded (unbuilt/erroring) compilation so a partial
+        // score is never mistaken for a complete one. Reuses the per-project compilations
+        // the passes above already realized (Roslyn caches them), so this is near-free.
+        report.BuildHealth = await BuildInspector.InspectAsync(solution, ct);
 
         return report;
     }

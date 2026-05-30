@@ -776,4 +776,20 @@ public class SurfaceScoreTests
         // Command layer should emit a "group-empty" diagnostic for this case (distinct from
         // "group-not-found").
     }
+
+    // ---------------- Build health ----------------
+
+    [Fact]
+    public async Task ScoreAsync_BuiltSampleSolution_IsNotDegraded()
+    {
+        var dir = LocationHelper.GetSolutionDirectory(_fixture.Solution);
+        var config = SurfaceScoreConfig.LoadOrDefault(null, dir, out _);
+        var engine = new SurfaceScoreEngine(config, dir);
+
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        Assert.NotNull(report.BuildHealth);
+        Assert.False(report.BuildHealth.Degraded);
+        Assert.Equal(0, report.BuildHealth.CompilationErrorCount);
+    }
 }
