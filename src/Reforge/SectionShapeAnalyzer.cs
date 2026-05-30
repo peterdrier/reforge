@@ -208,6 +208,29 @@ public static class SectionShapeAnalyzer
             if (facts.RequiresPrimaryInfoDto && primarySym is null)
                 missing.Add(new MissingSurface(rule.Name, "missingPrimaryInfoDto", $"{rule.Name}: no DTO named {primaryName}"));
 
+            // Advisory candidates (section-shape view): each charged read method is a derivability
+            // candidate against its target DTO; facts not present on the target inventory are flagged;
+            // and each charged read is a candidate to answer from the cache DTO.
+            var derivable = new List<DerivableReadMethod>();
+            var missingFacts = new List<MissingInfoFact>();
+            var cacheFacts = new List<CacheFactCandidate>();
+            var primaryPaths = primaryAnchor?.Paths ?? (IReadOnlyList<string>)Array.Empty<string>();
+            var settingsPaths = settingsAnchor?.Paths ?? (IReadOnlyList<string>)Array.Empty<string>();
+            foreach (var rm in charged)
+            {
+                var targetDto = rm.Kind == ReadMethodKind.ScalarFact ? settingsName : primaryName;
+                var token = FactToken(rm.Method);
+                derivable.Add(new DerivableReadMethod(rm.Interface, rm.Method, rm.Kind, targetDto,
+                    $"answerable from {targetDto} (returns {rm.Returns})"));
+
+                var paths = rm.Kind == ReadMethodKind.ScalarFact ? settingsPaths : primaryPaths;
+                if (token.Length > 0 && !paths.Any(p => p.Contains(token, StringComparison.OrdinalIgnoreCase)))
+                    missingFacts.Add(new MissingInfoFact($"{targetDto}.{token}", targetDto));
+
+                if (cacheAnchor is not null)
+                    cacheFacts.Add(new CacheFactCandidate(rm.Method, token, cacheAnchor.Display));
+            }
+
             var shards = rule.ReadShards.Select(s => new ShardAnchor(s.Name, s.Purpose, Array.Empty<string>())).ToList();
 
             var (writeCallers, writeUnverified) = crossUses.TryGetValue(rule.Name, out var cu)
@@ -232,7 +255,10 @@ public static class SectionShapeAnalyzer
                 Missing = missing,
                 Grandfathered = rule.GrandfatheredDependencies,
                 EscapeHatches = rule.EscapeHatchReadMethods,
-                ChargedReadMethods = charged
+                ChargedReadMethods = charged,
+                DerivableReadMethods = derivable,
+                MissingInfoFacts = missingFacts,
+                CacheFactCandidates = cacheFacts
             });
 
             if (primaryAnchor is not null) dtoAnchors.Add(primaryAnchor);
@@ -488,6 +514,16 @@ public static class SectionShapeAnalyzer
             }
         }
         return null;
+    }
+
+    /// <summary>A best-effort fact token from a read method name: strip a leading verb and trailing Async.</summary>
+    private static string FactToken(string method)
+    {
+        var n = method;
+        if (n.EndsWith("Async", StringComparison.Ordinal) && n.Length > 5) n = n[..^5];
+        foreach (var pre in new[] { "Get", "Find", "Load", "Is", "Has" })
+            if (n.StartsWith(pre, StringComparison.Ordinal) && n.Length > pre.Length) { n = n[pre.Length..]; break; }
+        return n;
     }
 
     private static bool IsCachingDecoratorName(string name)

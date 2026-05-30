@@ -1,0 +1,166 @@
+using System.CommandLine;
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Reforge.Commands;
+
+/// <summary>
+/// <c>section-shape</c> — renders the resolved architectural shape of each configured section:
+/// owned repositories, read/full service interfaces, primary/settings/cache DTOs (with
+/// provenance), documented read shards, cross-section read/write-surface use, missing surfaces,
+/// visible-debt suppressions (grandfathered deps + escape-hatch reads), and advisory candidates
+/// (derivable reads, missing info facts, cache-answerable facts). Config-driven; sections without
+/// a <c>SectionRule</c> are not shaped.
+/// </summary>
+public static class SectionShapeCommand
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    public static Command Create(Option<string?> solutionOption, Option<OutputFormat> formatOption, Option<int?> limitOption)
+    {
+        var configOption = new Option<string?>("--config")
+        {
+            Description = "Path to reforge.surface-score.json (default: search upward from solution dir). Sections are read from its `sections` map."
+        };
+        var sectionOption = new Option<string?>("--section")
+        {
+            Description = "Restrict output to a single configured section by name."
+        };
+
+        var command = new Command("section-shape",
+            "Render each configured section's architectural shape (interfaces, DTO anchors, cross-section use, missing surfaces, visible debt, advisories). Supports Compact, Markdown, and JSON.")
+        {
+            configOption,
+            sectionOption
+        };
+
+        command.SetAction(async (parseResult, ct) =>
+        {
+            var sw = Stopwatch.StartNew();
+            var solutionPath = parseResult.GetValue(solutionOption);
+            var configPath = parseResult.GetValue(configOption);
+            var sectionFilter = parseResult.GetValue(sectionOption);
+            var format = parseResult.GetValue(formatOption);
+
+            var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
+            using (handle)
+            {
+                var dir = LocationHelper.GetSolutionDirectory(solution);
+                var config = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out var loadedFrom);
+                var classified = (await SolutionClassifier.ClassifyAsync(solution, config, dir, ct)).ToList();
+                var arch = await SectionShapeAnalyzer.AnalyzeAsync(solution, classified, config, dir, ct);
+
+                var sections = arch.Sections
+                    .Where(s => sectionFilter is null || s.Name.Equals(sectionFilter, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (sectionFilter is not null && sections.Count == 0)
+                    Console.Error.WriteLine($"WARNING: --section '{sectionFilter}' did not match any configured section. " +
+                        $"Configured sections: {string.Join(", ", arch.Sections.Select(s => s.Name))}.");
+
+                if (format == OutputFormat.Json)
+                    WriteJson(sections, loadedFrom);
+                else
+                    WriteText(sections, loadedFrom, markdown: format == OutputFormat.Markdown);
+
+                sw.Stop();
+                Telemetry.Log("section-shape",
+                    $"sections={sections.Count} cfg={(loadedFrom is null ? "default" : Path.GetFileName(loadedFrom))}",
+                    sections.Count, sw.ElapsedMilliseconds);
+            }
+        });
+
+        return command;
+    }
+
+    private static void WriteJson(List<SectionShape> sections, string? configPath)
+    {
+        var payload = new
+        {
+            command = "section-shape",
+            configPath,
+            sections = sections.Select(s => new
+            {
+                name = s.Name,
+                repoBacked = s.Facts.RepoBacked,
+                ownedRepositoryInterfaces = s.OwnedRepositoryInterfaces,
+                ownedRepositoryImplementations = s.OwnedRepositoryImplementations,
+                readServiceInterfaces = s.ReadServiceInterfaces,
+                fullServiceInterfaces = s.FullServiceInterfaces,
+                primaryInfoDto = Dto(s.PrimaryInfoDto),
+                settingsInfoDto = Dto(s.SettingsInfoDto),
+                cacheDto = Dto(s.CacheDto),
+                cacheDtoProvenance = s.CacheDtoProvenance,
+                readShards = s.ReadShards.Select(sh => new { name = sh.Name, purpose = sh.Purpose }).ToArray(),
+                readSurfaceCallers = s.ReadSurfaceCallers.Select(Use).ToArray(),
+                writeSurfaceCallers = s.WriteSurfaceCallers.Select(Use).ToArray(),
+                missing = s.Missing.Select(m => new { rule = m.Rule, detail = m.Detail }).ToArray(),
+                grandfathered = s.Grandfathered.Select(g => new { dependency = g.Dependency, reason = g.Reason, since = g.Since, owner = g.Owner }).ToArray(),
+                escapeHatches = s.EscapeHatches.Select(e => new { method = e.Method, reason = e.Reason, since = e.Since, owner = e.Owner }).ToArray(),
+                chargedReadMethods = s.ChargedReadMethods.Select(c => new { @interface = c.Interface, method = c.Method, kind = c.Kind.ToString(), returns = c.Returns, escapeHatch = c.EscapeHatch }).ToArray(),
+                advisory = new
+                {
+                    derivableReadMethods = s.DerivableReadMethods.Select(d => new { @interface = d.Interface, method = d.Method, kind = d.Kind.ToString(), targetDto = d.TargetDto, hint = d.Hint }).ToArray(),
+                    missingInfoFacts = s.MissingInfoFacts.Select(f => new { fact = f.Fact, targetDto = f.TargetDto }).ToArray(),
+                    cacheFactCandidates = s.CacheFactCandidates.Select(c => new { method = c.Method, fact = c.Fact, cacheDto = c.CacheDto }).ToArray(),
+                    crossSectionWriteSurfaceUnverified = s.WriteSurfaceUnverified.Select(Use).ToArray()
+                }
+            }).ToArray()
+        };
+        Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
+
+        static object? Dto(DtoAnchor? a) => a is null ? null : new { display = a.Display, paths = a.Paths };
+        static object Use(CrossSectionUse u) => new { caller = u.Caller, dependency = u.Dependency, dependencySection = u.DependencySection, suggestedReadInterface = u.SuggestedReadInterface, observedCalls = u.ObservedCalls };
+    }
+
+    private static void WriteText(List<SectionShape> sections, string? configPath, bool markdown)
+    {
+        var sb = new StringBuilder();
+        var h1 = markdown ? "# " : "";
+        var h2 = markdown ? "## " : "";
+
+        if (sections.Count == 0)
+        {
+            Console.WriteLine("No configured sections to shape (sections are defined in reforge.surface-score.json).");
+            return;
+        }
+
+        sb.AppendLine($"{h1}section-shape ({sections.Count} section{(sections.Count == 1 ? "" : "s")})");
+        if (configPath is not null) sb.AppendLine($"config: {configPath}");
+        sb.AppendLine();
+
+        foreach (var s in sections)
+        {
+            sb.AppendLine($"{h2}{s.Name}{(s.Facts.RepoBacked ? " (repo-backed)" : "")}");
+            if (s.OwnedRepositoryInterfaces.Count > 0) sb.AppendLine($"  repositories: {string.Join(", ", s.OwnedRepositoryInterfaces)}");
+            if (s.ReadServiceInterfaces.Count > 0) sb.AppendLine($"  read: {string.Join(", ", s.ReadServiceInterfaces)}");
+            if (s.FullServiceInterfaces.Count > 0) sb.AppendLine($"  full: {string.Join(", ", s.FullServiceInterfaces)}");
+            if (s.PrimaryInfoDto is not null) sb.AppendLine($"  primaryInfoDto: {Short(s.PrimaryInfoDto.Display)} ({s.PrimaryInfoDto.Paths.Count} paths)");
+            if (s.SettingsInfoDto is not null) sb.AppendLine($"  settingsInfoDto: {Short(s.SettingsInfoDto.Display)}");
+            if (s.CacheDto is not null) sb.AppendLine($"  cacheDto: {Short(s.CacheDto.Display)} [{s.CacheDtoProvenance}]");
+
+            foreach (var m in s.Missing) sb.AppendLine($"  MISSING {m.Rule}: {m.Detail}");
+            foreach (var c in s.WriteSurfaceCallers) sb.AppendLine($"  crossSectionWriteSurface: {c.Caller} <- {c.Dependency} (use {c.SuggestedReadInterface})");
+            foreach (var c in s.ChargedReadMethods) sb.AppendLine($"  chargedRead: {c.Interface}.{c.Method} ({c.Kind}){(c.EscapeHatch ? " [escape-hatch]" : "")}");
+
+            foreach (var g in s.Grandfathered) sb.AppendLine($"  grandfathered: {g.Dependency} ({g.Reason}, since {g.Since})");
+
+            // Advisory
+            foreach (var d in s.DerivableReadMethods) sb.AppendLine($"  advisory derivable: {d.Method} -> {d.TargetDto}");
+            foreach (var f in s.MissingInfoFacts) sb.AppendLine($"  advisory missing-fact: {f.Fact}");
+            foreach (var u in s.WriteSurfaceUnverified) sb.AppendLine($"  advisory unverified: {u.Caller} <- {u.Dependency} (escapes analysis)");
+            sb.AppendLine();
+        }
+
+        Console.Write(sb.ToString());
+
+        static string Short(string display) => display.Split('.').Last();
+    }
+}
