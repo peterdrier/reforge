@@ -82,6 +82,35 @@ public class SectionShapeAnalyzerTests
     }
 
     [Fact]
+    public async Task Analyze_FallsBackToCanonicalReadDto_WhenConventionNameMisses()
+    {
+        // Plural section name "Camping" -> convention "CampingInfo" misses; canonicalReadDtos
+        // names the real singular DTO "CampInfo", which must resolve as primary (no missing fired).
+        var cfg = new SurfaceScoreConfig
+        {
+            Sections =
+            {
+                ["Camping"] = new SectionRule
+                {
+                    RepositoryInterfaces = { "ICampRepository" },
+                    ServiceInterfaces = { "ICampSectionService" },
+                    ReadServiceInterfaces = { "ICampServiceRead" },
+                    CanonicalReadDtos = { "CampInfo", "CampSettingsInfo" }
+                }
+            }
+        };
+        cfg.BuildEffectiveSections();
+        var dir = LocationHelper.GetSolutionDirectory(_fixture.Solution);
+        var classified = (await SolutionClassifier.ClassifyAsync(_fixture.Solution, cfg, dir, CancellationToken.None)).ToList();
+        var arch = await SectionShapeAnalyzer.AnalyzeAsync(_fixture.Solution, classified, cfg, dir, CancellationToken.None);
+        var camping = arch.Sections.Single(s => s.Name == "Camping");
+
+        Assert.Equal("CampInfo", camping.PrimaryInfoDto!.Display.Split('.').Last());
+        Assert.Equal("CampSettingsInfo", camping.SettingsInfoDto!.Display.Split('.').Last());
+        Assert.DoesNotContain(camping.Missing, m => m.Rule == "missingPrimaryInfoDto");
+    }
+
+    [Fact]
     public async Task Analyze_DefaultsCacheToPrimary_WhenNoDecorator()
     {
         // IDormServiceRead has no caching decorator -> cache falls back to the primary DormInfo.

@@ -135,12 +135,12 @@ public static class SectionShapeAnalyzer
 
             var facts = SectionFacts.For(rule, repoSectionNames);
 
-            // Resolve primary / settings DTO names by config or convention.
-            var primaryName = rule.PrimaryInfoDto ?? rule.Name + "Info";
-            var settingsName = rule.SettingsInfoDto ?? rule.Name + "SettingsInfo";
-
-            var primarySym = ResolveDtoSymbol(classified, primaryName, rule.Name);
-            var settingsSym = ResolveDtoSymbol(classified, settingsName, rule.Name);
+            // Resolve primary / settings DTO: explicit config -> <Section>Info convention ->
+            // canonicalReadDtos fallback. The fallback matters for real configs whose section
+            // names are plural ("Camps") but whose DTOs are singular ("CampInfo") — the convention
+            // would miss and spuriously fire missingPrimaryInfoDto.
+            var (primaryName, primarySym) = ResolvePrimary(rule, classified);
+            var (settingsName, settingsSym) = ResolveSettings(rule, classified);
 
             DtoAnchor? primaryAnchor = primarySym is null ? null
                 : new DtoAnchor(primarySym.ToDisplayString(), rule.Name, "primaryInfoDto",
@@ -468,6 +468,48 @@ public static class SectionShapeAnalyzer
                 m.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)))
             .ToList();
         return new InterfaceAnchor(iface.Type.ToDisplayString(), section, role, methods);
+    }
+
+    /// <summary>
+    /// Resolves the primary Info DTO: explicit <c>primaryInfoDto</c> -> <c>&lt;Section&gt;Info</c>
+    /// convention -> first non-settings <c>canonicalReadDtos</c> entry that exists. Returns the
+    /// chosen name (convention name when unresolved, for the missing-surface detail) and symbol.
+    /// </summary>
+    private static (string Name, INamedTypeSymbol? Symbol) ResolvePrimary(SectionRule rule, List<ClassifiedType> classified)
+    {
+        if (rule.PrimaryInfoDto is not null)
+            return (rule.PrimaryInfoDto, ResolveDtoSymbol(classified, rule.PrimaryInfoDto, rule.Name));
+
+        var convention = rule.Name + "Info";
+        var sym = ResolveDtoSymbol(classified, convention, rule.Name);
+        if (sym is not null) return (convention, sym);
+
+        foreach (var cn in rule.CanonicalReadDtos)
+        {
+            if (cn.EndsWith("SettingsInfo", StringComparison.Ordinal)) continue; // that's the settings DTO
+            var cs = ResolveDtoSymbol(classified, cn, rule.Name);
+            if (cs is not null) return (cn, cs);
+        }
+        return (convention, null);
+    }
+
+    /// <summary>Resolves the settings DTO: explicit -> <c>&lt;Section&gt;SettingsInfo</c> -> a <c>*SettingsInfo</c> canonical DTO.</summary>
+    private static (string Name, INamedTypeSymbol? Symbol) ResolveSettings(SectionRule rule, List<ClassifiedType> classified)
+    {
+        if (rule.SettingsInfoDto is not null)
+            return (rule.SettingsInfoDto, ResolveDtoSymbol(classified, rule.SettingsInfoDto, rule.Name));
+
+        var convention = rule.Name + "SettingsInfo";
+        var sym = ResolveDtoSymbol(classified, convention, rule.Name);
+        if (sym is not null) return (convention, sym);
+
+        foreach (var cn in rule.CanonicalReadDtos)
+        {
+            if (!cn.EndsWith("SettingsInfo", StringComparison.Ordinal)) continue;
+            var cs = ResolveDtoSymbol(classified, cn, rule.Name);
+            if (cs is not null) return (cn, cs);
+        }
+        return (convention, null);
     }
 
     private static INamedTypeSymbol? ResolveDtoSymbol(List<ClassifiedType> classified, string name, string section)
