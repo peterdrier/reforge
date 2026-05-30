@@ -205,4 +205,21 @@ public class SectionArchitectureTests
 
         Assert.DoesNotContain(report.Groups["Reporting"].Entries, e => e.Rule == "crossSectionWriteSurface" && e.Symbol == "CampReportBuilder");
     }
+
+    // ---------------- Task 6: conservationAnchors emission ----------------
+
+    [Fact]
+    public async Task ConservationAnchors_EmittedFqKeyedWithRecursivePaths()
+    {
+        var report = await Score(CampConfig());
+
+        var primary = report.ConservationAnchors.Single(a => a.Key.EndsWith("CampInfo") && a.Role == "primaryInfoDto");
+        Assert.Equal("Camp", primary.Section);
+        Assert.Contains("CampInfo.Seasons[].Members[].UserId", primary.Paths);
+        // interface anchor carries {name, returns}
+        var read = report.ConservationAnchors.Single(a => a.Key.EndsWith("ICampServiceRead") && a.Role == "readServiceInterface");
+        Assert.Contains(read.Methods, m => m.Name == "GetByIdAsync");
+        // per-anchor byRule points exist for the read interface (readServiceInterfaceMethod + readSurfaceProjectionMethod)
+        Assert.True(read.ByRule.ContainsKey("readServiceInterfaceMethod"));
+    }
 }

@@ -1074,8 +1074,55 @@ public sealed class SurfaceScoreEngine
         }
     }
 
-    /// <summary>Stub until Task 6 — the conservation-anchor model is finalized, the builder lands later.</summary>
-    private List<ConservationAnchor> BuildConservationAnchors(SectionArchitecture arch, ScoreReport report) => new();
+    /// <summary>
+    /// Emits the section's conservation anchors: each canonical DTO (with its recursive member
+    /// paths) and each read/full service interface (with method signatures + the surface points
+    /// attributed to its methods). FQ-keyed by section so the Plan C gate can hold a refactor to a
+    /// stable identity. Report-level — independent of any top-symbols display cap.
+    /// </summary>
+    private static List<ConservationAnchor> BuildConservationAnchors(SectionArchitecture arch, ScoreReport report)
+    {
+        var anchors = new List<ConservationAnchor>();
+        foreach (var section in arch.Sections)
+        {
+            foreach (var dto in new[] { section.PrimaryInfoDto, section.SettingsInfoDto, section.CacheDto })
+            {
+                if (dto is null) continue;
+                anchors.Add(new ConservationAnchor(
+                    $"{section.Name}::{dto.Display}", section.Name, dto.Role,
+                    dto.Paths, Array.Empty<ConservationAnchorMethod>(),
+                    new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)));
+            }
+
+            foreach (var iface in arch.InterfaceAnchors.Where(i => string.Equals(i.Section, section.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                var methodNames = iface.Methods.Select(m => m.Name).ToHashSet(StringComparer.Ordinal);
+                anchors.Add(new ConservationAnchor(
+                    $"{section.Name}::{iface.Display}", section.Name, iface.Role,
+                    Array.Empty<string>(),
+                    iface.Methods.Select(m => new ConservationAnchorMethod(m.Name, m.Returns)).ToList(),
+                    AttributePointsByRule(report, section.Name, methodNames)));
+            }
+
+            foreach (var shard in section.ReadShards)
+                anchors.Add(new ConservationAnchor(
+                    $"{section.Name}::shard:{shard.Name}", section.Name, "readShard",
+                    Array.Empty<string>(), Array.Empty<ConservationAnchorMethod>(),
+                    new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)));
+        }
+        return anchors;
+    }
+
+    /// <summary>Best-effort: sum the points of entries in a group whose symbol is one of the anchor's methods.</summary>
+    private static Dictionary<string, int> AttributePointsByRule(ScoreReport report, string group, HashSet<string> methodNames)
+    {
+        var byRule = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (report.Groups.TryGetValue(group, out var g))
+            foreach (var e in g.Entries)
+                if (methodNames.Contains(e.Symbol))
+                    byRule[e.Rule] = byRule.GetValueOrDefault(e.Rule) + e.Points;
+        return byRule;
+    }
 
     // ---------------- Pass 7: Boundary-input surface ----------------
 

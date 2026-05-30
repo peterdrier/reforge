@@ -587,7 +587,16 @@ public static class SurfaceScoreCommand
             suspiciousImprovements = report.SuspiciousImprovements
                 .Select(si => new { scope = si.Scope, kind = si.Kind, message = si.Message, surfaceDelta = si.SurfaceDelta, internalDelta = si.InternalDelta, improvement = si.Improvement })
                 .ToArray(),
-            diagnostics = report.Diagnostics.Select(d => new { level = d.Level, code = d.Code, message = d.Message }).ToArray()
+            diagnostics = report.Diagnostics.Select(d => new { level = d.Level, code = d.Code, message = d.Message }).ToArray(),
+            conservationAnchors = report.ConservationAnchors.Select(a => new
+            {
+                key = a.Key,
+                section = a.Section,
+                role = a.Role,
+                paths = a.Paths,
+                methods = a.Methods.Select(m => new { name = m.Name, returns = m.Returns }).ToArray(),
+                byRule = a.ByRule
+            }).ToArray()
         };
 
         Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));

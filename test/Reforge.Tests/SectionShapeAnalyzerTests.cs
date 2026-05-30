@@ -55,4 +55,18 @@ public class SectionShapeAnalyzerTests
         // no missing surfaces: Camp has read+write+CampInfo
         Assert.Empty(camp.Missing);
     }
+
+    [Fact]
+    public async Task Analyze_AggregatesDtoAndInterfaceAnchors()
+    {
+        var cfg = CampConfig();
+        var dir = LocationHelper.GetSolutionDirectory(_fixture.Solution);
+        var classified = (await SolutionClassifier.ClassifyAsync(_fixture.Solution, cfg, dir, CancellationToken.None)).ToList();
+        var arch = await SectionShapeAnalyzer.AnalyzeAsync(_fixture.Solution, classified, cfg, dir, CancellationToken.None);
+
+        Assert.Contains(arch.DtoAnchors, a => a.Display.EndsWith("CampInfo") && a.Role == "primaryInfoDto");
+        var read = arch.InterfaceAnchors.Single(a => a.Display.EndsWith("ICampServiceRead") && a.Role == "readServiceInterface");
+        Assert.Contains(read.Methods, m => m.Name == "GetByIdAsync");
+        Assert.Contains(arch.InterfaceAnchors, a => a.Display.EndsWith("ICampSectionService") && a.Role == "fullServiceInterface");
+    }
 }
