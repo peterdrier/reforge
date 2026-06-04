@@ -3,22 +3,43 @@ using Microsoft.CodeAnalysis;
 namespace Reforge;
 
 /// <summary>
+/// A single error-severity compiler diagnostic retained from the workspace compile, so a
+/// degraded score can name WHICH errors it hit (file/line/CS-code/message), not just a count.
+/// <see cref="Column"/> is captured for fidelity but not currently rendered by any format.
+/// </summary>
+public sealed record BuildDiagnostic(
+    string Id,
+    string Severity,
+    string Project,
+    string File,
+    int Line,
+    int Column,
+    string Message);
+
+/// <summary>
 /// Build-health of an analyzed solution. When <see cref="Degraded"/> is true the
 /// semantic model is incomplete (the solution did not compile cleanly), so any
 /// score computed against it is partial. <see cref="AppearsUnbuilt"/> only flavors
 /// the warning wording; it is not the authoritative degraded signal.
+/// <see cref="Diagnostics"/> holds the deduped, capped list of the actual errors (empty
+/// when not degraded); <see cref="DiagnosticsTruncated"/> is how many were dropped by the cap.
 /// </summary>
 public sealed record BuildHealth(
     bool Degraded,
     int CompilationErrorCount,
     int UnresolvedReferenceCount,
-    bool AppearsUnbuilt);
+    bool AppearsUnbuilt)
+{
+    public IReadOnlyList<BuildDiagnostic> Diagnostics { get; init; } = Array.Empty<BuildDiagnostic>();
+    public int DiagnosticsTruncated { get; init; }
+}
 
 /// <summary>
 /// Assesses whether a solution compiled cleanly. surface-score relies on a complete
 /// semantic model; an unbuilt/erroring solution silently under-counts cross-project
 /// rules (DI registration, cross-section service/interface, entity-return). This
-/// inspector surfaces that state. Counts only - no diagnostic messages are retained.
+/// inspector surfaces that state, and retains the actual error diagnostics so a degraded
+/// score can name which errors it hit — not just how many.
 /// </summary>
 public static class BuildInspector
 {
@@ -31,20 +52,97 @@ public static class BuildInspector
     /// <summary>
     /// Inspects every project's compilation plus the on-disk build-artifact probe.
     /// Reuses Roslyn's per-project compilation cache, so calling this after the
-    /// scoring passes adds no meaningful compilation cost.
+    /// scoring passes adds no meaningful compilation cost. <paramref name="maxDiagnostics"/>
+    /// caps the retained per-error list (0 = unlimited); the counts are never capped.
     /// </summary>
-    public static async Task<BuildHealth> InspectAsync(Solution solution, CancellationToken ct)
+    public static async Task<BuildHealth> InspectAsync(Solution solution, int maxDiagnostics, CancellationToken ct)
     {
-        var compilations = new List<Compilation>();
+        var byProject = new List<(Compilation Compilation, string Project)>();
         foreach (var project in solution.Projects)
         {
             var compilation = await project.GetCompilationAsync(ct);
-            if (compilation is not null) compilations.Add(compilation);
+            if (compilation is not null) byProject.Add((compilation, project.Name));
         }
 
-        var (errors, unresolved) = CountErrors(compilations, ct);
+        var (errors, unresolved) = CountErrors(byProject.Select(x => x.Compilation), ct);
         var appearsUnbuilt = AppearsUnbuilt(solution.Projects.Select(p => p.FilePath));
-        return new BuildHealth(errors > 0, errors, unresolved, appearsUnbuilt);
+
+        var solutionDir = LocationHelper.GetSolutionDirectory(solution);
+        var (diagnostics, truncated) = CollectDiagnostics(byProject, solutionDir, maxDiagnostics, ct);
+
+        return new BuildHealth(errors > 0, errors, unresolved, appearsUnbuilt)
+        {
+            Diagnostics = diagnostics,
+            DiagnosticsTruncated = truncated
+        };
+    }
+
+    /// <summary>
+    /// Retains the error-severity diagnostics (the detail the counts throw away) across the
+    /// given per-project compilations, mapped to solution-relative <see cref="BuildDiagnostic"/>s,
+    /// then deduped + capped via <see cref="DedupAndCap"/>.
+    /// </summary>
+    internal static (IReadOnlyList<BuildDiagnostic> Diagnostics, int Truncated) CollectDiagnostics(
+        IEnumerable<(Compilation Compilation, string Project)> compilations,
+        string solutionDirectory,
+        int max,
+        CancellationToken ct)
+    {
+        var raw = new List<BuildDiagnostic>();
+        foreach (var (compilation, project) in compilations)
+            foreach (var d in compilation.GetDiagnostics(ct))
+            {
+                if (d.Severity != DiagnosticSeverity.Error) continue;
+                raw.Add(ToBuildDiagnostic(d, project, solutionDirectory));
+            }
+        return DedupAndCap(raw, max);
+    }
+
+    private static BuildDiagnostic ToBuildDiagnostic(Diagnostic d, string project, string solutionDirectory)
+    {
+        string file = "";
+        int line = 0, column = 0;
+        if (d.Location.IsInSource)
+        {
+            var span = d.Location.GetLineSpan();
+            file = LocationHelper.NormalizePath(span.Path, solutionDirectory);
+            line = span.StartLinePosition.Line + 1;     // 0-based -> 1-based
+            column = span.StartLinePosition.Character + 1;
+        }
+        return new BuildDiagnostic(d.Id, d.Severity.ToString(), project, file, line, column, d.GetMessage());
+    }
+
+    /// <summary>
+    /// Dedups identical diagnostics by (Id + file + line + message), orders deterministically
+    /// by (project, file, line), and caps the result at <paramref name="max"/> (0 or negative =
+    /// unlimited). Returns the kept list plus how many were dropped by the cap.
+    /// </summary>
+    internal static (IReadOnlyList<BuildDiagnostic> Diagnostics, int Truncated) DedupAndCap(
+        IEnumerable<BuildDiagnostic> diagnostics, int max)
+    {
+        // Structural tuple key dedups on exactly (Id, file, line, message) — no delimiter,
+        // so no field value can forge a match across a separator boundary.
+        var seen = new HashSet<(string Id, string File, int Line, string Message)>();
+        var deduped = new List<BuildDiagnostic>();
+        foreach (var d in diagnostics)
+        {
+            if (seen.Add((d.Id, d.File, d.Line, d.Message)))
+                deduped.Add(d);
+        }
+
+        deduped.Sort((a, b) =>
+        {
+            int c = string.CompareOrdinal(a.Project, b.Project);
+            if (c != 0) return c;
+            c = string.CompareOrdinal(a.File, b.File);
+            if (c != 0) return c;
+            return a.Line.CompareTo(b.Line);
+        });
+
+        if (max <= 0 || deduped.Count <= max)
+            return (deduped, 0);
+
+        return (deduped.Take(max).ToList(), deduped.Count - max);
     }
 
     /// <summary>Counts error-severity diagnostics across the given compilations, and the unresolved-reference subset.</summary>

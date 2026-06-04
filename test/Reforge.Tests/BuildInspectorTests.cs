@@ -86,4 +86,110 @@ public class BuildInspectorTests
         Assert.Contains("3", msg);
         Assert.Contains("error", msg, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ---------------- Build diagnostics: dedup / cap / ordering ----------------
+
+    private static BuildDiagnostic Diag(string id, string project, string file, int line, string message) =>
+        new(id, "Error", project, file, line, 1, message);
+
+    [Fact]
+    public void DedupAndCap_IdenticalIdFileLineMessage_CollapsesToOne()
+    {
+        var input = new[]
+        {
+            Diag("CS0246", "ProjA", "src/Foo.cs", 12, "type 'Bar' not found"),
+            Diag("CS0246", "ProjA", "src/Foo.cs", 12, "type 'Bar' not found"),
+        };
+
+        var (diags, truncated) = BuildInspector.DedupAndCap(input, max: 25);
+
+        Assert.Single(diags);
+        Assert.Equal(0, truncated);
+    }
+
+    [Fact]
+    public void DedupAndCap_DifferingOnAnyKeyField_AreKept()
+    {
+        var input = new[]
+        {
+            Diag("CS0246", "ProjA", "src/Foo.cs", 12, "type 'Bar' not found"),
+            Diag("CS0103", "ProjA", "src/Foo.cs", 12, "type 'Bar' not found"), // different id
+            Diag("CS0246", "ProjA", "src/Foo.cs", 13, "type 'Bar' not found"), // different line
+            Diag("CS0246", "ProjA", "src/Other.cs", 12, "type 'Bar' not found"), // different file
+            Diag("CS0246", "ProjA", "src/Foo.cs", 12, "type 'Baz' not found"), // different message
+        };
+
+        var (diags, truncated) = BuildInspector.DedupAndCap(input, max: 25);
+
+        Assert.Equal(5, diags.Count);
+        Assert.Equal(0, truncated);
+    }
+
+    [Fact]
+    public void DedupAndCap_OverCap_TruncatesAndReportsCount()
+    {
+        var input = Enumerable.Range(0, 5)
+            .Select(i => Diag("CS0246", "ProjA", $"src/F{i}.cs", 1, "boom"))
+            .ToArray();
+
+        var (diags, truncated) = BuildInspector.DedupAndCap(input, max: 2);
+
+        Assert.Equal(2, diags.Count);
+        Assert.Equal(3, truncated);
+    }
+
+    [Fact]
+    public void DedupAndCap_ZeroMax_IsUnlimited()
+    {
+        var input = Enumerable.Range(0, 40)
+            .Select(i => Diag("CS0246", "ProjA", $"src/F{i}.cs", 1, "boom"))
+            .ToArray();
+
+        var (diags, truncated) = BuildInspector.DedupAndCap(input, max: 0);
+
+        Assert.Equal(40, diags.Count);
+        Assert.Equal(0, truncated);
+    }
+
+    [Fact]
+    public void DedupAndCap_OrdersByProjectThenFileThenLine()
+    {
+        var input = new[]
+        {
+            Diag("CS1", "ProjB", "src/a.cs", 5, "m"),
+            Diag("CS2", "ProjA", "src/b.cs", 1, "m"),
+            Diag("CS3", "ProjA", "src/a.cs", 9, "m"),
+            Diag("CS4", "ProjA", "src/a.cs", 2, "m"),
+        };
+
+        var (diags, _) = BuildInspector.DedupAndCap(input, max: 0);
+
+        Assert.Collection(diags,
+            d => Assert.Equal(("ProjA", "src/a.cs", 2), (d.Project, d.File, d.Line)),
+            d => Assert.Equal(("ProjA", "src/a.cs", 9), (d.Project, d.File, d.Line)),
+            d => Assert.Equal(("ProjA", "src/b.cs", 1), (d.Project, d.File, d.Line)),
+            d => Assert.Equal(("ProjB", "src/a.cs", 5), (d.Project, d.File, d.Line)));
+    }
+
+    [Fact]
+    public void CollectDiagnostics_UnresolvedType_CapturesCodeFileLineMessageProject()
+    {
+        var source = "public sealed class Broken : Undefined { }";
+        var tree = CSharpSyntaxTree.ParseText(source, path: "/sln/src/Broken.cs");
+        var comp = CSharpCompilation.Create("t",
+            new[] { tree },
+            new[] { MetadataReference.CreateFromFile(typeof(object).Assembly.Location) },
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        var (diags, truncated) = BuildInspector.CollectDiagnostics(
+            new (Compilation, string)[] { (comp, "MyProject") }, solutionDirectory: "/sln", max: 25, CancellationToken.None);
+
+        Assert.Equal(0, truncated);
+        var cs0246 = Assert.Single(diags, d => d.Id == "CS0246");
+        Assert.Equal("MyProject", cs0246.Project);
+        Assert.Equal("src/Broken.cs", cs0246.File); // solution-relative, forward slashes
+        Assert.Equal(1, cs0246.Line);
+        Assert.Contains("Undefined", cs0246.Message);
+        Assert.Equal("Error", cs0246.Severity);
+    }
 }

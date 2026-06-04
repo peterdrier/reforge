@@ -124,7 +124,7 @@ public sealed class SurfaceScoreEngine
         _solutionDirectory = solutionDirectory;
     }
 
-    public async Task<ScoreReport> ScoreAsync(Solution solution, CancellationToken ct)
+    public async Task<ScoreReport> ScoreAsync(Solution solution, CancellationToken ct, int maxBuildDiagnostics = 25)
     {
         var report = new ScoreReport();
         report.ConfiguredSections.AddRange(_config.EffectiveSections.Select(s => s.Name));
@@ -187,7 +187,7 @@ public sealed class SurfaceScoreEngine
         // Build health: detect a degraded (unbuilt/erroring) compilation so a partial
         // score is never mistaken for a complete one. Reuses the per-project compilations
         // the passes above already realized (Roslyn caches them), so this is near-free.
-        report.BuildHealth = await BuildInspector.InspectAsync(solution, ct);
+        report.BuildHealth = await BuildInspector.InspectAsync(solution, maxBuildDiagnostics, ct);
 
         return report;
     }

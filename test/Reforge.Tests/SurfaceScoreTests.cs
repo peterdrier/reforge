@@ -803,5 +803,8 @@ public class SurfaceScoreTests
         Assert.NotNull(report.BuildHealth);
         Assert.False(report.BuildHealth.Degraded);
         Assert.Equal(0, report.BuildHealth.CompilationErrorCount);
+        // Clean build: no captured per-error detail, nothing truncated.
+        Assert.Empty(report.BuildHealth.Diagnostics);
+        Assert.Equal(0, report.BuildHealth.DiagnosticsTruncated);
     }
 }

@@ -2,6 +2,34 @@
 
 What changed and why. Newest first.
 
+## v0.21.0 - surface the degraded-build errors
+
+When `surface-score`'s MSBuildWorkspace load doesn't compile cleanly it marks the result
+degraded — but until now it reported only a count ("6 compile error(s)") with no file, line,
+CS-code, or message. The warning was unactionable: you couldn't tell a genuine code break from
+a workspace-load gap (a source generator reforge didn't run), and you couldn't fix it. This
+closes that pure observability gap — the raw Roslyn diagnostics were already in hand at the
+spot that counted them; they were just thrown away.
+
+- `BuildInspector` now RETAINS the error-severity diagnostics it was only counting: per error
+  it captures id (CSxxxx), severity, project, solution-relative file path, line/column, and
+  message. Diagnostics are deduped on `(id + file + line + message)` and ordered deterministically
+  by `(project, file, line)`.
+- The counts (`compilationErrorCount`, `unresolvedReferenceCount`) are unchanged — they remain the
+  raw compiler totals. The listed detail is deduped, so the list can be shorter than the count
+  (two identical errors at the same line collapse to one); this is intentional noise reduction.
+- All three formats surface the errors when degraded:
+  - **JSON** — additive `build.diagnostics: [{ id, severity, project, file, line, message }]` and
+    `build.diagnosticsTruncated`. The existing `build.*` fields are untouched. Both new keys are
+    OMITTED on a clean build — no new output when nothing's wrong.
+  - **Compact + Markdown** — each error under the existing warning, one per line:
+    `  CSxxxx  <path>:<line>  <message>  (<project>)`, with a `(+N more)` footer when truncated.
+- New `--max-build-diagnostics <n>` (default 25; 0 = unlimited) caps the listed detail. The cap
+  only bounds the list; it never affects the counts.
+- This is read-only reporting: scoring numbers (total, byRule, per-group) are unchanged. Whether
+  the residual errors are a reforge load bug or a genuine break is now a diagnosable follow-up —
+  you can finally see them.
+
 ## v0.20.0 - conservation gate
 
 Under `--baseline`, surface-score now classifies what happened to read/service behavior

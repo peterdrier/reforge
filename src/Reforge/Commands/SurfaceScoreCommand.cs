@@ -54,6 +54,11 @@ public static class SurfaceScoreCommand
         {
             Description = "Path to a prior `surface-score --format json` output. Compares current surface and internal-complexity scores against it and applies a Pareto gate: a surface drop bought with a complexity rise is reported as a 'traded' verdict (not an improvement) plus a Suspicious Improvements section. Run per-commit (parent commit's JSON as baseline) to catch score-driven consolidation at the moment it happens."
         };
+        var maxBuildDiagnosticsOption = new Option<int>("--max-build-diagnostics")
+        {
+            Description = "Cap on the number of individual compile errors listed when the workspace compile is degraded (default 25). 0 = unlimited. Only the listed detail is capped — the error/unresolved counts are always exact.",
+            DefaultValueFactory = _ => 25
+        };
 
         var command = new Command("surface-score",
             "Score a solution's durable surface, dependency use, and internal shape (config-driven). Supports Compact, Markdown, and JSON output.")
@@ -64,7 +69,8 @@ public static class SurfaceScoreCommand
             allOption,
             topSymbolsOption,
             listGroupsOption,
-            baselineOption
+            baselineOption,
+            maxBuildDiagnosticsOption
         };
 
         command.SetAction(async (parseResult, ct) =>
@@ -78,6 +84,7 @@ public static class SurfaceScoreCommand
             var topSymbols = parseResult.GetValue(topSymbolsOption);
             var listGroups = parseResult.GetValue(listGroupsOption);
             var baselinePath = parseResult.GetValue(baselineOption);
+            var maxBuildDiagnostics = parseResult.GetValue(maxBuildDiagnosticsOption);
             var format = parseResult.GetValue(formatOption);
 
             // --all is an alias for --top 0 (no cap). int.MaxValue is the sentinel for "show
@@ -91,7 +98,7 @@ public static class SurfaceScoreCommand
                 var config = SurfaceScoreConfig.LoadOrDefault(configPath, solutionDir, out var loadedFrom);
 
                 var engine = new SurfaceScoreEngine(config, solutionDir);
-                var report = await engine.ScoreAsync(solution, ct);
+                var report = await engine.ScoreAsync(solution, ct, maxBuildDiagnostics);
                 report.ConfigPath = loadedFrom;
 
                 // Build-health: when the analyzed solution did not compile cleanly, the
@@ -223,12 +230,31 @@ public static class SurfaceScoreCommand
 
     // ----------------------- Compact (plain terse) -----------------------
 
-    private static void WriteCompact(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
+    /// <summary>
+    /// The captured workspace compile errors, one per line, in the spec format
+    /// <c>  CSxxxx  &lt;path&gt;:&lt;line&gt;  &lt;message&gt;  (&lt;project&gt;)</c>, with a
+    /// <c>(+N more)</c> footer when the cap truncated. Empty when the build is clean —
+    /// so clean builds get no new output. Shared by the compact and markdown writers.
+    /// </summary>
+    internal static IEnumerable<string> BuildDiagnosticLines(BuildHealth bh)
+    {
+        if (!bh.Degraded || bh.Diagnostics.Count == 0) yield break;
+        foreach (var d in bh.Diagnostics)
+            yield return $"  {d.Id}  {d.File}:{d.Line}  {d.Message}  ({d.Project})";
+        if (bh.DiagnosticsTruncated > 0)
+            yield return $"  (+{bh.DiagnosticsTruncated} more)";
+    }
+
+    internal static void WriteCompact(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
     {
         Console.WriteLine($"surface-score: surface={report.SurfaceTotal} internalComplexity={report.InternalComplexityTotal} combined={report.Total} (informational) types={report.TypesAnalyzed} groups={report.Groups.Count} config={(report.ConfigPath ?? "(defaults)")}");
 
         foreach (var d in report.Diagnostics)
             Console.WriteLine($"! {d.Level}: {d.Message}");
+
+        // Under the degraded-build warning: the actual errors. Nothing when clean.
+        foreach (var line in BuildDiagnosticLines(report.BuildHealth))
+            Console.WriteLine(line);
 
         if (baseline is not null)
         {
@@ -317,7 +343,7 @@ public static class SurfaceScoreCommand
 
     // ----------------------- Markdown -----------------------
 
-    private static void WriteMarkdown(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
+    internal static void WriteMarkdown(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# Surface Score");
@@ -339,6 +365,18 @@ public static class SurfaceScoreCommand
             sb.AppendLine();
             foreach (var d in report.Diagnostics)
                 sb.AppendLine($"- **{d.Level}** (`{d.Code}`): {d.Message}");
+
+            // The actual compile errors behind a degraded-build warning, fenced so the
+            // alignment survives markdown rendering. Empty (and skipped) when clean.
+            var buildLines = BuildDiagnosticLines(report.BuildHealth).ToList();
+            if (buildLines.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("```");
+                foreach (var line in buildLines)
+                    sb.AppendLine(line);
+                sb.AppendLine("```");
+            }
             sb.AppendLine();
         }
 
@@ -485,7 +523,7 @@ public static class SurfaceScoreCommand
 
     // ----------------------- JSON -----------------------
 
-    private static void WriteJson(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
+    internal static void WriteJson(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
     {
         var filteredGroups = FilterAndOrderGroups(report, groupFilter);
         var effectiveTop = top <= 0 ? int.MaxValue : top;
@@ -573,7 +611,23 @@ public static class SurfaceScoreCommand
                 degraded = report.BuildHealth.Degraded,
                 compilationErrorCount = report.BuildHealth.CompilationErrorCount,
                 unresolvedReferenceCount = report.BuildHealth.UnresolvedReferenceCount,
-                appearsUnbuilt = report.BuildHealth.AppearsUnbuilt
+                appearsUnbuilt = report.BuildHealth.AppearsUnbuilt,
+                // Additive: the captured errors and the cap-truncation count. Null (and so
+                // omitted by WhenWritingNull) on a clean build — no new output when clean.
+                diagnostics = report.BuildHealth.Degraded
+                    ? report.BuildHealth.Diagnostics.Select(d => new
+                    {
+                        id = d.Id,
+                        severity = d.Severity,
+                        project = d.Project,
+                        file = d.File,
+                        line = d.Line,
+                        message = d.Message
+                    }).ToArray()
+                    : null,
+                diagnosticsTruncated = report.BuildHealth.Degraded
+                    ? report.BuildHealth.DiagnosticsTruncated
+                    : (int?)null
             },
             configPath = report.ConfigPath,
             configuredSections = report.ConfiguredSections,
