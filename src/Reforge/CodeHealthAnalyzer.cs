@@ -354,9 +354,13 @@ public static class CodeHealthAnalyzer
             };
             if (body is null) continue;
 
+            var methodModel = body.SyntaxTree == model.SyntaxTree
+                ? model
+                : model.Compilation.GetSemanticModel(body.SyntaxTree);
+
             foreach (var identifier in body.DescendantNodes().OfType<IdentifierNameSyntax>())
             {
-                var symbolInfo = model.GetSymbolInfo(identifier);
+                var symbolInfo = methodModel.GetSymbolInfo(identifier, ct);
                 var sym = symbolInfo.Symbol;
 
                 if (sym is IFieldSymbol field &&
