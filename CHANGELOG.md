@@ -2,6 +2,25 @@
 
 What changed and why. Newest first.
 
+## v0.21.1 - partial types no longer crash health analysis
+
+`code-health` / `surface-score` threw `ArgumentException: Syntax node is not within syntax
+tree` whenever it analyzed a partial type whose declarations span multiple files and that
+cleared the small-type gate (5+ methods or 50+ lines). Cohesion (LCOM) analysis anchored a
+single `SemanticModel` to one of the type's syntax trees, then called `GetSymbolInfo` on
+identifiers from method bodies living in the *other* files — which Roslyn rejects outright,
+aborting the whole analysis.
+
+- `ComputeCohesionAsync` now resolves the correct `SemanticModel` per method body
+  (`model.Compilation.GetSemanticModel(body.SyntaxTree)` when the body lives in a tree other
+  than the anchored model). Methods declared in secondary partial files now contribute to the
+  cohesion graph instead of crashing it.
+- Regression test + a two-file `PartialHealthFixture` in the sample solution exercise the
+  cross-tree path; the test fails (with that exact `ArgumentException`) without the fix.
+- Known follow-up, pre-existing and not addressed here: the per-type `Lines` metric still
+  measures only one partial declaration, so size-based scoring undercounts multi-file partial
+  types.
+
 ## v0.21.0 - surface the degraded-build errors
 
 When `surface-score`'s MSBuildWorkspace load doesn't compile cleanly it marks the result
