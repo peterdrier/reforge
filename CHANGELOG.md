@@ -2,6 +2,19 @@
 
 What changed and why. Newest first.
 
+## v0.21.2 - partial types report their full source size
+
+Follow-up to v0.21.1 (resolves the known follow-up noted there). The per-type `Lines` metric
+measured only one of a partial type's declarations — whichever survived dedup — so multi-file
+partial types were undercounted. That understated the size component of the composite score and
+could let a large partial slip under the small-type gate (`< 5 methods && < 50 lines`).
+
+- `Lines` now sums the line spans of every declaration of the type, skipping generated `obj/`
+  declarations so it stays "total source lines" (consistent with the collection-time filter).
+  Non-partial types are unaffected — they have a single declaration.
+- Regression test: the sample two-file `PartialHealthFixture` (an 11-line part + a 6-line part)
+  now reports 17 lines; before the fix it reported 11.
+
 ## v0.21.1 - partial types no longer crash health analysis
 
 `code-health` / `surface-score` threw `ArgumentException: Syntax node is not within syntax

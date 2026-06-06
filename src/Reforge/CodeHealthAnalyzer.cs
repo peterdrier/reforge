@@ -141,9 +141,20 @@ public static class CodeHealthAnalyzer
 
             var qualifiedName = symbol.ToDisplayString();
 
-            // Lines
-            var lineSpan = declNode.GetLocation().GetLineSpan();
-            int lines = lineSpan.EndLinePosition.Line - lineSpan.StartLinePosition.Line + 1;
+            // Lines — sum across all declarations so a partial type spanning multiple files
+            // reports its full source size, not just one part. Skip generated obj/ declarations
+            // to keep this "total source lines" (consistent with the collection-time filter).
+            int lines = 0;
+            foreach (var declRef in symbol.DeclaringSyntaxReferences)
+            {
+                var declPath = declRef.SyntaxTree.FilePath ?? "";
+                if (declPath.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") ||
+                    declPath.Contains("/obj/"))
+                    continue;
+                var node = await declRef.GetSyntaxAsync(ct);
+                var lineSpan = node.GetLocation().GetLineSpan();
+                lines += lineSpan.EndLinePosition.Line - lineSpan.StartLinePosition.Line + 1;
+            }
 
             // Methods and cyclomatic complexity
             var methods = symbol.GetMembers().OfType<IMethodSymbol>()
