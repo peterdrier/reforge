@@ -2,6 +2,36 @@
 
 What changed and why. Newest first.
 
+## v0.22.0 - guard --baseline against a build-state mismatch
+
+`surface-score` gives materially different totals for the same commit depending on whether the
+solution had a real `dotnet build` first (v0.21.0 traced this to cross-section/DI/entity-return
+rules under-resolving on an unbuilt workspace), but `--baseline` never checked whether the
+baseline and the current run were even measured in the same build state. A baseline captured on
+an unbuilt worktree compared against a freshly-built current run reported a uniform "regression"
+that was really the measurement changing under it — this burned a real refactor run and is why
+issue #9 exists.
+
+- `SurfaceScoreBaseline.Compare` now reads the baseline JSON's `build` block (`degraded`,
+  `appearsUnbuilt`, added in v0.20.0/v0.21.0) and compares it against the current run's
+  `BuildHealth`. A baseline that predates the `build` block (pre-v0.20) is treated as an
+  **unknown** state, never as implicitly clean — comparing it against any known current state
+  counts as a mismatch, same as comparing two known-but-different states.
+- A mismatch adds a `warning` diagnostic (`baseline-build-state-mismatch`) naming both states,
+  e.g. "baseline was captured on a degraded/unbuilt workspace (appearsUnbuilt=true) but the
+  current run compiled cleanly; the comparison may be off by several percent, concentrated in
+  crossSection*/diRegistration/methodReturnsEntity rules." Surfaced in Compact/Markdown (existing
+  diagnostics rendering) and as a new `build.diagnostics`-style entry in JSON's `diagnostics`.
+- The comparison is **not refused** — the user may legitimately want it. Instead the verdict is
+  marked low-confidence: `lowConfidence=true` in Compact, a `**LOW CONFIDENCE**` marker in
+  Markdown, and an additive `baseline.lowConfidence: true` in JSON. All three are omitted
+  entirely when the build states match, so a matched comparison (both clean or both degraded)
+  produces byte-identical output to before this change.
+- Suggestions (1) resolution-confidence signal and (2) unbuilt-workspace detection from issue #9
+  were already shipped (v0.20.0–v0.21.0); (3) an in-process `--build`/`--ensure-built` flag was
+  declined as out of scope — reforge is a read-only one-shot CLI, shelling out to `dotnet build`
+  belongs in the caller's workflow, not the tool.
+
 ## v0.21.2 - partial types report their full source size
 
 Follow-up to v0.21.1 (resolves the known follow-up noted there). The per-type `Lines` metric
