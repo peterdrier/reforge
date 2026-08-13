@@ -219,6 +219,11 @@ public sealed class SurfaceScoreEngine
     {
         foreach (var c in classified)
         {
+            // Durable surface is what the assembly exports. An internal type's members cannot be
+            // called from another section, so they are not API — no consumer can be broken by
+            // changing them. Their implementation still scores on the internal-complexity axis.
+            if (!c.IsExported) continue;
+
             if (c.Tags.Contains("dto") && LooksLikeDataCarrier(c.Type))
                 ScoreDtoSurface(c, report);
 
@@ -338,6 +343,9 @@ public sealed class SurfaceScoreEngine
             if (m.MethodKind != MethodKind.Ordinary) continue;
             if (m.AssociatedSymbol is not null) continue;
             if (m.IsImplicitlyDeclared) continue;
+            // Interface members are implicitly public, but C# 8 allows private/internal ones —
+            // those are implementation detail of the interface, not part of what it exports.
+            if (m.DeclaredAccessibility != Accessibility.Public) continue;
 
             var loc = m.Locations.FirstOrDefault(l => l.IsInSource);
             var (file, line) = LocateMember(loc, c);
@@ -380,6 +388,16 @@ public sealed class SurfaceScoreEngine
 
     // ---------------- Pass 2: Dependency Use ----------------
 
+    /// <summary>
+    /// Deliberately NOT gated on <see cref="ClassifiedType.IsExported"/>, unlike the durable-surface
+    /// rules. This pass charges for a <b>use</b>, not a declaration: an internal class injecting
+    /// another section's repository still forces the assembly reference and still calls across the
+    /// boundary. Marking the consumer internal changes nothing about that coupling, so gating here
+    /// would have turned "make it internal" into a way to shed the penalty for free — the same
+    /// gaming the effective-accessibility rule exists to close. Same reasoning for
+    /// writeCapableInterfaceUsedReadOnly, crossSectionWriteSurface, duplicateDbSetOwner, and
+    /// diRegistration.
+    /// </summary>
     private void ScoreDependencyUse(
         List<ClassifiedType> classified,
         Dictionary<string, ClassifiedType> typesByDisplay,
@@ -433,6 +451,9 @@ public sealed class SurfaceScoreEngine
 
         foreach (var c in classified)
         {
+            // These rules charge for the shape of a published signature (param count, bool flags,
+            // tuple returns). An internal type publishes no signature.
+            if (!c.IsExported) continue;
             // Only score shape for code-bearing types (skip pure DTOs).
             if (c.Tags.Contains("dto") && !c.Tags.Contains("applicationService")) continue;
 
@@ -560,6 +581,9 @@ public sealed class SurfaceScoreEngine
         foreach (var c in classified)
         {
             if (c.Type.TypeKind != TypeKind.Class) continue;
+            // Both rules judge what a published method hands back. An internal method hands it
+            // back only within the assembly, so neither the credit nor the leak penalty applies.
+            if (!c.IsExported) continue;
             // Controllers' return types are HTTP responses, not domain leaks.
             if (c.Tags.Contains("controller")) continue;
 
@@ -947,6 +971,10 @@ public sealed class SurfaceScoreEngine
 
         foreach (var iface in interfaces)
         {
+            // An internal interface with one implementation is an implementation choice, not a
+            // published abstraction nobody varies.
+            if (!iface.IsExported) continue;
+
             int implCount = 0;
             ClassifiedType? singleImpl = null;
             foreach (var cls in classes)
@@ -1130,6 +1158,10 @@ public sealed class SurfaceScoreEngine
                 foreach (var rm in section.ChargedReadMethods)
                 {
                     if (rm.EscapeHatch) continue;
+                    // The surcharge is for the shape a read interface publishes. An internal read
+                    // interface publishes nothing; the shape stays in the section-shape view as an
+                    // advisory, it just doesn't score.
+                    if (rm.Symbol is not null && !SurfaceVisibility.IsExported(rm.Symbol)) continue;
                     var detail = $"{rm.Interface}.{rm.Method} ({rm.Kind})";
                     if (rm.Symbol is not null)
                         AddEntry(report, section.Name, "readSurfaceProjectionMethod", projW, rm.Symbol, rm.File, rm.Line, detail);
@@ -1265,6 +1297,8 @@ public sealed class SurfaceScoreEngine
         var usage = new Dictionary<string, BoundaryUsage>(StringComparer.Ordinal);
         foreach (var c in classified)
         {
+            // Only an exported type has a boundary for an input object to sit on.
+            if (!c.IsExported) continue;
             bool isInterface = c.Type.TypeKind == TypeKind.Interface;
             foreach (var m in c.Type.GetMembers().OfType<IMethodSymbol>())
             {
@@ -1295,24 +1329,23 @@ public sealed class SurfaceScoreEngine
         foreach (var u in usage.Values)
         {
             if (!typesByDisplay.TryGetValue(SolutionClassifier.TypeKey(u.Type), out var c)) continue;
+            if (!c.IsExported) continue; // an internal input object is not boundary surface
             var t = u.Type;
 
             int dataMembers = BoundaryInput.DataMemberCount(t);
             int publicReadable = BoundaryInput.PublicReadableCount(t);
             int hidden = Math.Max(0, dataMembers - publicReadable);
-            bool isPublic = t.DeclaredAccessibility == Accessibility.Public;
 
-            if (hiddenW != 0 && isPublic && dataMembers >= 2 && publicReadable * 2 < dataMembers)
+            if (hiddenW != 0 && dataMembers >= 2 && publicReadable * 2 < dataMembers)
             {
                 int basePts = 15 + 2 * Math.Max(0, hidden - 2);
                 AddEntry(report, c.Group, "publicInputWithHiddenState", basePts * hiddenW, t, c.File, c.Line,
                     $"{t.Name} ({publicReadable}/{dataMembers} members publicly readable)");
             }
 
-            bool publicOrInternal = t.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal;
             int ctorParams = BoundaryInput.WidestCtorParamCount(t);
             int members = Math.Max(ctorParams, dataMembers);
-            if (bagW != 0 && publicOrInternal && (ctorParams >= 4 || dataMembers >= 4)
+            if (bagW != 0 && (ctorParams >= 4 || dataMembers >= 4)
                 && !BoundaryInput.HasBehavior(t) && BoundaryInput.CtorIsDirectAssignment(t, ct)
                 && u.MinBusinessParams <= 2)
             {
@@ -1367,6 +1400,7 @@ public sealed class SurfaceScoreEngine
         foreach (var (display, sites) in siteCountByType)
         {
             if (!typesByDisplay.TryGetValue(display, out var c)) continue;
+            if (!c.IsExported) continue; // an internal input object is not boundary surface
             int pts = Math.Min(25, 5 * sites) * w;
             if (pts == 0) continue;
             AddEntry(report, c.Group, "inlineParameterObjectConstruction", pts, c.Type, c.File, c.Line,

@@ -51,6 +51,20 @@ display — `Humans.Store` + `Humans.Store.Contracts` both report as `Store`. As
 structural and compiler-enforced, so it can't drift from the solution the way a path/namespace/symbol
 glob does. A monolith that hasn't been split yet simply scores under its own assembly name until it is.
 
+**Surface is what the assembly exports.** Only effectively-public declarations score on the surface
+axis — `public` all the way out through every containing type. A `public` method on an `internal`
+class, or a `public` type nested in an `internal` one, is implementation: no other section can call
+it, so nothing outside can break when it changes. (`protected` doesn't count as exported, and
+`InternalsVisibleTo` doesn't widen surface.) Internal and private code still scores in full on the
+**internal-complexity axis**, so a well-encapsulated section reads as small surface + whatever
+complexity it actually carries.
+
+Rules that charge for a *use* rather than a declaration — `crossSectionRepository`,
+`crossSectionFullService`, `crossSectionReadInterface`, `writeCapableInterfaceUsedReadOnly`,
+`crossSectionWriteSurface`, `duplicateDbSetOwner`, `diRegistration` — are **not** gated this way:
+an internal class injecting another section's repository still forces the assembly reference and
+still calls across the boundary, so marking it internal can't make the coupling free.
+
 `reforge.surface-score.json` (searched upward from the solution) is optional and carries **policy
 only**:
 
