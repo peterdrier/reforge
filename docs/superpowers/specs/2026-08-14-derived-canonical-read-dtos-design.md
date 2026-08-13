@@ -163,29 +163,36 @@ Output JSON shape is unchanged — no key added or removed at any level.
 
 ## Measured impact (Humans, built, A/B on one identical tree)
 
-Both binaries were run back to back against one built tree and saw the same corpus —
-`typesAnalyzed` 2,840, `internalComplexityTotal` 3,111, 46 sections — so the deltas are the change
-and nothing else. A `Humans.Shifts` extraction is in flight in that repo, so the absolute totals
-are a snapshot of a moving tree; an earlier measurement the same day read 17,033 for the same
-`surfaceTotal`. Only same-tree deltas are meaningful.
+Both binaries saw the same corpus on a **clean** build — `build.degraded` false, zero unresolved
+references, `typesAnalyzed` 2,836, `internalComplexityTotal` 3,127, 46 sections — so the deltas are
+the change and nothing else.
 
 | | v0.24.0 | v0.25.0 |
 |---|---|---|
-| `surfaceTotal` | 14,956 | 14,880 (-0.5%) |
-| `canonicalReadDtoReturn` | -3 | -81 |
-| `missingPrimaryInfoDto` | 240 | 110 |
+| `surfaceTotal` | 17,033 | 16,886 (-0.9%) |
+| `canonicalReadDtoReturn` | -3 | -162 |
+| `missingPrimaryInfoDto` | 230 | 110 |
 | `readSurfaceProjectionMethod` | 116 | 248 |
 
 24 of 45 scoring sections did not move at all. No other rule moved.
 
+**Measurement hazard, recorded because it bit during this work.** A `Humans.Shifts` extraction is in
+flight in that repo, so the tree breaks and heals under you. A re-measurement taken while it was
+broken (3,723 compilation errors, 2,024 unresolved references) reported `canonicalReadDtoReturn`
+-81 instead of -162 and `surfaceTotal` 14,880 instead of 16,886 — and looked entirely plausible,
+because both sides of that A/B agreed on `typesAnalyzed` and `internalComplexityTotal`. Matching
+corpus counts are **not** sufficient evidence that a comparison is sound: two runs against the same
+broken tree are consistent with each other and wrong together. Check `build.degraded` on every run
+before quoting any number from it.
+
 **The credit was granting almost nothing.** Nine config blocks listed 34 DTO names between them and
 earned the credit exactly once, because the names were matched against return types solution-wide
-and had drifted. Derivation credits eight sections — Application (-24), GoogleIntegration (-21),
-Camps and Shifts (-12 each), Containers/Finance/Infrastructure/Tickets (-3 each) — and only two of
-those had a config block. Config was describing a read API for the sections someone had thought
-about, while the assemblies that actually export one went uncredited.
+and had drifted. Derivation credits eight sections — Application (-84), Infrastructure (-24),
+GoogleIntegration (-21), Camps and Shifts (-12 each), Containers/Finance/Tickets (-3 each) — and
+only two of those had a config block. Config was describing a read API for the sections someone had
+thought about, while the assemblies that actually export one went uncredited.
 
-**Fourteen sections gained a primary anchor; one lost the one config invented for it.** Calendar
+**Thirteen sections gained a primary anchor; one lost the one config invented for it.** Calendar
 goes 0 -> 10 on `missingPrimaryInfoDto` because its configured canonical DTO, `CalendarEventInfo`,
 is an `internal sealed record` under `Sections/Humans.Calendar/Services/Dtos/`. Calendar publishes
 no read API; the config had been asserting one that no consumer can reach. That is the whole thesis

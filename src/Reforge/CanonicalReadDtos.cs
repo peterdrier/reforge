@@ -190,60 +190,79 @@ public sealed class CanonicalReadDtoSet
         if (t.IsStatic) return false;
         if (!t.Locations.Any(l => l.IsInSource)) return false;
 
-        // Inherited behavior counts. `class SearchHit : List<int> { public int Score { get; set; } }`
-        // declares one property and no methods of its own, but a consumer gets Add/Remove/Insert
-        // through it — that is a behavioral type wearing a DTO's clothes, and admitting it would
-        // grant return credits, suppress entity-leak penalties, and let it win a primary anchor.
-        // System.Object and System.ValueType stop the walk: their members are universal, not a
-        // published API choice.
-        int props = 0, methods = 0;
+        // Allowlist, not blacklist. Asking "which member shapes are behavior?" is an open-ended
+        // question — ordinary methods, then explicit implementations, then operators, conversions,
+        // events, default interface methods, each found one at a time. Asking "is every member
+        // carried data or invisible to a consumer?" is closed: anything unrecognised disqualifies
+        // by default, so a shape nobody thought of fails safe instead of publishing a behavioral
+        // type as a read DTO.
+        //
+        // The walk climbs base types — `class SearchHit : List<int>` declares only a property but
+        // hands a consumer Add/Remove/Insert. System.Object and System.ValueType stop it: their
+        // members are universal rather than a published API choice.
+        int props = 0;
         for (INamedTypeSymbol? current = t; current is not null; current = current.BaseType)
         {
             if (current.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType) break;
             foreach (var m in current.GetMembers())
             {
-                if (m.IsImplicitlyDeclared) continue;
-                // An explicit interface implementation is `private` on the class, so the
-                // accessibility filter below would skip it — but a consumer casts to the interface
-                // and calls it. Hidden behavior is still behavior.
-                var explicitImpl = m is IMethodSymbol { MethodKind: MethodKind.ExplicitInterfaceImplementation };
-                if (!explicitImpl && m.DeclaredAccessibility != Accessibility.Public) continue;
-                switch (m)
-                {
-                    // Instance, non-indexer only — the same filter DtoInventory applies. A static
-                    // property or an indexer is not a fact an anchor path can name, so admitting a
-                    // type on one would produce a canonical DTO with an empty inventory.
-                    case IPropertySymbol { IsStatic: false, Parameters.Length: 0 }: props++; break;
-                    case IPropertySymbol: break;
-                    // An event is a subscription surface, not data.
-                    case IEventSymbol: methods++; break;
-                    case IMethodSymbol when explicitImpl: methods++; break;
-                    // Operators and conversions are public callable behavior too, just under a
-                    // different MethodKind. A record's synthesized ==/!= are implicitly declared and
-                    // were already filtered above; a hand-written one counts.
-                    case IMethodSymbol { AssociatedSymbol: null } meth
-                        when meth.MethodKind is MethodKind.Ordinary or MethodKind.UserDefinedOperator or MethodKind.Conversion:
-                        methods++; break;
-                }
+                if (IsCarriedData(m)) { props++; continue; }
+                if (IsInvisibleToConsumers(m)) continue;
+                return false;
             }
         }
 
-        // Default interface methods: behavior the type inherits without declaring anything at all.
-        // Only NON-abstract interface members qualify — an abstract one is either implemented above
-        // or unimplementable. That distinction is what keeps records out of this branch: a record's
-        // IEquatable<T>.Equals is abstract on the interface, so counting every interface member
-        // instead would disqualify every record in the solution.
+        // A default interface method is behavior the type never declares at all. Only NON-abstract
+        // members qualify — an abstract one is either implemented on the type (already judged
+        // above) or unimplementable. That distinction is load-bearing: every record implements
+        // IEquatable<T>, so treating abstract interface members as behavior would disqualify every
+        // record in the solution.
         foreach (var iface in t.AllInterfaces)
-        {
             foreach (var m in iface.GetMembers())
-            {
-                if (m is IMethodSymbol { IsAbstract: false, IsStatic: false, MethodKind: MethodKind.Ordinary, AssociatedSymbol: null }
-                    && m.DeclaredAccessibility == Accessibility.Public)
-                    methods++;
-            }
-        }
+                if (m is { IsAbstract: false, IsStatic: false, DeclaredAccessibility: Accessibility.Public }
+                    and (IMethodSymbol or IEventSymbol))
+                    return false;
 
-        return props >= 1 && methods == 0;
+        return props >= 1;
+    }
+
+    /// <summary>
+    /// A member that IS the carried data: a public, readable, non-static, non-indexer property.
+    /// Exactly what <see cref="DtoInventory"/> turns into an anchor path, so a type admitted on
+    /// these always has facts to inventory rather than anchoring an empty path set.
+    /// </summary>
+    private static bool IsCarriedData(ISymbol m) =>
+        m is IPropertySymbol { IsStatic: false, Parameters.Length: 0, DeclaredAccessibility: Accessibility.Public, GetMethod: not null };
+
+    /// <summary>
+    /// A member no external consumer can reach, so it says nothing about whether the type is a data
+    /// carrier: compiler-synthesized members (a record's <c>Equals</c>/<c>ToString</c>/
+    /// <c>Deconstruct</c>), constructors, property and event accessors, nested type declarations,
+    /// and anything non-public. An <b>explicit interface implementation</b> is pointedly NOT here —
+    /// it is <c>private</c> on the symbol but callable by anyone who casts.
+    /// </summary>
+    private static bool IsInvisibleToConsumers(ISymbol m)
+    {
+        if (m.IsImplicitlyDeclared) return true;
+        if (m is IMethodSymbol { MethodKind: MethodKind.ExplicitInterfaceImplementation }) return false;
+        if (m.DeclaredAccessibility != Accessibility.Public) return true;
+        return m switch
+        {
+            IMethodSymbol meth => meth.MethodKind
+                is MethodKind.Constructor or MethodKind.StaticConstructor or MethodKind.Destructor
+                or MethodKind.PropertyGet or MethodKind.PropertySet
+                or MethodKind.EventAdd or MethodKind.EventRemove or MethodKind.EventRaise,
+            // A nested type is a declaration, not a member a consumer invokes on an instance.
+            INamedTypeSymbol => true,
+            // A static or indexer property is not behavior, but not a nameable instance fact
+            // either — it simply is not evidence in either direction.
+            IPropertySymbol => true,
+            // A const or field carries no behavior. Fields are deliberately not counted as data
+            // either: DtoInventory builds paths from properties, so counting them would admit types
+            // whose inventory comes back empty.
+            IFieldSymbol => true,
+            _ => false
+        };
     }
 
     /// <summary>Whether the name is the settings DTO by convention (<c>*SettingsInfo</c>).</summary>

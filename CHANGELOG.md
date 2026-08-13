@@ -75,16 +75,15 @@ the method already documented.
 
 Output JSON shape is unchanged (same top-level and per-group keys, no key added or removed).
 
-Measured on Humans, both binaries run back to back against one built tree — `typesAnalyzed` 2,840
-and `internalComplexityTotal` 3,111 on both sides, 46 sections: `surfaceTotal` 14,956 -> 14,880
-(-0.5%), 24 of 45 scoring sections unchanged. (A `Humans.Shifts` extraction is in flight there, so
-the absolute totals are a snapshot; the deltas are not.) Three rules moved, and the movement is the
-finding:
+Measured on Humans against a **clean** build — `build.degraded` false and zero unresolved references
+on both sides, `typesAnalyzed` 2,836 and `internalComplexityTotal` 3,127 on both sides, 46 sections:
+`surfaceTotal` 17,033 -> 16,886 (-0.9%), 24 of 45 scoring sections unchanged. Three rules moved, and
+the movement is the finding:
 
-- `canonicalReadDtoReturn` -3 -> -81. Nine config blocks listed 34 DTO names between them and
-  granted the credit exactly once. Derivation credits eight sections, led by Application (-24) and
-  GoogleIntegration (-21) — neither of which had a config block at all.
-- `missingPrimaryInfoDto` 240 -> 110. Fourteen sections resolve a primary anchor through the derived
+- `canonicalReadDtoReturn` -3 -> -162. Nine config blocks listed 34 DTO names between them and
+  granted the credit exactly once. Derivation credits eight sections, led by Application (-84),
+  Infrastructure (-24) and GoogleIntegration (-21) — none of which had a config block at all.
+- `missingPrimaryInfoDto` 230 -> 110. Thirteen sections resolve a primary anchor through the derived
   set that the `<Section>Info` convention missed. Calendar moves the other way, 0 -> 10: its
   configured canonical DTO `CalendarEventInfo` is an `internal sealed record` under `Services/Dtos/`,
   so Calendar publishes no read API and the config had been asserting one no consumer can reach.
@@ -92,6 +91,11 @@ finding:
   resolved primary anchor — without it a primitive read can't be told from a projection. The newly
   anchored sections therefore reveal projection debt that had been invisible (Governance +40,
   Expenses +32).
+
+A later re-measurement caught the Humans tree mid-breakage (3,723 compilation errors, 2,024
+unresolved references) and produced materially different deltas — `canonicalReadDtoReturn` -81
+rather than -162. Same change, same command, wrong tree. Only figures from a run with
+`build.degraded` false are quoted here.
 
 ## v0.24.0 - score the assembly's effective public surface (BREAKING score change)
 
