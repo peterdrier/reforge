@@ -150,13 +150,11 @@ public sealed class SurfaceScoreEngine
                 $"Sections are assembly-derived; known sections are: {string.Join(", ", report.ConfiguredSections)}."));
 
         // Single canonical index — built once, used by both dependency-use and DI-registration
-        // passes. `classified` is deduped per assembly, not per display name, so two assemblies
-        // declaring the same fully qualified name both appear here; first-wins rather than throwing.
-        // A lookup by display name is inherently ambiguous in that case, and keeping only one is
-        // strictly better than the old behavior, which dropped the second type from scoring entirely.
-        var typesByDisplay = new Dictionary<string, ClassifiedType>(StringComparer.Ordinal);
-        foreach (var c in classified)
-            typesByDisplay.TryAdd(c.Type.ToDisplayString(), c);
+        // passes. Keyed by SolutionClassifier.TypeKey (declaring assembly + fully qualified name):
+        // the name alone is not unique across a solution, and collapsing two assemblies' identically
+        // named types would resolve a consumer into the wrong section.
+        var typesByDisplay = classified.ToDictionary(
+            c => SolutionClassifier.TypeKey(c.Type), c => c, StringComparer.Ordinal);
 
         // Section architecture (Plan B): resolve each configured section's shape once. Used to
         // score the five section rules and to emit conservation anchors. Computed before Pass 5
@@ -396,7 +394,7 @@ public sealed class SurfaceScoreEngine
                 if (ctor.IsImplicitlyDeclared) continue;
                 foreach (var param in ctor.Parameters)
                 {
-                    var depDisplay = param.Type.ToDisplayString();
+                    var depDisplay = SolutionClassifier.TypeKey(param.Type);
                     if (!typesByDisplay.TryGetValue(depDisplay, out var dep)) continue;
 
                     // Same-group dependencies don't cost anything (or are zero-weighted).
@@ -591,7 +589,7 @@ public sealed class SurfaceScoreEngine
                 }
 
                 if (entityWeight == 0) continue;
-                if (!typesByDisplay.TryGetValue(named.ToDisplayString(), out var returnTypeInfo)) continue;
+                if (!typesByDisplay.TryGetValue(SolutionClassifier.TypeKey(named), out var returnTypeInfo)) continue;
                 if (!returnTypeInfo.Tags.Contains("entity")) continue;
                 if (string.Equals(returnTypeInfo.Group, c.Group, StringComparison.OrdinalIgnoreCase)) continue;
 
@@ -677,7 +675,7 @@ public sealed class SurfaceScoreEngine
                 if (ctor.IsImplicitlyDeclared) continue;
                 foreach (var p in ctor.Parameters)
                 {
-                    var d = p.Type.ToDisplayString();
+                    var d = SolutionClassifier.TypeKey(p.Type);
                     if (fullByDisplay.Contains(d))
                         injectedFulls.Add((d, p));
                 }
@@ -711,7 +709,7 @@ public sealed class SurfaceScoreEngine
                         // both `_dep.Foo()` and `dep.Foo()` (constructor-only stash).
                         var receiverType = model.GetTypeInfo(ma.Expression).Type;
                         if (receiverType is null) continue;
-                        if (!string.Equals(receiverType.ToDisplayString(), fullDisplay, StringComparison.Ordinal))
+                        if (!string.Equals(SolutionClassifier.TypeKey(receiverType), fullDisplay, StringComparison.Ordinal))
                             continue;
 
                         var methodName = ma.Name.Identifier.Text;
@@ -758,11 +756,10 @@ public sealed class SurfaceScoreEngine
             c.Type.TypeKind == TypeKind.Interface && c.Tags.Contains("readServiceInterface")).ToList();
         if (fullInterfaces.Count == 0 || readInterfaces.Count == 0) return pairs;
 
-        // First-wins, for the same reason as typesByDisplay: display names are unique per assembly,
-        // not solution-wide.
-        var readByDisplay = new Dictionary<string, ClassifiedType>(StringComparer.Ordinal);
-        foreach (var r in readInterfaces)
-            readByDisplay.TryAdd(r.Type.ToDisplayString(), r);
+        // Keyed by TypeKey for the same reason as typesByDisplay: a display name is unique per
+        // assembly, not solution-wide.
+        var readByDisplay = readInterfaces.ToDictionary(
+            r => SolutionClassifier.TypeKey(r.Type), r => r, StringComparer.Ordinal);
         var readByNameInNamespace = readInterfaces.ToLookup(
             r => $"{r.Type.ContainingNamespace?.ToDisplayString()}|{r.Type.Name}",
             StringComparer.Ordinal);
@@ -771,10 +768,10 @@ public sealed class SurfaceScoreEngine
         {
             // Strategy 1: direct inheritance. The full interface lists the read interface as a base.
             var inheritedRead = full.Type.Interfaces.FirstOrDefault(i =>
-                readByDisplay.ContainsKey(i.ToDisplayString()));
+                readByDisplay.ContainsKey(SolutionClassifier.TypeKey(i)));
             if (inheritedRead is not null)
             {
-                pairs[full.Type.ToDisplayString()] = readByDisplay[inheritedRead.ToDisplayString()];
+                pairs[SolutionClassifier.TypeKey(full.Type)] = readByDisplay[SolutionClassifier.TypeKey(inheritedRead)];
                 continue;
             }
 
@@ -786,7 +783,7 @@ public sealed class SurfaceScoreEngine
             var sibling = readByNameInNamespace[siblingKey].FirstOrDefault();
             if (sibling is not null)
             {
-                pairs[full.Type.ToDisplayString()] = sibling;
+                pairs[SolutionClassifier.TypeKey(full.Type)] = sibling;
             }
         }
 
@@ -1297,7 +1294,7 @@ public sealed class SurfaceScoreEngine
 
         foreach (var u in usage.Values)
         {
-            if (!typesByDisplay.TryGetValue(u.Type.ToDisplayString(), out var c)) continue;
+            if (!typesByDisplay.TryGetValue(SolutionClassifier.TypeKey(u.Type), out var c)) continue;
             var t = u.Type;
 
             int dataMembers = BoundaryInput.DataMemberCount(t);
@@ -1360,7 +1357,7 @@ public sealed class SurfaceScoreEngine
                         if (!BoundaryInput.IsBoundaryName(t.Name)) continue;
                         int count = Math.Max(oc.ArgumentList?.Arguments.Count ?? 0, oc.Initializer?.Expressions.Count ?? 0);
                         if (count < 4) continue;
-                        var key = t.ToDisplayString();
+                        var key = SolutionClassifier.TypeKey(t);
                         siteCountByType[key] = siteCountByType.GetValueOrDefault(key) + 1;
                     }
                 }

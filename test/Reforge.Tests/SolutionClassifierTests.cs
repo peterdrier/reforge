@@ -69,6 +69,21 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public async Task TypeKey_DistinguishesSameNameInDifferentAssemblies()
+    {
+        var classified = await ClassifyAsync();
+        var markers = classified.Where(c => c.Type.ToDisplayString() == "SampleSolution.Shared.SectionMarker").ToList();
+
+        // Keeping both types in `classified` is only half the fix — the lookup maps the scoring
+        // passes consult must also tell them apart, or a consumer resolves to the wrong section
+        // and the cross-section rules fire (or stay silent) against the wrong assembly.
+        var keys = markers.Select(m => SolutionClassifier.TypeKey(m.Type)).ToList();
+
+        Assert.Equal(2, keys.Distinct(StringComparer.Ordinal).Count());
+        Assert.All(keys, k => Assert.Contains("SampleSolution.Shared.SectionMarker", k));
+    }
+
+    [Fact]
     public async Task ClassifyAsync_ExcludesTestAssemblies()
     {
         var classified = await ClassifyAsync();

@@ -72,6 +72,18 @@ public static class SolutionClassifier
             .ToList();
     }
 
+    /// <summary>
+    /// Identity of a type for every lookup map in the scoring passes: <c>declaringAssembly|fullyQualifiedName</c>.
+    /// The fully qualified name alone is NOT unique across a solution — two assemblies may each
+    /// declare an internal <c>Shared.IOrderService</c> — and collapsing them would resolve a consumer
+    /// to the wrong section, producing false cross-section findings or suppressing real ones. Keying
+    /// on the <b>declaring</b> assembly is what makes a cross-assembly lookup still land correctly:
+    /// a consumer in A injecting a type declared in B resolves through B's key, because the symbol
+    /// it holds is B's.
+    /// </summary>
+    public static string TypeKey(ISymbol type) =>
+        $"{type.ContainingAssembly?.Name}|{type.ToDisplayString()}";
+
     private static IEnumerable<INamedTypeSymbol> EnumerateTypes(INamespaceSymbol ns)
     {
         foreach (var m in ns.GetMembers())

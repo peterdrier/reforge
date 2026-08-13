@@ -97,11 +97,11 @@ public static class SectionShapeAnalyzer
     public static async Task<SectionArchitecture> AnalyzeAsync(Solution solution,
         List<ClassifiedType> classified, SurfaceScoreConfig config, string solutionDirectory, CancellationToken ct)
     {
-        // First-wins: `classified` is deduped per assembly, so two assemblies declaring the same
-        // fully qualified name both reach here and a plain ToDictionary would throw.
-        var typesByDisplay = new Dictionary<string, ClassifiedType>(StringComparer.Ordinal);
-        foreach (var c in classified)
-            typesByDisplay.TryAdd(c.Type.ToDisplayString(), c);
+        // Keyed by SolutionClassifier.TypeKey (declaring assembly + fully qualified name): the name
+        // alone is not unique across a solution, and collapsing two assemblies' identically named
+        // types would resolve a consumer into the wrong section.
+        var typesByDisplay = classified.ToDictionary(
+            c => SolutionClassifier.TypeKey(c.Type), c => c, StringComparer.Ordinal);
 
         // Cross-section write-surface use (with escape analysis), keyed by consumer section.
         var crossUses = await AnalyzeCrossSectionUsesAsync(solution, classified, typesByDisplay, config, solutionDirectory, ct);
@@ -319,7 +319,7 @@ public static class SectionShapeAnalyzer
                 if (ctor.IsImplicitlyDeclared) continue;
                 foreach (var param in ctor.Parameters)
                 {
-                    var d = param.Type.ToDisplayString();
+                    var d = SolutionClassifier.TypeKey(param.Type);
                     if (!pairs.TryGetValue(d, out var readIface)) continue;
                     if (!typesByDisplay.TryGetValue(d, out var depFull)) continue;
                     if (string.Equals(depFull.Group, c.Group, StringComparison.OrdinalIgnoreCase)) continue; // same section

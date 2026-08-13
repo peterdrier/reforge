@@ -62,6 +62,15 @@ it cannot drift from the solution, and it costs zero config.
   second was dropped from scoring, and an assembly whose every type collided vanished from the
   section map. Dedup is now `assembly|displayName`; the three display-name indexes downstream
   became first-wins rather than throwing on the now-possible duplicate.
+- Every type-lookup map in the scoring passes is now keyed by `SolutionClassifier.TypeKey`
+  (declaring assembly + fully qualified name) instead of the name alone — `typesByDisplay` in
+  both the engine and the section-shape analyzer, `readByDisplay`, the full→read `pairs` map, and
+  the inline-parameter-object site counter. Keeping both same-named types in `classified` was only
+  half the fix: the maps then collapsed them again, so a consumer of its own assembly's
+  `Shared.IOrderService` could resolve to the *other* assembly's declaration and make the
+  dependency, return-type, DI, and write-surface passes report false cross-section findings or
+  suppress real ones. Keying on the *declaring* assembly keeps cross-assembly lookups correct: a
+  consumer in A injecting B's type resolves through B's key, because the symbol it holds is B's.
 - Fixed alongside: `canonicalReadDtos` were imported from EVERY config section, including keys
   naming an assembly that no longer exists. Canonical names apply solution-wide, so a stale key
   kept granting `canonicalReadDtoReturn` credit and suppressing `methodReturnsEntityAcrossSection`
