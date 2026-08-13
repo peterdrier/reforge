@@ -19,19 +19,17 @@ public static class SolutionClassifier
         Solution solution, SurfaceScoreConfig config, string solutionDirectory, CancellationToken ct)
     {
         var seenByDisplay = new HashSet<string>(StringComparer.Ordinal);
-        var analyzed = new HashSet<string>(
-            solution.Projects
-                .Where(p => !p.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
-                .Select(p => p.AssemblyName),
-            StringComparer.Ordinal);
+        var projects = solution.Projects
+            .Where(p => !p.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var analyzed = new HashSet<string>(projects.Select(p => p.AssemblyName), StringComparer.Ordinal);
 
         // Pass 1 — collect types with their raw assembly name. The section name can't be assigned
         // yet: it depends on the prefix shared across the assemblies that actually declare types.
         var collected = new List<(INamedTypeSymbol Type, string Assembly, HashSet<string> Tags, string File, Location Location)>();
 
-        foreach (var project in solution.Projects)
+        foreach (var project in projects)
         {
-            if (!analyzed.Contains(project.AssemblyName)) continue;
             var compilation = await project.GetCompilationAsync(ct);
             if (compilation is null) continue;
 
@@ -162,8 +160,10 @@ public static class AssemblySections
     /// </summary>
     public static Dictionary<string, string> Resolve(IEnumerable<string> assemblyNames)
     {
-        var names = assemblyNames.Where(n => !string.IsNullOrEmpty(n)).Distinct(StringComparer.Ordinal).ToList();
-        var folded = names.ToDictionary(n => n, Fold, StringComparer.Ordinal);
+        var folded = assemblyNames
+            .Where(n => !string.IsNullOrEmpty(n))
+            .Distinct(StringComparer.Ordinal)
+            .ToDictionary(n => n, Fold, StringComparer.Ordinal);
         var segmented = folded.Values.Distinct(StringComparer.Ordinal).Select(v => v.Split('.')).ToList();
 
         int shared = segmented.Count == 0 ? 0 : segmented[0].Length;
