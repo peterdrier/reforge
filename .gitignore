@@ -4,3 +4,5 @@ obj/
 *.user
 nupkg/
 .reforge-port
+local/
+.claude/worktrees/
