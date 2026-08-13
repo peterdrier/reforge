@@ -21,6 +21,15 @@ internal sealed class LodgeSecretInfo
     public string Notes { get; set; } = "";
 }
 
+// Exported, in a Contracts/ folder, one public property and no methods of its own — but a consumer
+// holding one gets Add/Remove/Insert through the base. Behavior inherited is still behavior, so this
+// is not a data carrier and must not be published as a canonical read DTO. (Its name matches no dto
+// glob either, so the behavioral check is the only thing that could admit it.)
+public sealed class LodgeOccupancyTally : List<int>
+{
+    public int Total { get; set; }
+}
+
 // The Contracts-side half of a PARTIAL DTO whose other half lives at the assembly root (see
 // AmenityPartial.cs). Only one of the two source locations is the type's "primary" one, and which
 // depends on syntax-tree order — so membership must be decided from ALL declarations, not from the

@@ -49,9 +49,12 @@ it in JSON.
 2. **A data type** — a non-static `class` or `struct`. Interfaces, enums and delegates are not a
    read API's payload.
 3. **DTO-shaped** — carries the `dto` classification tag **or** is a behavioral data carrier (at
-   least one public property, no public methods). The behavioral fallback admits the DTOs whose
-   names don't match the conventional suffixes (`*Hit`, `*Totals`, `*Row`) and keeps derivation
-   working under a config that carries no `dto` classification rule.
+   least one public property, no public methods, **counting inherited members**). The behavioral
+   fallback admits the DTOs whose names don't match the conventional suffixes (`*Hit`, `*Totals`,
+   `*Row`) and keeps derivation working under a config that carries no `dto` classification rule.
+   Inherited behavior counts because `class SearchHit : List<int>` declares no methods of its own
+   yet hands a consumer `Add`/`Remove`/`Insert`; the walk stops at `System.Object` and
+   `System.ValueType`, whose members are universal rather than a published API choice.
 4. **Declared on the contracts surface** — its declaring assembly is a `<X>.Contracts` assembly, or
    its source path has a `Contracts` directory segment.
 
@@ -217,4 +220,5 @@ fallback reddens the Lodge anchor test and the existing missing-surface test; re
 primary location reddens the partial test; dropping the type-key tiebreak reddens the order test;
 testing raw instead of solution-relative paths reddens the ancestor-directory theory; dropping the
 directory-boundary check reddens the sibling-prefix cases in both `LocationHelperTests` and the
-contracts-surface theory.
+contracts-surface theory; counting only directly-declared members reddens the inherited-behavior
+test (`LodgeOccupancyTally : List<int>`).

@@ -185,14 +185,25 @@ public sealed class CanonicalReadDtoSet
         if (t.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
         if (t.IsStatic) return false;
         if (!t.Locations.Any(l => l.IsInSource)) return false;
+
+        // Inherited behavior counts. `class SearchHit : List<int> { public int Score { get; set; } }`
+        // declares one property and no methods of its own, but a consumer gets Add/Remove/Insert
+        // through it — that is a behavioral type wearing a DTO's clothes, and admitting it would
+        // grant return credits, suppress entity-leak penalties, and let it win a primary anchor.
+        // System.Object and System.ValueType stop the walk: their members are universal, not a
+        // published API choice.
         int props = 0, methods = 0;
-        foreach (var m in t.GetMembers())
+        for (INamedTypeSymbol? current = t; current is not null; current = current.BaseType)
         {
-            if (m.IsImplicitlyDeclared || m.DeclaredAccessibility != Accessibility.Public) continue;
-            switch (m)
+            if (current.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType) break;
+            foreach (var m in current.GetMembers())
             {
-                case IPropertySymbol: props++; break;
-                case IMethodSymbol meth when meth.MethodKind == MethodKind.Ordinary && meth.AssociatedSymbol is null: methods++; break;
+                if (m.IsImplicitlyDeclared || m.DeclaredAccessibility != Accessibility.Public) continue;
+                switch (m)
+                {
+                    case IPropertySymbol: props++; break;
+                    case IMethodSymbol meth when meth.MethodKind == MethodKind.Ordinary && meth.AssociatedSymbol is null: methods++; break;
+                }
             }
         }
         return props >= 1 && methods == 0;

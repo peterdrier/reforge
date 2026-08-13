@@ -97,6 +97,17 @@ public class CanonicalReadDtoDerivationTests
     }
 
     [Fact]
+    public async Task Derive_ExcludesTypesThatInheritBehavior()
+    {
+        var canonical = await DeriveAsync();
+
+        // LodgeOccupancyTally is exported, sits in Contracts/, and declares one property and no
+        // methods — but it extends List<int>, so a consumer gets Add/Remove/Insert through it.
+        // Counting only directly-declared members would publish a behavioral type as a read DTO.
+        Assert.DoesNotContain("LodgeOccupancyTally", Names(canonical, "Lodge"));
+    }
+
+    [Fact]
     public async Task Derive_ChecksEveryPartialDeclaration_NotJustThePrimaryLocation()
     {
         var cfg = SurfaceScoreConfig.Default();

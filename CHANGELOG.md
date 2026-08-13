@@ -41,6 +41,12 @@ listed names no longer existed as types at all, and 14 real DTOs went inert beca
   unrecognized members and the engine emits a `removed-config-field` warning naming each stale
   block, the same treatment `unknown-config-section` gives a stale section key.
 
+The behavioral DTO test now counts **inherited** members. `class SearchHit : List&lt;int&gt;` declares
+one property and no methods of its own, but a consumer gets `Add`/`Remove`/`Insert` through it —
+behavior inherited is still behavior, and admitting such a type would grant it return credits and
+let it win a section's primary anchor. The walk stops at `System.Object`/`System.ValueType`. This
+also tightens the DTO-inventory descent set in `section-shape`, which shares the same test.
+
 Also fixed here, because deriving from declaration paths depends on it: **`LocationHelper.NormalizePath`
 required only a string prefix, not a directory boundary.** With the solution at `/work/App`, a linked
 source at `/work/AppContracts/Foo.cs` normalized to `Contracts/Foo.cs` — a path that never existed.
