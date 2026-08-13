@@ -272,8 +272,15 @@ public static class SectionShapeAnalyzer
             if (primaryAnchor is not null) dtoAnchors.Add(primaryAnchor);
             if (settingsAnchor is not null) dtoAnchors.Add(settingsAnchor);
             if (cacheAnchor is not null) dtoAnchors.Add(cacheAnchor);
-            foreach (var ri in readIfaceTypes) interfaceAnchors.Add(BuildInterfaceAnchor(ri, name, "readServiceInterface"));
-            foreach (var fi in fullIfaceTypes) interfaceAnchors.Add(BuildInterfaceAnchor(fi, name, "fullServiceInterface"));
+            // Anchors are what the conservation gate holds a refactor to, so they track EXPORTED
+            // surface only. An internal interface scores nothing (issue #13), so removing one of its
+            // methods must not read as capability evaporation — no consumer could reach it. The
+            // unfiltered readIfaceTypes/fullIfaceTypes lists above still feed the section-shape view
+            // and the missing* rules, which are deliberately unchanged.
+            foreach (var ri in readIfaceTypes.Where(c => c.IsExported))
+                interfaceAnchors.Add(BuildInterfaceAnchor(ri, name, "readServiceInterface"));
+            foreach (var fi in fullIfaceTypes.Where(c => c.IsExported))
+                interfaceAnchors.Add(BuildInterfaceAnchor(fi, name, "fullServiceInterface"));
             shardAnchors.AddRange(shards);
         }
 
@@ -466,7 +473,8 @@ public static class SectionShapeAnalyzer
     private static InterfaceAnchor BuildInterfaceAnchor(ClassifiedType iface, string section, string role)
     {
         var methods = iface.Type.GetMembers().OfType<IMethodSymbol>()
-            .Where(m => m.MethodKind == MethodKind.Ordinary && m.AssociatedSymbol is null && !m.IsImplicitlyDeclared)
+            .Where(m => m.MethodKind == MethodKind.Ordinary && m.AssociatedSymbol is null && !m.IsImplicitlyDeclared
+                        && SurfaceVisibility.IsExported(m))
             .Select(m => new InterfaceAnchorMethod(m.Name,
                 m.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)))
             .ToList();

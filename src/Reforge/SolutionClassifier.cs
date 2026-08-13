@@ -37,6 +37,9 @@ public static class SolutionClassifier
             {
                 if (!type.Locations.Any(l => l.IsInSource)) continue;
                 if (type.IsImplicitlyDeclared) continue;
+                // Internal types stay in the corpus on purpose: their implementation is still
+                // complexity the section carries, and the sizing rules must see it. What they no
+                // longer do is score as surface — see ClassifiedType.IsExported.
                 if (type.DeclaredAccessibility == Accessibility.Private) continue;
 
                 // A compilation's global namespace also reaches referenced projects' source types,
@@ -228,6 +231,37 @@ public static class AssemblySections
     }
 }
 
+/// <summary>
+/// Effective accessibility: whether a declaration crosses its own assembly boundary, i.e.
+/// whether another section can call it. A section is an assembly, so "public surface" is not a
+/// judgement call — it is what the assembly exports.
+/// </summary>
+/// <remarks>
+/// A declaration is exported only if it is <c>public</c> <b>and</b> every type containing it is,
+/// walked out to the outermost declaration: a <c>public</c> method on an <c>internal</c> class is
+/// internal, and so is a <c>public</c> type nested in one. Two deliberate exclusions:
+/// <list type="bullet">
+///   <item><c>protected</c> is not treated as exported. It is reachable only by deriving, and the
+///         scoring passes have always required <see cref="Accessibility.Public"/> on members;
+///         admitting protected types while still skipping protected members would be incoherent.</item>
+///   <item><c>InternalsVisibleTo</c> is ignored. A test project or analyzer seeing internals does
+///         not make them product surface — nothing ships against them.</item>
+/// </list>
+/// This gates the rules that charge for a <b>declaration's published shape</b>. Rules that charge
+/// for a <b>use</b> — cross-section dependencies, duplicate DbSet ownership, DI registration — are
+/// deliberately NOT gated: marking a consumer <c>internal</c> does not remove the assembly
+/// reference, and the call still crosses the boundary. Gating those would have made coupling free.
+/// </remarks>
+public static class SurfaceVisibility
+{
+    public static bool IsExported(ISymbol symbol)
+    {
+        for (ISymbol? s = symbol; s is not null; s = s.ContainingType)
+            if (s.DeclaredAccessibility != Accessibility.Public) return false;
+        return true;
+    }
+}
+
 /// <summary>A source type with its resolved section group, role tags, and primary location.</summary>
 public sealed record ClassifiedType(
     INamedTypeSymbol Type,
@@ -237,4 +271,11 @@ public sealed record ClassifiedType(
     Location PrimaryLocation)
 {
     public int Line => PrimaryLocation.GetLineSpan().StartLinePosition.Line + 1;
+
+    /// <summary>
+    /// Whether this type is visible outside its declaring assembly — see <see cref="SurfaceVisibility"/>.
+    /// Internal types stay in the corpus (their implementation still counts toward the
+    /// internal-complexity axis) but score nothing on the surface axis.
+    /// </summary>
+    public bool IsExported => SurfaceVisibility.IsExported(Type);
 }

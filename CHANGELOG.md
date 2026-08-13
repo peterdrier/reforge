@@ -2,6 +2,60 @@
 
 What changed and why. Newest first.
 
+## v0.24.0 - score the assembly's effective public surface (BREAKING score change)
+
+Since v0.23.0 a section IS an assembly, which makes "public surface" a compiler-enforced fact
+rather than a judgement call: it is what the assembly exports. The corpus didn't reflect that.
+`SolutionClassifier` admitted every non-private type, and the scoring passes checked only
+**declared** member accessibility — nobody computed **effective** accessibility. So a `public`
+method on an `internal` class scored full surface points, as did a `public` type nested inside an
+`internal` one, for API no other section can call.
+
+That inverted the incentive. The cheapest way to improve the score was to make things internal
+without changing anything a consumer sees, while genuinely encapsulating a type — a real
+decoupling win — was invisible.
+
+- **Surface = effectively public.** A declaration scores on the surface axis only if it and every
+  type containing it is `public`, walked to the outermost declaration. `protected` does not count
+  (it's reachable only by deriving, and members have always required `public`), and
+  `InternalsVisibleTo` does not widen surface — a test project seeing internals doesn't make them
+  product surface.
+- **Sizing is untouched.** Internal types stay in the corpus and `longMethod`, `largeClass`,
+  `cognitiveComplexity` and the dispatcher rules still score them in full. A well-encapsulated
+  section now reads as small surface plus whatever complexity it actually carries, instead of being
+  penalised for having an implementation. `internalComplexityTotal` is unchanged by construction.
+- **Declarations are gated; uses are not.** Rules charging for a declaration's published shape
+  (DTO/service/repository/controller members, method-shape, return-shape, boundary-input,
+  `oneImplementationInterface`, `readSurfaceProjectionMethod`) skip anything not effectively public.
+  Rules charging for a **use** do not: `crossSectionRepository`, `crossSectionFullService`,
+  `crossSectionReadInterface`, `sameSectionReadService`, `writeCapableInterfaceUsedReadOnly`,
+  `crossSectionWriteSurface`, `duplicateDbSetOwner`, `diRegistration`. An internal class injecting
+  another section's repository still forces the assembly reference and still calls across the
+  boundary — gating those would have made coupling free and recreated the exact gaming this change
+  exists to close, one rule family over.
+- **Conservation anchors track exported surface only.** The Plan C gate diffs interface method
+  names between baseline and now, so an internal interface in the anchor set meant deleting one of
+  its methods later read as capability evaporation — for surface that scores zero and no consumer
+  can reach. Anchors now cover exported interfaces and exported methods. On Humans that is
+  125 -> 90 anchors and 816 -> 477 anchor methods: 42% of what the gate policed was unreachable.
+  `SectionShape.ReadServiceInterfaces` / `FullServiceInterfaces` and the `missing*` rules still see
+  the unfiltered lists, so shape detection and the section-shape view are unchanged.
+- **Every baseline from before v0.24.0 is incomparable.** Surface totals fall by construction, so a
+  `--baseline` comparison against an older file reports a large fake improvement. Re-baseline
+  deliberately. Output JSON shape is unchanged — only values move.
+
+Measured on Humans (built): `surfaceTotal` 55,716 -> 21,010 (-62.3%), `internalComplexityTotal`
+3,131 -> 3,131 (0), `typesAnalyzed` unchanged. Both repository-implementation rules went to exactly
+zero, which is real: all 41 of Humans' repository implementations are `internal` behind a public
+interface, so the old score charged 8,250 points for surface that doesn't exist. Extracted sections
+go dark as intended (Camps -95%, Events -97.5%, Calendar -97.9%), while six all-public assemblies
+moved by exactly zero — `Application` alone is now 47% of the solution's surface. That is the honest
+picture: Humans' published API lives in its shared contracts assembly, not in its sections.
+
+Known gap, not fixed here: an `internal` MVC controller's actions now score nothing, because
+controllers are reached by reflection rather than an assembly reference. Consistent with the
+definition, but it under-counts HTTP surface.
+
 ## v0.23.0 - sections are assemblies (BREAKING config change)
 
 `surface-score` grouped types with a config cascade: per-section interface-name lists, then
