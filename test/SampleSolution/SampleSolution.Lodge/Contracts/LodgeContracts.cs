@@ -30,6 +30,26 @@ public sealed class LodgeOccupancyTally : List<int>
     public int Total { get; set; }
 }
 
+// Behavior a consumer can invoke that is not an ordinary method. None of these three is a data
+// carrier, and each would slip through a check that only looked at MethodKind.Ordinary or that
+// counted any property at all.
+public sealed class LodgeStaticTotals
+{
+    public static int Count { get; set; }        // static: no instance fact for an anchor to name
+}
+
+public sealed class LodgeNotifyingRow
+{
+    public string Name { get; set; } = "";
+    public event Action? Changed;                 // a subscription surface, not data
+}
+
+public sealed class LodgeMoney
+{
+    public decimal Amount { get; set; }
+    public static LodgeMoney operator +(LodgeMoney a, LodgeMoney b) => new() { Amount = a.Amount + b.Amount };
+}
+
 // A data-only base and a derived DTO that declares NOTHING of its own. It is still the carrier of
 // that data, so it must be admitted — and its anchor inventory has to list the inherited property,
 // or the conservation gate would prove facts against an empty path set and never notice one going

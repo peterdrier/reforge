@@ -48,8 +48,12 @@ it in JSON.
    containing type. This is the #13 definition, unchanged.
 2. **A data type** — a non-static `class` or `struct`. Interfaces, enums and delegates are not a
    read API's payload.
-3. **DTO-shaped** — carries the `dto` classification tag **or** is a behavioral data carrier (at
-   least one public property, no public methods, **counting inherited members**). The behavioral
+3. **DTO-shaped** — carries the `dto` classification tag **or** is a behavioral data carrier: at
+   least one public readable **instance, non-indexer** property, and no consumer-callable behavior
+   of any kind. The property filter is exactly `DtoInventory`'s, so an admitted type always has
+   facts to inventory instead of anchoring an empty path set. "Behavior" means every invocable
+   shape, not just `MethodKind.Ordinary` — operators, conversions and events each hide under a
+   symbol kind an ordinary-method check never sees. The behavioral
    fallback admits the DTOs whose names don't match the conventional suffixes (`*Hit`, `*Totals`,
    `*Row`) and keeps derivation working under a config that carries no `dto` classification rule.
    Behavior counts wherever a consumer can reach it: inherited from a base (`class SearchHit :

@@ -41,8 +41,12 @@ listed names no longer existed as types at all, and 14 real DTOs went inert beca
   unrecognized members and the engine emits a `removed-config-field` warning naming each stale
   block, the same treatment `unknown-config-section` gives a stale section key.
 
-The behavioral DTO test now counts **inherited and interface-exposed** behavior, not just directly
-declared public methods. `class SearchHit : List&lt;int&gt;` declares one property and no methods of
+The behavioral DTO test now counts **every shape a consumer can invoke**, not just directly declared
+public ordinary methods — operators, conversions and events included, since each lives under a symbol
+kind an "ordinary public method" check never sees. The property side is narrowed to match: only a
+readable **instance, non-indexer** property is evidence of carrying data, exactly the filter
+`DtoInventory` applies, so an admitted type always has facts to inventory rather than anchoring an
+empty path set. `class SearchHit : List&lt;int&gt;` declares one property and no methods of
 its own, but a consumer gets `Add`/`Remove`/`Insert` through it; an explicit interface
 implementation is `private` on the class symbol yet callable by anyone who casts; a default
 interface method is behavior the type never declares at all. Admitting such types would grant them

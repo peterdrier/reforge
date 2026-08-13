@@ -113,6 +113,29 @@ public class CanonicalReadDtoDerivationTests
     }
 
     [Fact]
+    public async Task Derive_ExcludesBehaviorThatIsNotAnOrdinaryMethod()
+    {
+        var canonical = await DeriveAsync();
+        var lodge = Names(canonical, "Lodge").ToList();
+
+        // An event is a subscription surface and an operator is callable behavior; both live under
+        // symbol shapes an "ordinary public method" check never sees.
+        Assert.DoesNotContain("LodgeNotifyingRow", lodge);
+        Assert.DoesNotContain("LodgeMoney", lodge);
+    }
+
+    [Fact]
+    public async Task Derive_RequiresAnInstancePropertyToCarry()
+    {
+        var canonical = await DeriveAsync();
+
+        // A static property is not a fact an anchor path can name. Admitting a type on one would
+        // publish a canonical DTO whose inventory is empty — DtoInventory skips statics too, and
+        // the two have to agree or the conservation gate anchors on nothing.
+        Assert.DoesNotContain("LodgeStaticTotals", Names(canonical, "Lodge"));
+    }
+
+    [Fact]
     public async Task Derive_AdmitsTypesWhoseDataIsInherited()
     {
         var canonical = await DeriveAsync();

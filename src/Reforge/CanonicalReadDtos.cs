@@ -175,10 +175,14 @@ public sealed class CanonicalReadDtoSet
     }
 
     /// <summary>
-    /// Behavioral DTO test: a data carrier is a non-static class or struct with at least one
-    /// public property and no public methods. Used as the fallback when the active config carries
-    /// no <c>dto</c> classification rule, and to admit DTOs whose names don't match the
-    /// conventional suffixes (<c>*Hit</c>, <c>*Totals</c>, <c>*Row</c>).
+    /// Behavioral DTO test: a data carrier is a non-static class or struct with at least one public
+    /// readable <i>instance</i> property and no consumer-callable behavior. Used as the fallback
+    /// when the active config carries no <c>dto</c> classification rule, and to admit DTOs whose
+    /// names don't match the conventional suffixes (<c>*Hit</c>, <c>*Totals</c>, <c>*Row</c>).
+    /// "Behavior" is every shape a consumer can invoke — ordinary methods, operators, conversions,
+    /// events, explicit interface implementations, and anything inherited from a base or supplied
+    /// by a default interface method. The property side matches
+    /// <see cref="DtoInventory"/> exactly, so an admitted type always has facts to inventory.
     /// </summary>
     public static bool IsDataCarrier(INamedTypeSymbol t)
     {
@@ -206,9 +210,20 @@ public sealed class CanonicalReadDtoSet
                 if (!explicitImpl && m.DeclaredAccessibility != Accessibility.Public) continue;
                 switch (m)
                 {
-                    case IPropertySymbol: props++; break;
+                    // Instance, non-indexer only — the same filter DtoInventory applies. A static
+                    // property or an indexer is not a fact an anchor path can name, so admitting a
+                    // type on one would produce a canonical DTO with an empty inventory.
+                    case IPropertySymbol { IsStatic: false, Parameters.Length: 0 }: props++; break;
+                    case IPropertySymbol: break;
+                    // An event is a subscription surface, not data.
+                    case IEventSymbol: methods++; break;
                     case IMethodSymbol when explicitImpl: methods++; break;
-                    case IMethodSymbol meth when meth.MethodKind == MethodKind.Ordinary && meth.AssociatedSymbol is null: methods++; break;
+                    // Operators and conversions are public callable behavior too, just under a
+                    // different MethodKind. A record's synthesized ==/!= are implicitly declared and
+                    // were already filtered above; a hand-written one counts.
+                    case IMethodSymbol { AssociatedSymbol: null } meth
+                        when meth.MethodKind is MethodKind.Ordinary or MethodKind.UserDefinedOperator or MethodKind.Conversion:
+                        methods++; break;
                 }
             }
         }
