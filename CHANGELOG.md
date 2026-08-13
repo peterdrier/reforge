@@ -2,6 +2,63 @@
 
 What changed and why. Newest first.
 
+## v0.25.0 - derive canonical read DTOs from the exported Contracts surface (BREAKING config change)
+
+v0.23.0 deleted the section-*membership* config because assembly boundaries already state it.
+`canonicalReadDtos` was the same mistake one level down: a hand-authored list restating something
+the code already declares. On Humans it had drifted exactly the way hand-authored lists do — three
+listed names no longer existed as types at all, and 14 real DTOs went inert because their key said
+`Users` and there is no `Users` assembly yet.
+
+- **`SectionRule.CanonicalReadDtos` is deleted. No override, no escape hatch.** A section's read
+  API is now derived: the *exported* data types it declares in its `<Section>.Contracts` assembly,
+  or under a `Contracts/` folder in its own assembly. Both shapes occur in the wild — Humans has 26
+  of the first and 15 of the second — so derivation unions them. A section with neither has not
+  declared a read API, and the score says so. That absence is the point: config can no longer paper
+  over a boundary that was never drawn, so the fix is to make the assembly structure right rather
+  than describe it in JSON.
+- **Location is never evidence of public.** A `Contracts` folder or namespace says where the author
+  filed a type, not what the assembly publishes — Humans declares `internal` service interfaces in
+  a `.Contracts` *namespace* today. Every candidate is gated on effective accessibility (v0.24.0's
+  `SurfaceVisibility.IsExported`), read off the semantic model, never off the path or the name.
+- **Resolves an inconsistency, not just a config field.** The old field was consumed two
+  incompatible ways: flattened to one global set of simple names by `ScoreReturnTypeRules`, but
+  section-scoped by `SectionShapeAnalyzer`'s anchor resolution. Membership now follows the declaring
+  assembly like everything else, and the return-type rules match on symbol identity
+  (`declaringAssembly|fullyQualifiedName`) instead of on the simple name — two assemblies may each
+  declare a `UserInfo` and only one may be exported from a contracts surface.
+- **The credit stays solution-wide.** A Tickets method returning Users's canonical DTO still earns
+  `canonicalReadDtoReturn`. It charges for a *use* — what a method hands back — not for a
+  declaration's published shape, so it follows v0.24.0's split and is not scoped or gated. What
+  changed is identity, not scope.
+- **The entity-leak exemption no longer depends on the credit's weight.** Setting
+  `canonicalReadDtoReturn` to `0` used to silently re-enable `methodReturnsEntityAcrossSection` on
+  canonical DTOs. A canonical DTO is the section's read API by definition; returning one is never a
+  leak, whatever the credit is worth.
+- **A config still carrying `canonicalReadDtos` is reported, not ignored.** `System.Text.Json`
+  would drop the unknown key without a word — the exact silent drift this change exists to close,
+  since the list used to grant credit and suppress a penalty solution-wide. `SectionRule` captures
+  unrecognized members and the engine emits a `removed-config-field` warning naming each stale
+  block, the same treatment `unknown-config-section` gives a stale section key.
+
+Output JSON shape is unchanged (same top-level and per-group keys, no key added or removed).
+
+Measured on Humans, A/B against one identical built tree — `typesAnalyzed` 2,836 and
+`internalComplexityTotal` 3,127 on both sides, 46 sections: `surfaceTotal` 17,033 -> 16,886
+(-0.9%), 24 of 45 scoring sections unchanged. Three rules moved, and the movement is the finding:
+
+- `canonicalReadDtoReturn` -3 -> -162. Nine config blocks listed 34 DTO names between them and
+  granted the credit exactly once. Derivation credits eight sections, led by Application (-84),
+  Infrastructure (-24) and GoogleIntegration (-21) — none of which had a config block at all.
+- `missingPrimaryInfoDto` 230 -> 110. Twelve sections resolve a primary anchor through the derived
+  set that the `<Section>Info` convention missed. Calendar moves the other way, 0 -> 10: its
+  configured canonical DTO `CalendarEventInfo` is an `internal` record under `Services/Dtos/`, so
+  Calendar publishes no read API and the config had been asserting one that no consumer can reach.
+- `readSurfaceProjectionMethod` 116 -> 248. The projection surcharge only fires for a section with a
+  resolved primary anchor — without it a primitive read can't be told from a projection. The twelve
+  newly-anchored sections therefore reveal projection debt that had been invisible (Governance +40,
+  Expenses +32).
+
 ## v0.24.0 - score the assembly's effective public surface (BREAKING score change)
 
 Since v0.23.0 a section IS an assembly, which makes "public surface" a compiler-enforced fact

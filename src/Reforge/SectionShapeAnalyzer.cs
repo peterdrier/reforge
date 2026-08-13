@@ -120,8 +120,12 @@ public static class SectionShapeAnalyzer
         // no public methods). The behavioral fallback keeps child-DTO descent working even when
         // the active config carries no "dto" classification rule (e.g. a section-only test config).
         var canonicalDtoNames = new HashSet<string>(
-            classified.Where(c => c.Tags.Contains("dto") || IsDataCarrier(c.Type)).Select(c => c.Type.Name),
+            classified.Where(c => c.Tags.Contains("dto") || CanonicalReadDtoSet.IsDataCarrier(c.Type)).Select(c => c.Type.Name),
             StringComparer.Ordinal);
+
+        // Each section's published read API, derived from its exported contracts surface. Used as
+        // the anchor fallback when the <Section>Info convention misses.
+        var canonicalReadDtos = CanonicalReadDtoSet.Derive(classified);
 
         var byGroup = classified.GroupBy(c => c.Group, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
@@ -144,11 +148,11 @@ public static class SectionShapeAnalyzer
             var facts = SectionFacts.For(name, rule, repoSectionNames);
 
             // Resolve primary / settings DTO: explicit config -> <Section>Info convention ->
-            // canonicalReadDtos fallback. The fallback matters for real configs whose section
-            // names are plural ("Camps") but whose DTOs are singular ("CampInfo") — the convention
-            // would miss and spuriously fire missingPrimaryInfoDto.
-            var (primaryName, primarySym) = ResolvePrimary(name, rule, classified);
-            var (settingsName, settingsSym) = ResolveSettings(name, rule, classified);
+            // derived canonical read DTO fallback. The fallback matters for sections whose names
+            // are plural ("Camps") but whose DTOs are singular ("CampInfo") — the convention would
+            // miss and spuriously fire missingPrimaryInfoDto.
+            var (primaryName, primarySym) = ResolvePrimary(name, rule, classified, canonicalReadDtos);
+            var (settingsName, settingsSym) = ResolveSettings(name, rule, classified, canonicalReadDtos);
 
             DtoAnchor? primaryAnchor = primarySym is null ? null
                 : new DtoAnchor(primarySym.ToDisplayString(), name, "primaryInfoDto",
@@ -483,10 +487,11 @@ public static class SectionShapeAnalyzer
 
     /// <summary>
     /// Resolves the primary Info DTO: explicit <c>primaryInfoDto</c> -> <c>&lt;Section&gt;Info</c>
-    /// convention -> first non-settings <c>canonicalReadDtos</c> entry that exists. Returns the
-    /// chosen name (convention name when unresolved, for the missing-surface detail) and symbol.
+    /// convention -> the section's first non-settings canonical read DTO. Returns the chosen name
+    /// (convention name when unresolved, for the missing-surface detail) and symbol.
     /// </summary>
-    private static (string Name, INamedTypeSymbol? Symbol) ResolvePrimary(string section, SectionRule rule, List<ClassifiedType> classified)
+    private static (string Name, INamedTypeSymbol? Symbol) ResolvePrimary(
+        string section, SectionRule rule, List<ClassifiedType> classified, CanonicalReadDtoSet canonical)
     {
         if (rule.PrimaryInfoDto is not null)
             return (rule.PrimaryInfoDto, ResolveDtoSymbol(classified, rule.PrimaryInfoDto, section));
@@ -495,17 +500,17 @@ public static class SectionShapeAnalyzer
         var sym = ResolveDtoSymbol(classified, convention, section);
         if (sym is not null) return (convention, sym);
 
-        foreach (var cn in rule.CanonicalReadDtos)
+        foreach (var c in canonical.ForSection(section))
         {
-            if (cn.EndsWith("SettingsInfo", StringComparison.Ordinal)) continue; // that's the settings DTO
-            var cs = ResolveDtoSymbol(classified, cn, section);
-            if (cs is not null) return (cn, cs);
+            if (CanonicalReadDtoSet.IsSettingsDtoName(c.Type.Name)) continue; // that's the settings DTO
+            return (c.Type.Name, c.Type);
         }
         return (convention, null);
     }
 
-    /// <summary>Resolves the settings DTO: explicit -> <c>&lt;Section&gt;SettingsInfo</c> -> a <c>*SettingsInfo</c> canonical DTO.</summary>
-    private static (string Name, INamedTypeSymbol? Symbol) ResolveSettings(string section, SectionRule rule, List<ClassifiedType> classified)
+    /// <summary>Resolves the settings DTO: explicit -> <c>&lt;Section&gt;SettingsInfo</c> -> a <c>*SettingsInfo</c> canonical read DTO.</summary>
+    private static (string Name, INamedTypeSymbol? Symbol) ResolveSettings(
+        string section, SectionRule rule, List<ClassifiedType> classified, CanonicalReadDtoSet canonical)
     {
         if (rule.SettingsInfoDto is not null)
             return (rule.SettingsInfoDto, ResolveDtoSymbol(classified, rule.SettingsInfoDto, section));
@@ -514,11 +519,10 @@ public static class SectionShapeAnalyzer
         var sym = ResolveDtoSymbol(classified, convention, section);
         if (sym is not null) return (convention, sym);
 
-        foreach (var cn in rule.CanonicalReadDtos)
+        foreach (var c in canonical.ForSection(section))
         {
-            if (!cn.EndsWith("SettingsInfo", StringComparison.Ordinal)) continue;
-            var cs = ResolveDtoSymbol(classified, cn, section);
-            if (cs is not null) return (cn, cs);
+            if (!CanonicalReadDtoSet.IsSettingsDtoName(c.Type.Name)) continue;
+            return (c.Type.Name, c.Type);
         }
         return (convention, null);
     }
@@ -598,24 +602,6 @@ public static class SectionShapeAnalyzer
     }
 
     /// <summary>A pure data carrier: class/struct with public properties and no public methods.</summary>
-    private static bool IsDataCarrier(INamedTypeSymbol t)
-    {
-        if (t.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
-        if (t.IsStatic) return false;
-        if (!t.Locations.Any(l => l.IsInSource)) return false;
-        int props = 0, methods = 0;
-        foreach (var m in t.GetMembers())
-        {
-            if (m.IsImplicitlyDeclared || m.DeclaredAccessibility != Accessibility.Public) continue;
-            switch (m)
-            {
-                case IPropertySymbol: props++; break;
-                case IMethodSymbol meth when meth.MethodKind == MethodKind.Ordinary && meth.AssociatedSymbol is null: methods++; break;
-            }
-        }
-        return props >= 1 && methods == 0;
-    }
-
     private static (string File, int Line) Locate(ISymbol symbol, string solutionDirectory)
     {
         var loc = symbol.Locations.FirstOrDefault(l => l.IsInSource);

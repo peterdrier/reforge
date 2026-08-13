@@ -65,6 +65,13 @@ Rules that charge for a *use* rather than a declaration — `crossSectionReposit
 an internal class injecting another section's repository still forces the assembly reference and
 still calls across the boundary, so marking it internal can't make the coupling free.
 
+**A section's read API is what it exports from its contracts surface.** Canonical read DTOs are
+derived, never listed: the exported data types a section declares in its `<Section>.Contracts`
+assembly, or under a `Contracts/` folder in its own assembly. A `Contracts` folder or namespace is
+a location, not evidence — an `internal` type declared there is still not surface. A section with
+neither shape has not declared a read API, and the score says so rather than letting config paper
+over a boundary that was never drawn.
+
 `reforge.surface-score.json` (searched upward from the solution) is optional and carries **policy
 only**:
 
@@ -73,7 +80,6 @@ only**:
   "sections": {                    // keyed by section name, i.e. the assembly
     "Store": {
       "primaryInfoDto": "StoreInfo",          // default convention: "<Section>Info"
-      "canonicalReadDtos": ["StoreInfo"],
       "requiresReadSurface": null,            // default: inferred from repo-backed
       "grandfatheredDependencies": [ /* visible debt, exempt but always reported */ ],
       "escapeHatchReadMethods":  [ /* visible debt, exempt but always reported */ ]
