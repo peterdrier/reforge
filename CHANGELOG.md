@@ -41,6 +41,14 @@ listed names no longer existed as types at all, and 14 real DTOs went inert beca
   unrecognized members and the engine emits a `removed-config-field` warning naming each stale
   block, the same treatment `unknown-config-section` gives a stale section key.
 
+Also fixed here, because deriving from declaration paths depends on it: **`LocationHelper.NormalizePath`
+required only a string prefix, not a directory boundary.** With the solution at `/work/App`, a linked
+source at `/work/AppContracts/Foo.cs` normalized to `Contracts/Foo.cs` — a path that never existed.
+That fed classification path globs (`**/Models/**`), the new contracts-surface check, and every file
+path reported to the caller as something it could open. Containment now requires the prefix to end
+at a separator; a path that isn't genuinely under the solution root is returned as-is, which is what
+the method already documented.
+
 Output JSON shape is unchanged (same top-level and per-group keys, no key added or removed).
 
 Measured on Humans, both binaries run back to back against one built tree — `typesAnalyzed` 2,840

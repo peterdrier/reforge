@@ -147,6 +147,10 @@ public class CanonicalReadDtoDerivationTests
     // And the same on Windows separators, which is what SyntaxTree.FilePath actually hands back here.
     [InlineData(@"C:\work\Contracts\Sln", @"C:\work\Contracts\Sln\App.Lodge\Foo.cs", false)]
     [InlineData(@"C:\work\Contracts\Sln", @"C:\work\Contracts\Sln\App.Lodge\Contracts\Foo.cs", true)]
+    // A linked source in a SIBLING directory that merely shares the solution root's string prefix.
+    // Stripping the prefix without a directory-boundary check would leave "Contracts/Foo.cs".
+    [InlineData("/work/App", "/work/AppContracts/Foo.cs", false)]
+    [InlineData(@"C:\work\App", @"C:\work\AppContracts\Foo.cs", false)]
     public void IsOnContractsSurface_ReadsSolutionRelativeSegmentsOnly(string solutionDir, string path, bool expected)
     {
         Assert.Equal(expected, CanonicalReadDtoSet.IsOnContractsSurface("App.Lodge", new[] { path }, solutionDir));

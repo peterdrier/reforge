@@ -78,6 +78,12 @@ otherwise put every exported DTO-shaped type in the whole solution on a contract
 only `ClassifiedType.File` was accidentally immune to this (it is already normalized); walking every
 location is not, so `IsOnContractsSurface` normalizes explicitly.
 
+Normalizing was itself not enough: `LocationHelper.NormalizePath` tested containment with a bare
+`StartsWith`, so solution root `/work/App` "contained" `/work/AppContracts/Foo.cs` and returned
+`Contracts/Foo.cs` for it. That is fixed at the source rather than worked around here — the same
+bug also fed classification path globs and every file path reported to the caller — by requiring the
+prefix to end at a directory separator.
+
 ### Preference order
 
 `ForSection` returns a section's DTOs in anchor-preference order: `*Info` names first, then
@@ -209,4 +215,6 @@ Every new test was verified to fail with the implementation reverted: dropping t
 gate reddens the internal-exclusion test; accepting any location reddens six; removing the analyzer
 fallback reddens the Lodge anchor test and the existing missing-surface test; reading only the
 primary location reddens the partial test; dropping the type-key tiebreak reddens the order test;
-testing raw instead of solution-relative paths reddens the ancestor-directory theory.
+testing raw instead of solution-relative paths reddens the ancestor-directory theory; dropping the
+directory-boundary check reddens the sibling-prefix cases in both `LocationHelperTests` and the
+contracts-surface theory.
