@@ -41,11 +41,15 @@ listed names no longer existed as types at all, and 14 real DTOs went inert beca
   unrecognized members and the engine emits a `removed-config-field` warning naming each stale
   block, the same treatment `unknown-config-section` gives a stale section key.
 
-The behavioral DTO test now counts **inherited** members. `class SearchHit : List&lt;int&gt;` declares
-one property and no methods of its own, but a consumer gets `Add`/`Remove`/`Insert` through it —
-behavior inherited is still behavior, and admitting such a type would grant it return credits and
-let it win a section's primary anchor. The walk stops at `System.Object`/`System.ValueType`. This
-also tightens the DTO-inventory descent set in `section-shape`, which shares the same test.
+The behavioral DTO test now counts **inherited and interface-exposed** behavior, not just directly
+declared public methods. `class SearchHit : List&lt;int&gt;` declares one property and no methods of
+its own, but a consumer gets `Add`/`Remove`/`Insert` through it; an explicit interface
+implementation is `private` on the class symbol yet callable by anyone who casts; a default
+interface method is behavior the type never declares at all. Admitting such types would grant them
+return credits, suppress entity-leak penalties, and let one win a section's primary anchor. The base
+walk stops at `System.Object`/`System.ValueType`, and only **non-abstract** interface members count —
+that is what keeps records in, since every record implements `IEquatable<T>`. This also tightens the
+DTO-inventory descent set in `section-shape`, which shares the same test.
 
 Also fixed here, because deriving from declaration paths depends on it: **`LocationHelper.NormalizePath`
 required only a string prefix, not a directory boundary.** With the solution at `/work/App`, a linked

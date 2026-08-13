@@ -198,14 +198,36 @@ public sealed class CanonicalReadDtoSet
             if (current.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType) break;
             foreach (var m in current.GetMembers())
             {
-                if (m.IsImplicitlyDeclared || m.DeclaredAccessibility != Accessibility.Public) continue;
+                if (m.IsImplicitlyDeclared) continue;
+                // An explicit interface implementation is `private` on the class, so the
+                // accessibility filter below would skip it — but a consumer casts to the interface
+                // and calls it. Hidden behavior is still behavior.
+                var explicitImpl = m is IMethodSymbol { MethodKind: MethodKind.ExplicitInterfaceImplementation };
+                if (!explicitImpl && m.DeclaredAccessibility != Accessibility.Public) continue;
                 switch (m)
                 {
                     case IPropertySymbol: props++; break;
+                    case IMethodSymbol when explicitImpl: methods++; break;
                     case IMethodSymbol meth when meth.MethodKind == MethodKind.Ordinary && meth.AssociatedSymbol is null: methods++; break;
                 }
             }
         }
+
+        // Default interface methods: behavior the type inherits without declaring anything at all.
+        // Only NON-abstract interface members qualify — an abstract one is either implemented above
+        // or unimplementable. That distinction is what keeps records out of this branch: a record's
+        // IEquatable<T>.Equals is abstract on the interface, so counting every interface member
+        // instead would disqualify every record in the solution.
+        foreach (var iface in t.AllInterfaces)
+        {
+            foreach (var m in iface.GetMembers())
+            {
+                if (m is IMethodSymbol { IsAbstract: false, IsStatic: false, MethodKind: MethodKind.Ordinary, AssociatedSymbol: null }
+                    && m.DeclaredAccessibility == Accessibility.Public)
+                    methods++;
+            }
+        }
+
         return props >= 1 && methods == 0;
     }
 

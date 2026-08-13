@@ -52,9 +52,15 @@ it in JSON.
    least one public property, no public methods, **counting inherited members**). The behavioral
    fallback admits the DTOs whose names don't match the conventional suffixes (`*Hit`, `*Totals`,
    `*Row`) and keeps derivation working under a config that carries no `dto` classification rule.
-   Inherited behavior counts because `class SearchHit : List<int>` declares no methods of its own
-   yet hands a consumer `Add`/`Remove`/`Insert`; the walk stops at `System.Object` and
-   `System.ValueType`, whose members are universal rather than a published API choice.
+   Behavior counts wherever a consumer can reach it: inherited from a base (`class SearchHit :
+   List<int>` declares no methods yet hands over `Add`/`Remove`/`Insert`), hidden behind an explicit
+   interface implementation (`private` on the class symbol, callable after a cast), or supplied by a
+   default interface method (never declared at all). The base walk stops at `System.Object` and
+   `System.ValueType`, whose members are universal rather than a published API choice, and only
+   **non-abstract** interface members count — an abstract one is either implemented on the type
+   (already counted) or unimplementable. That distinction is load-bearing: every record implements
+   `IEquatable<T>`, so counting abstract interface members would throw every record out of the DTO
+   set. `LodgeTariffRow` pins that boundary.
 4. **Declared on the contracts surface** — its declaring assembly is a `<X>.Contracts` assembly, or
    its source path has a `Contracts` directory segment.
 

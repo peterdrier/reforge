@@ -105,6 +105,25 @@ public class CanonicalReadDtoDerivationTests
         // methods — but it extends List<int>, so a consumer gets Add/Remove/Insert through it.
         // Counting only directly-declared members would publish a behavioral type as a read DTO.
         Assert.DoesNotContain("LodgeOccupancyTally", Names(canonical, "Lodge"));
+
+        // Same idea one level subtler: LodgeArchiveRow's only method is an EXPLICIT interface
+        // implementation, which is `private` on the class symbol but callable by anyone who casts
+        // to ILodgeArchivable.
+        Assert.DoesNotContain("LodgeArchiveRow", Names(canonical, "Lodge"));
+    }
+
+    [Fact]
+    public async Task Derive_KeepsRecordsThatOnlyCarryData()
+    {
+        // Guard on the fix above: every record implements IEquatable<T>, so counting all interface
+        // members rather than only non-abstract ones would disqualify every record in the solution.
+        var cfg = SurfaceScoreConfig.Default();
+        var classified = await SolutionClassifier.ClassifyAsync(
+            _fixture.Solution, cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution), CancellationToken.None);
+
+        var record = classified.Single(c => c.Type.Name == "LodgeTariffRow");
+        Assert.True(record.Type.IsRecord);
+        Assert.True(CanonicalReadDtoSet.IsDataCarrier(record.Type));
     }
 
     [Fact]

@@ -30,6 +30,22 @@ public sealed class LodgeOccupancyTally : List<int>
     public int Total { get; set; }
 }
 
+// A plain data-carrying record. Every record implements IEquatable<T>, so it guards the boundary of
+// the behavior check above: counting all interface members instead of only non-abstract ones would
+// throw every record in the solution out of the DTO set.
+public sealed record LodgeTariffRow(string Band, decimal Nightly);
+
+public interface ILodgeArchivable { void Archive(); }
+
+// One public property, no public methods on the class — but the explicit implementation below is
+// `private` on the symbol while still being callable by anyone who casts to ILodgeArchivable. An
+// accessibility filter alone reads this as a pure data carrier; hidden behavior is still behavior.
+public sealed class LodgeArchiveRow : ILodgeArchivable
+{
+    public string Name { get; set; } = "";
+    void ILodgeArchivable.Archive() { }
+}
+
 // The Contracts-side half of a PARTIAL DTO whose other half lives at the assembly root (see
 // AmenityPartial.cs). Only one of the two source locations is the type's "primary" one, and which
 // depends on syntax-tree order — so membership must be decided from ALL declarations, not from the
