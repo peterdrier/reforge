@@ -279,6 +279,25 @@ public class SurfaceScoreTests
         Assert.NotEmpty(userCredits);
     }
 
+    // ---------------- duplicateDbSetOwner ----------------
+
+    [Fact]
+    public async Task DuplicateDbSetOwner_DerivesOwnershipFromTheDeclaringContextsAssembly()
+    {
+        // AppDbContext (SampleSolution.Services) declares the Users DbSet, so Users belongs to
+        // Services. BadController (SampleSolution.Web) touches it directly -> second owner.
+        // No ownership map in config: the owner is read off the model.
+        var report = await ScoreDefaultAsync();
+
+        Assert.Contains(report.Groups["Web"].Entries,
+            e => e.Rule == "duplicateDbSetOwner" && e.Symbol == "BadController");
+        Assert.Contains(report.DuplicateOwners, d => d.Contains("Users", StringComparison.Ordinal)
+                                                 && d.Contains("owner: Services", StringComparison.Ordinal));
+
+        // The declaring section itself is never its own duplicate.
+        Assert.DoesNotContain(report.Groups["Services"].Entries, e => e.Rule == "duplicateDbSetOwner");
+    }
+
     // ---------------- helperCandidates (conservation gate) ----------------
 
     [Fact]

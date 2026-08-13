@@ -18,16 +18,20 @@ public static class SolutionClassifier
     public static async Task<IReadOnlyList<ClassifiedType>> ClassifyAsync(
         Solution solution, SurfaceScoreConfig config, string solutionDirectory, CancellationToken ct)
     {
-        var classified = new List<ClassifiedType>();
         var seenByDisplay = new HashSet<string>(StringComparer.Ordinal);
+        var analyzed = new HashSet<string>(
+            solution.Projects
+                .Where(p => !p.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
+                .Select(p => p.AssemblyName),
+            StringComparer.Ordinal);
 
-        var projects = solution.Projects
-            .Where(p => !p.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        var sectionByAssembly = AssemblySections.Resolve(projects.Select(p => p.AssemblyName));
+        // Pass 1 — collect types with their raw assembly name. The section name can't be assigned
+        // yet: it depends on the prefix shared across the assemblies that actually declare types.
+        var collected = new List<(INamedTypeSymbol Type, string Assembly, HashSet<string> Tags, string File, Location Location)>();
 
-        foreach (var project in projects)
+        foreach (var project in solution.Projects)
         {
+            if (!analyzed.Contains(project.AssemblyName)) continue;
             var compilation = await project.GetCompilationAsync(ct);
             if (compilation is null) continue;
 
@@ -42,7 +46,7 @@ public static class SolutionClassifier
                 // from assemblies outside the analyzed set (test projects reached by reference)
                 // drop out here.
                 var assembly = type.ContainingAssembly?.Name;
-                if (assembly is null || !sectionByAssembly.TryGetValue(assembly, out var group)) continue;
+                if (assembly is null || !analyzed.Contains(assembly)) continue;
                 if (!seenByDisplay.Add(type.ToDisplayString())) continue;
 
                 var primaryLocation = type.Locations.First(l => l.IsInSource);
@@ -50,12 +54,18 @@ public static class SolutionClassifier
                 var relPath = LocationHelper.NormalizePath(filePath, solutionDirectory);
                 var nsName = type.ContainingNamespace?.ToDisplayString() ?? "";
 
-                var tags = Classify(config, type, relPath, nsName);
-                classified.Add(new ClassifiedType(type, group, tags, relPath, primaryLocation));
+                collected.Add((type, assembly, Classify(config, type, relPath, nsName), relPath, primaryLocation));
             }
         }
 
-        return classified;
+        // Pass 2 — name the sections. Only type-declaring assemblies participate: a docs/tooling
+        // project that ships no C# is not a section, and letting it into the prefix calculation
+        // would strip nothing at all from the real ones.
+        var sectionByAssembly = AssemblySections.Resolve(collected.Select(c => c.Assembly));
+
+        return collected
+            .Select(c => new ClassifiedType(c.Type, sectionByAssembly[c.Assembly], c.Tags, c.File, c.Location))
+            .ToList();
     }
 
     private static IEnumerable<INamedTypeSymbol> EnumerateTypes(INamespaceSymbol ns)
@@ -145,7 +155,11 @@ public static class AssemblySections
 {
     private const string ContractsSuffix = ".Contracts";
 
-    /// <summary>Assembly name -> section name, for the whole analyzed assembly set at once (the shared prefix is a property of the set, not of one name).</summary>
+    /// <summary>
+    /// Assembly name -> section name, for the whole analyzed assembly set at once (the shared
+    /// prefix is a property of the set, not of one name). Pass only assemblies that declare
+    /// types — an empty docs/tooling project would otherwise erase the shared prefix.
+    /// </summary>
     public static Dictionary<string, string> Resolve(IEnumerable<string> assemblyNames)
     {
         var names = assemblyNames.Where(n => !string.IsNullOrEmpty(n)).Distinct(StringComparer.Ordinal).ToList();

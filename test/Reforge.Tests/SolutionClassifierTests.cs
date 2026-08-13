@@ -103,6 +103,19 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public void AssemblySections_IgnoresAssembliesThatDeclareNothing()
+    {
+        // Regression: Humans.slnx carries a `docs` project with no C#. Feeding it into the
+        // prefix calculation left every section named "Humans.<X>". Only type-declaring
+        // assemblies are passed in, so the prefix survives.
+        var map = AssemblySections.Resolve(new[] { "Humans.Store", "Humans.Web" });
+        Assert.Equal("Store", map["Humans.Store"]);
+
+        var polluted = AssemblySections.Resolve(new[] { "Humans.Store", "Humans.Web", "docs" });
+        Assert.Equal("Humans.Store", polluted["Humans.Store"]);
+    }
+
+    [Fact]
     public void AssemblySections_SingleAssembly_UsesLastSegment()
     {
         var map = AssemblySections.Resolve(new[] { "Contoso.Billing" });

@@ -2,6 +2,54 @@
 
 What changed and why. Newest first.
 
+## v0.23.0 - sections are assemblies (BREAKING config change)
+
+`surface-score` grouped types with a config cascade: per-section interface-name lists, then
+path globs, then namespace prefixes, then symbol-name globs, first match wins, with a
+namespace-segment fallback. In Humans that cascade had grown to 883 lines re-describing
+boundaries the solution already states — every new section was a manual config edit that
+mis-grouped **silently** when forgotten, and the symbol globs (`Admin*`) were exactly the
+nominal matching the scoring design's own principle #2 warns against.
+
+A type's containing assembly says the same thing, but structurally: the compiler enforces it,
+it cannot drift from the solution, and it costs zero config.
+
+- **Grouping is now the containing assembly.** `<X>.Contracts` folds into `<X>` (a contracts
+  assembly is the published face of its section, not a section), and the dot-segment prefix
+  shared by every assembly is stripped for display, so `Humans.Store` reports as `Store` —
+  the same group names the config used to produce. Test projects are still excluded. Grouping
+  reads `ContainingAssembly`, not the enumerating project, because a project's compilation
+  also sees referenced projects' source types.
+- **Hard cut, no fallback.** `SectionRule.Paths/Namespaces/Symbols`, the per-section
+  `repositoryInterfaces`/`serviceInterfaces`/`readServiceInterfaces` sugar, the legacy `groups`
+  array, and the namespace fallback are **deleted**. A not-yet-extracted section now scores
+  under whatever assembly it lives in (`Application`, `Infrastructure`, `Web`, `Domain`, `UI`).
+  That is coarse and intentional: per-section visibility comes back automatically as each
+  section becomes its own assembly, instead of being asserted by config that may be a lie.
+- **What to do with your config:** delete the `sections` block's matchers (or the whole block).
+  Stale keys are ignored, not fatal — an old config still loads, it just no longer groups.
+  `sections` now carries **policy only**, keyed by the assembly-derived section name:
+  `primaryInfoDto`/`settingsInfoDto`/`cacheDto`, `canonicalReadDtos`, `readShards`,
+  `requires*Surface`, `grandfatheredDependencies`, `escapeHatchReadMethods`. `classifications`,
+  `weights`, and the allowed-shape/dispatcher escape hatches are unchanged.
+- **Ownership is derived, not declared.** `resources.dbSets.ownerByName` is gone:
+  `duplicateDbSetOwner` now takes a table's owner to be the section of the `DbContext` that
+  declares its `DbSet`, and fires on any class outside that section touching it. A DbSet
+  declared by two contexts in different sections has no single owner and is skipped rather
+  than attributed arbitrarily. Same for repo-backing: a section is repo-backed when it declares
+  a repository or a DbContext. Both were hand-maintained lists before.
+- **Section shapes cover every section**, not only configured ones — so the `missing*` and
+  `crossSectionWriteSurface` rules now fire with no config file at all. Expect new points on a
+  default-config run; set a rule's weight to `0` to silence it.
+- **JSON output shape is unchanged** (`groups[]`, `byRule`, totals, `topSymbols`,
+  `conservationAnchors`, …). `configuredSections` keeps its key and its type but now lists the
+  solution's assemblies. Humans' `pr-surface-report.py` parses it unmodified.
+- Sample solution split into real section assemblies (`SampleSolution.Camp` +
+  `.Camp.Contracts`, `.Lodge`, `.Dorm`, `.Tent`, `.Reporting`) so the tests exercise assembly
+  grouping and the `.Contracts` fold rather than a synthetic config.
+- Fixed alongside: the test fixture treated only a `.git` *directory* as a repo root, so inside
+  a git worktree it silently opened the main checkout's sample solution.
+
 ## v0.22.0 - guard --baseline against a build-state mismatch
 
 `surface-score` gives materially different totals for the same commit depending on whether the
