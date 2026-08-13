@@ -97,6 +97,21 @@ public class EffectiveAccessibilityTests
     }
 
     [Fact]
+    public async Task InlineParameterObjectConstruction_IgnoresNonExportedConstructors()
+    {
+        var report = await Score();
+
+        // InternalCtorInput is public but its 4-arg ctor is internal — no other assembly can use
+        // that construction shape, so the inline site inside Reporting must not count.
+        Assert.DoesNotContain(report.Groups["Reporting"].Entries,
+            e => e.Rule == "inlineParameterObjectConstruction" && e.Symbol == "InternalCtorInput");
+
+        // Positive control: an exported input with an exported ctor still scores.
+        Assert.Contains(report.Groups["Services"].Entries,
+            e => e.Rule == "inlineParameterObjectConstruction" && e.Symbol == "CampRegistrationInput");
+    }
+
+    [Fact]
     public async Task ConservationAnchors_ExcludeInternalInterfaces()
     {
         var report = await Score();

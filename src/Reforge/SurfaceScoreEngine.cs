@@ -1390,6 +1390,14 @@ public sealed class SurfaceScoreEngine
                         if (arg.Expression is not BaseObjectCreationExpressionSyntax oc) continue;
                         if (model.GetTypeInfo(oc, ct).Type is not INamedTypeSymbol t) continue;
                         if (!BoundaryInput.IsBoundaryName(t.Name)) continue;
+                        // The rule charges for the construction SHAPE, so the constructor is what
+                        // has to be reachable — an exported input type with an internal ctor offers
+                        // no other assembly this argument bundle. Only skip when the ctor resolves
+                        // and is non-exported: on a degraded build symbols go unresolved, and
+                        // dropping those sites would deepen exactly the under-count issue #9 exists
+                        // to surface.
+                        if (model.GetSymbolInfo(oc, ct).Symbol is IMethodSymbol ctor
+                            && !SurfaceVisibility.IsExported(ctor)) continue;
                         int count = Math.Max(oc.ArgumentList?.Arguments.Count ?? 0, oc.Initializer?.Expressions.Count ?? 0);
                         if (count < 4) continue;
                         var key = SolutionClassifier.TypeKey(t);

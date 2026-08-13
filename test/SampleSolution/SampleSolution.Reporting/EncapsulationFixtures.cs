@@ -61,6 +61,31 @@ public interface IReportExporter
     private static string Describe(HiddenExportInput input) => input.Name;
 }
 
+// An EXPORTED input type whose 4-arg constructor is internal. No other assembly can use that
+// construction shape, so inline construction inside this assembly must not earn
+// inlineParameterObjectConstruction points — the type-level gate alone would wrongly admit it.
+public sealed class InternalCtorInput
+{
+    internal InternalCtorInput(Guid id, string name, int page, bool draft)
+    {
+        Id = id;
+        Name = name;
+        Page = page;
+        Draft = draft;
+    }
+
+    public Guid Id { get; }
+    public string Name { get; }
+    public int Page { get; }
+    public bool Draft { get; }
+}
+
+internal sealed class InternalCtorInputCaller
+{
+    public void Use() => Consume(new InternalCtorInput(Guid.Empty, "report", 1, false));
+    private static void Consume(InternalCtorInput input) { }
+}
+
 public sealed class HiddenExportInput
 {
     public HiddenExportInput(Guid id, string name, int page, bool draft)
