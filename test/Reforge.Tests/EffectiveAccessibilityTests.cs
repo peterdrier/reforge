@@ -84,6 +84,33 @@ public class EffectiveAccessibilityTests
             e => e.Rule == "oneImplementationInterface" && e.Symbol == "IBookingOrchestrator");
     }
 
+    // ---------------- Gate is per member, not just per type ----------------
+
+    [Fact]
+    public async Task BoundaryInput_ReachableOnlyThroughNonPublicInterfaceMethod_DoesNotScore()
+    {
+        var reporting = (await Score()).Groups["Reporting"];
+
+        // IReportExporter is exported, but HiddenExportInput is only ever a parameter of its
+        // C# 8 `private static` member — no external consumer can pass one.
+        Assert.DoesNotContain(reporting.Entries, e => e.Symbol == "HiddenExportInput");
+    }
+
+    [Fact]
+    public async Task ConservationAnchors_ExcludeInternalInterfaces()
+    {
+        var report = await Score();
+
+        // An internal read interface scores nothing, so anchoring it would let a later deletion of
+        // one of its methods read as capability evaporation against a baseline.
+        Assert.DoesNotContain(report.ConservationAnchors,
+            a => a.Key.Contains("IInternalDigestServiceRead", StringComparison.Ordinal));
+
+        // Exported interfaces are still anchored.
+        Assert.Contains(report.ConservationAnchors,
+            a => a.Key.Contains("ICampServiceRead", StringComparison.Ordinal));
+    }
+
     // ---------------- Use rules: NOT gated ----------------
 
     [Fact]

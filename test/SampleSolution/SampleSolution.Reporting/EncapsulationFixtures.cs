@@ -42,3 +42,37 @@ internal sealed class InternalReportSink : IInternalReportSink
 {
     public Task WriteAsync(string body, CancellationToken ct = default) => Task.CompletedTask;
 }
+
+// An internal read-service interface. It scores no surface, so it must also NOT become a
+// conservation anchor — otherwise deleting one of its methods later reads as capability
+// evaporation against a baseline, for surface no consumer could reach.
+internal interface IInternalDigestServiceRead
+{
+    Task<string> GetDigestAsync(Guid id, CancellationToken ct = default);
+}
+
+// C# 8 lets an EXPORTED interface declare non-public members. An input object reachable only
+// through one of those is not on any boundary an external consumer can call, so it must not earn
+// parameterBagInput points — the type-level gate alone would wrongly admit it.
+public interface IReportExporter
+{
+    Task ExportAsync(Guid id, CancellationToken ct = default);
+
+    private static string Describe(HiddenExportInput input) => input.Name;
+}
+
+public sealed class HiddenExportInput
+{
+    public HiddenExportInput(Guid id, string name, int page, bool draft)
+    {
+        Id = id;
+        Name = name;
+        Page = page;
+        Draft = draft;
+    }
+
+    public Guid Id { get; }
+    public string Name { get; }
+    public int Page { get; }
+    public bool Draft { get; }
+}

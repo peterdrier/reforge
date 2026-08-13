@@ -1293,18 +1293,20 @@ public sealed class SurfaceScoreEngine
         var bagW = _config.Weight("parameterBagInput");
         if (hiddenW == 0 && bagW == 0) return;
 
-        // How is each boundary type used as a parameter of public / interface methods?
+        // How is each boundary type used as a parameter of an exported method?
         var usage = new Dictionary<string, BoundaryUsage>(StringComparer.Ordinal);
         foreach (var c in classified)
         {
             // Only an exported type has a boundary for an input object to sit on.
             if (!c.IsExported) continue;
-            bool isInterface = c.Type.TypeKind == TypeKind.Interface;
             foreach (var m in c.Type.GetMembers().OfType<IMethodSymbol>())
             {
                 if (m.MethodKind != MethodKind.Ordinary) continue;
                 if (m.AssociatedSymbol is not null || m.IsImplicitlyDeclared) continue;
-                if (!(isInterface || m.DeclaredAccessibility == Accessibility.Public)) continue;
+                // Per-method, not per-type: an interface's members are implicitly public, but C# 8
+                // allows private/internal ones, and an input object reachable only through those is
+                // not on any boundary an external consumer can call.
+                if (!SurfaceVisibility.IsExported(m)) continue;
 
                 int businessParams = m.Parameters.Count(p => p.Type.Name != "CancellationToken");
                 foreach (var p in m.Parameters)
