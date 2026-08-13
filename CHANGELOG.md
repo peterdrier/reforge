@@ -49,6 +49,18 @@ it cannot drift from the solution, and it costs zero config.
   grouping and the `.Contracts` fold rather than a synthetic config.
 - Fixed alongside: the test fixture treated only a `.git` *directory* as a repo root, so inside
   a git worktree it silently opened the main checkout's sample solution.
+- Fixed alongside: `System.Text.Json` assigns brand-new dictionaries through the `Sections` /
+  `Classifications` / `Weights` setters, discarding the `OrdinalIgnoreCase` comparers from their
+  field initializers — so a config key differing only in case silently never matched. Latent
+  before, but it bites now that section names are derived from assembly names instead of being
+  defined by these very keys (`"camp"` no longer reaches `Camp`). The three maps are re-keyed
+  case-insensitively at load, ahead of the defaults merge so a case-variant override replaces
+  the default rather than sitting beside it.
+- Fixed alongside: stripping the shared prefix could land two different assemblies on one
+  section name (`Company.Product` falls back to its last segment while `Company.Product.Product`
+  strips to its tail — both `Product`), silently pooling two unrelated assemblies' scores into
+  one group. Post-strip collisions now fall back to the full folded name; the guard keys on the
+  folded name so the intended `X` + `X.Contracts` collapse is untouched.
 
 ## v0.22.0 - guard --baseline against a build-state mismatch
 

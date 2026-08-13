@@ -67,6 +67,16 @@ public sealed class SurfaceScoreConfig
         var loaded = JsonSerializer.Deserialize<SurfaceScoreConfig>(json, JsonOptions)
                      ?? throw new InvalidOperationException($"Config at {path} parsed to null");
 
+        // System.Text.Json assigns BRAND-NEW dictionaries through these setters, discarding the
+        // OrdinalIgnoreCase comparers from the field initializers — so a config key differing only
+        // in case from the name it targets would silently never match. That is easy to hit now that
+        // section names come from assembly names (a hand-written "camp" key vs the derived "Camp")
+        // rather than being defined by these keys themselves. Rebuild before the defaults merge, so
+        // TryAdd below also dedupes case-variants instead of keeping both.
+        loaded.Sections = CaseInsensitive(loaded.Sections);
+        loaded.Classifications = CaseInsensitive(loaded.Classifications);
+        loaded.Weights = CaseInsensitive(loaded.Weights);
+
         // Merge defaults for any classification/weight the user didn't override.
         var defaults = Default();
         foreach (var (k, v) in defaults.Classifications)
@@ -76,6 +86,19 @@ public sealed class SurfaceScoreConfig
 
         loadedFrom = path;
         return loaded;
+    }
+
+    /// <summary>
+    /// Re-keys a deserialized dictionary case-insensitively. A source that contains two keys
+    /// differing only in case keeps the last one rather than throwing — config is user input,
+    /// and a duplicate key is not worth failing the whole run over.
+    /// </summary>
+    private static Dictionary<string, T> CaseInsensitive<T>(Dictionary<string, T> source)
+    {
+        var result = new Dictionary<string, T>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in source)
+            result[key] = value;
+        return result;
     }
 
     private static string? DiscoverConfigFile(string solutionDirectory)

@@ -178,6 +178,21 @@ public static class AssemblySections
                 ? string.Join('.', segments.Skip(shared))
                 : segments[^1];
         }
+
+        // Stripping the shared prefix can land two DIFFERENT assemblies on one section name —
+        // e.g. `Company.Product` (shared consumes it entirely, so it falls back to its last
+        // segment) and `Company.Product.Product` (strips to its tail) both yield `Product`.
+        // The grouping dictionaries downstream are case-insensitive, so that would silently
+        // merge two unrelated assemblies into one section and pool their scores. Keyed on the
+        // FOLDED name, so the intended `X` + `X.Contracts` collapse is left alone.
+        var collided = result
+            .GroupBy(pair => pair.Value, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Select(pair => folded[pair.Key]).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+            .SelectMany(g => g.Select(pair => pair.Key))
+            .ToList();
+        foreach (var name in collided)
+            result[name] = folded[name];
+
         return result;
     }
 

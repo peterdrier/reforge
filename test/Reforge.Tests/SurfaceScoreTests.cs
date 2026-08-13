@@ -61,6 +61,32 @@ public class SurfaceScoreTests
     }
 
     [Fact]
+    public void LoadOrDefault_PolicyKeys_MatchSectionNamesCaseInsensitively()
+    {
+        // System.Text.Json assigns new dictionaries through the setters, dropping the
+        // OrdinalIgnoreCase comparers from the field initializers. Section names are now derived
+        // from assembly names, so a hand-written "camp" key has to reach the derived "Camp".
+        var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-case");
+        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "reforge.surface-score.json");
+        File.WriteAllText(configPath, """
+            {
+              "sections": { "camp": { "primaryInfoDto": "CampInfo" } },
+              "weights": { "CROSSSECTIONFULLSERVICE": 7 },
+              "classifications": { "ENTITY": { "namePatterns": ["Zzz$"] } }
+            }
+            """);
+
+        var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
+
+        Assert.Equal("CampInfo", cfg.Policy("Camp").PrimaryInfoDto);
+        Assert.Equal(7, cfg.Weight("crossSectionFullService"));
+        // The case-variant override must REPLACE the default, not sit beside it as a second entry.
+        Assert.Single(cfg.Classifications, c => string.Equals(c.Key, "entity", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void LoadOrDefault_RetiredMatcherKeys_AreIgnoredNotFatal()
     {
         // v0.22 and earlier described section membership with paths/namespaces/symbols and a

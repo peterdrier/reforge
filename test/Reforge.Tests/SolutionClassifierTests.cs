@@ -94,6 +94,28 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public void AssemblySections_PrefixStrippingCollision_KeepsSectionsDistinct()
+    {
+        // `Company.Product` is consumed entirely by the shared prefix (falls back to its last
+        // segment) while `Company.Product.Product` strips to its tail — both would be `Product`.
+        // Two unrelated assemblies must not land in one section.
+        var map = AssemblySections.Resolve(new[] { "Company.Product", "Company.Product.Product" });
+
+        Assert.NotEqual(map["Company.Product"], map["Company.Product.Product"]);
+    }
+
+    [Fact]
+    public void AssemblySections_CollisionGuard_DoesNotBreakContractsFold()
+    {
+        // The collision guard keys on the FOLDED name, so an intended `X` + `X.Contracts`
+        // collapse must survive it even when it looks like a duplicate section name.
+        var map = AssemblySections.Resolve(new[] { "Humans.Store", "Humans.Store.Contracts", "Humans.Web" });
+
+        Assert.Equal(map["Humans.Store"], map["Humans.Store.Contracts"]);
+        Assert.Equal("Store", map["Humans.Store"]);
+    }
+
+    [Fact]
     public void AssemblySections_NoSharedPrefix_KeepsFullNames()
     {
         var map = AssemblySections.Resolve(new[] { "Alpha.Core", "Beta.Core" });
