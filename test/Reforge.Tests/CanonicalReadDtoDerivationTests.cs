@@ -16,7 +16,7 @@ public class CanonicalReadDtoDerivationTests
         var cfg = SurfaceScoreConfig.Default();
         var classified = await SolutionClassifier.ClassifyAsync(
             _fixture.Solution, cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution), CancellationToken.None);
-        return CanonicalReadDtoSet.Derive(classified);
+        return CanonicalReadDtoSet.Derive(classified, LocationHelper.GetSolutionDirectory(_fixture.Solution));
     }
 
     private static IEnumerable<string> Names(CanonicalReadDtoSet set, string section) =>
@@ -109,23 +109,24 @@ public class CanonicalReadDtoDerivationTests
         var amenity = classified.Single(c => c.Type.Name == "LodgeAmenityInfo");
         Assert.DoesNotContain("/Contracts/", amenity.File.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase);
 
-        Assert.Contains("LodgeAmenityInfo", Names(CanonicalReadDtoSet.Derive(classified), "Lodge"));
+        Assert.Contains("LodgeAmenityInfo", Names(CanonicalReadDtoSet.Derive(classified, LocationHelper.GetSolutionDirectory(_fixture.Solution)), "Lodge"));
     }
 
     [Fact]
     public async Task Derive_BreaksAnchorOrderTiesOnFullIdentity()
     {
         var cfg = SurfaceScoreConfig.Default();
+        var dir = LocationHelper.GetSolutionDirectory(_fixture.Solution);
         var classified = (await SolutionClassifier.ClassifyAsync(
-            _fixture.Solution, cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution), CancellationToken.None)).ToList();
+            _fixture.Solution, cfg, dir, CancellationToken.None)).ToList();
 
         // Two LodgeStayInfo types, same section, different namespaces — equal on both name and
         // length, so the comparator falls through to the type key. Deriving from the SAME set in
         // the opposite enumeration order has to produce the same order out: List.Sort is not
         // stable in general and is stable (insertion sort) for small inputs, so a comparator that
         // returned 0 here would silently hand back whichever came in first.
-        var forward = Order(CanonicalReadDtoSet.Derive(classified));
-        var reversed = Order(CanonicalReadDtoSet.Derive(Enumerable.Reverse(classified)));
+        var forward = Order(CanonicalReadDtoSet.Derive(classified, dir));
+        var reversed = Order(CanonicalReadDtoSet.Derive(Enumerable.Reverse(classified), dir));
 
         Assert.Equal(new[] { "SampleSolution.Lodge.Contracts.LodgeStayInfo",
                              "SampleSolution.Lodge.Contracts.V2.LodgeStayInfo" }, forward);
@@ -135,6 +136,27 @@ public class CanonicalReadDtoDerivationTests
             .Where(c => c.Type.Name == "LodgeStayInfo")
             .Select(c => c.Type.ToDisplayString())
             .ToArray();
+    }
+
+    [Theory]
+    // A solution checked out UNDER a directory named "Contracts". Every declaration's absolute path
+    // contains that segment, so testing the raw path would put the whole solution on a contracts
+    // surface — corrupting return credits, entity-leak exemptions and anchors solution-wide.
+    [InlineData("/work/Contracts/Sln", "/work/Contracts/Sln/App.Lodge/Foo.cs", false)]
+    [InlineData("/work/Contracts/Sln", "/work/Contracts/Sln/App.Lodge/Contracts/Foo.cs", true)]
+    // And the same on Windows separators, which is what SyntaxTree.FilePath actually hands back here.
+    [InlineData(@"C:\work\Contracts\Sln", @"C:\work\Contracts\Sln\App.Lodge\Foo.cs", false)]
+    [InlineData(@"C:\work\Contracts\Sln", @"C:\work\Contracts\Sln\App.Lodge\Contracts\Foo.cs", true)]
+    public void IsOnContractsSurface_ReadsSolutionRelativeSegmentsOnly(string solutionDir, string path, bool expected)
+    {
+        Assert.Equal(expected, CanonicalReadDtoSet.IsOnContractsSurface("App.Lodge", new[] { path }, solutionDir));
+    }
+
+    [Fact]
+    public void IsOnContractsSurface_ContractsAssembly_NeedsNoPath()
+    {
+        Assert.True(CanonicalReadDtoSet.IsOnContractsSurface("App.Lodge.Contracts", new[] { "App.Lodge.Contracts/Foo.cs" }, "/sln"));
+        Assert.False(CanonicalReadDtoSet.IsOnContractsSurface("App.Lodge", new[] { "App.Lodge/Foo.cs" }, "/sln"));
     }
 
     [Fact]

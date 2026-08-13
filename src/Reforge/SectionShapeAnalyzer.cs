@@ -125,7 +125,7 @@ public static class SectionShapeAnalyzer
 
         // Each section's published read API, derived from its exported contracts surface. Used as
         // the anchor fallback when the <Section>Info convention misses.
-        var canonicalReadDtos = CanonicalReadDtoSet.Derive(classified);
+        var canonicalReadDtos = CanonicalReadDtoSet.Derive(classified, solutionDirectory);
 
         var byGroup = classified.GroupBy(c => c.Group, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);

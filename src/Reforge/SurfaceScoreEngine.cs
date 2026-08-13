@@ -574,7 +574,7 @@ public sealed class SurfaceScoreEngine
         // its contracts surface. The credit applies solution-wide — a Tickets method returning
         // Users's canonical DTO still earns it — but membership is per-symbol, not per-name: two
         // assemblies may each declare a UserInfo and only one may be a published read API.
-        var canonical = CanonicalReadDtoSet.Derive(classified);
+        var canonical = CanonicalReadDtoSet.Derive(classified, _solutionDirectory);
 
         foreach (var c in classified)
         {

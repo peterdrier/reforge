@@ -72,6 +72,12 @@ under `Contracts/` and one part outside has several source locations, and which 
 follows syntax-tree order — reading the primary alone would let a type enter and leave the set when
 files are merely reordered. Declaring any part of a type on the contracts surface publishes it.
 
+Each path is made **solution-relative first**. A raw `SyntaxTree.FilePath` is absolute, so a
+checkout under any ancestor directory named `Contracts` — `/work/Contracts/MySolution` — would
+otherwise put every exported DTO-shaped type in the whole solution on a contracts surface. Reading
+only `ClassifiedType.File` was accidentally immune to this (it is already normalized); walking every
+location is not, so `IsOnContractsSurface` normalizes explicitly.
+
 ### Preference order
 
 `ForSection` returns a section's DTOs in anchor-preference order: `*Info` names first, then
@@ -194,7 +200,13 @@ Sample-solution fixtures, both shapes plus the negatives:
   same order out — `List.Sort` uses a stable insertion sort at these sizes, so reversing the input
   is what actually forces the untiebroken comparator to disagree with itself.
 
+`IsOnContractsSurface` is public so the path rule can be pinned without a second MSBuild workspace:
+a `[Theory]` feeds it a solution rooted at `/work/Contracts/Sln` (and the Windows-separator form)
+and requires `App.Lodge/Foo.cs` to stay off the contracts surface while
+`App.Lodge/Contracts/Foo.cs` lands on it.
+
 Every new test was verified to fail with the implementation reverted: dropping the `IsExported`
 gate reddens the internal-exclusion test; accepting any location reddens six; removing the analyzer
 fallback reddens the Lodge anchor test and the existing missing-surface test; reading only the
-primary location reddens the partial test; dropping the type-key tiebreak reddens the order test.
+primary location reddens the partial test; dropping the type-key tiebreak reddens the order test;
+testing raw instead of solution-relative paths reddens the ancestor-directory theory.

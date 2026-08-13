@@ -47,15 +47,17 @@ public sealed class CanonicalReadDtoSet
 
     /// <summary>
     /// Derives the canonical read DTOs of every section from the classified corpus.
+    /// <paramref name="solutionDirectory"/> is required to make declaration paths solution-relative
+    /// before their directory segments are read — see <see cref="IsOnContractsSurface"/>.
     /// </summary>
-    public static CanonicalReadDtoSet Derive(IEnumerable<ClassifiedType> classified)
+    public static CanonicalReadDtoSet Derive(IEnumerable<ClassifiedType> classified, string solutionDirectory)
     {
         var bySection = new Dictionary<string, List<ClassifiedType>>(StringComparer.OrdinalIgnoreCase);
         var keys = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var c in classified)
         {
-            if (!IsCanonicalReadDto(c)) continue;
+            if (!IsCanonicalReadDto(c, solutionDirectory)) continue;
             if (!bySection.TryGetValue(c.Group, out var list))
                 bySection[c.Group] = list = new List<ClassifiedType>();
             list.Add(c);
@@ -112,44 +114,57 @@ public sealed class CanonicalReadDtoSet
     /// A canonical read DTO: an exported data type declared on the section's contracts surface.
     /// Interfaces, enums, delegates and static classes are excluded — a read API hands back data.
     /// </summary>
-    private static bool IsCanonicalReadDto(ClassifiedType c)
+    private static bool IsCanonicalReadDto(ClassifiedType c, string solutionDirectory)
     {
         if (!c.IsExported) return false;
         if (c.Type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
         if (c.Type.IsStatic) return false;
         if (!c.Tags.Contains("dto") && !IsDataCarrier(c.Type)) return false;
-        return IsContractsDeclaration(c);
+        return IsOnContractsSurface(
+            c.Type.ContainingAssembly?.Name,
+            c.Type.Locations.Where(l => l.IsInSource).Select(l => l.SourceTree?.FilePath),
+            solutionDirectory);
     }
 
     /// <summary>
-    /// Whether the type is declared on its section's contracts surface: in the section's
-    /// <c>&lt;X&gt;.Contracts</c> assembly, or under a <c>Contracts/</c> folder in the section's own
-    /// assembly. Both fold into the same section (see <see cref="AssemblySections"/>), so the
-    /// section is whatever the type already resolved to.
+    /// Whether a type declared in <paramref name="assemblyName"/> at
+    /// <paramref name="declarationPaths"/> sits on its section's contracts surface: the assembly is
+    /// a <c>&lt;X&gt;.Contracts</c> assembly, or some declaration lives under a <c>Contracts/</c>
+    /// folder. Both fold into the same section (see <see cref="AssemblySections"/>), so the section
+    /// is whatever the type already resolved to.
     /// </summary>
-    private static bool IsContractsDeclaration(ClassifiedType c)
+    /// <remarks>
+    /// <para>
+    /// <b>Every</b> declaration is inspected, not just the primary one. A partial type with one part
+    /// under <c>Contracts/</c> and one part outside has several source locations, and which one
+    /// <see cref="SolutionClassifier"/> picked as primary follows syntax-tree order — reading the
+    /// primary alone would let a type enter and leave the set when files are merely reordered.
+    /// Declaring any part of a type on the contracts surface publishes it.
+    /// </para>
+    /// <para>
+    /// Each path is made <b>solution-relative first</b>. A raw <see cref="SyntaxTree.FilePath"/> is
+    /// absolute, so a checkout under any ancestor directory named <c>Contracts</c> — say
+    /// <c>/work/Contracts/MySolution</c> — would otherwise put every exported DTO-shaped type in the
+    /// entire solution on a contracts surface.
+    /// </para>
+    /// </remarks>
+    public static bool IsOnContractsSurface(
+        string? assemblyName, IEnumerable<string?> declarationPaths, string solutionDirectory)
     {
-        var assembly = c.Type.ContainingAssembly?.Name;
-        if (assembly is not null && AssemblySections.IsContractsAssembly(assembly)) return true;
+        if (assemblyName is not null && AssemblySections.IsContractsAssembly(assemblyName)) return true;
 
-        // EVERY declaration, not just the primary location. A partial type with one part under
-        // Contracts/ and one part outside has several source locations, and which one
-        // SolutionClassifier picked as primary follows syntax-tree order — so keying off c.File
-        // alone would let the type enter and leave the set when files are merely reordered.
-        // Declaring any part of a type on the contracts surface publishes it.
-        if (HasContractsSegment(c.File)) return true;
-        foreach (var location in c.Type.Locations)
+        foreach (var path in declarationPaths)
         {
-            if (!location.IsInSource) continue;
-            if (HasContractsSegment(location.SourceTree?.FilePath)) return true;
+            if (string.IsNullOrEmpty(path)) continue;
+            if (HasContractsSegment(LocationHelper.NormalizePath(path, solutionDirectory))) return true;
         }
         return false;
     }
 
     /// <summary>
     /// Whether the path has a <c>Contracts</c> directory segment. Both separators are split on:
-    /// <see cref="ClassifiedType.File"/> is normalized to forward slashes, but a raw
-    /// <see cref="SyntaxTree.FilePath"/> is not.
+    /// a solution-relative path is normalized to forward slashes, but a path outside the solution
+    /// directory is returned as-is.
     /// </summary>
     private static bool HasContractsSegment(string? path)
     {
