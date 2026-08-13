@@ -48,7 +48,11 @@ public sealed class ScoreReport
     /// so the JSON `build` object is always present. Populated by ScoreAsync.
     /// </summary>
     public BuildHealth BuildHealth { get; set; } = new(false, 0, 0, false);
-    /// <summary>Configured section names — used by --list-groups and the missing-section diagnostic.</summary>
+    /// <summary>
+    /// The solution's section names (one per analyzed assembly, <c>.Contracts</c> folded in) —
+    /// used by --list-groups and the missing-section diagnostic. Serialized as
+    /// <c>configuredSections</c> for downstream consumers.
+    /// </summary>
     public List<string> ConfiguredSections { get; } = new();
     /// <summary>
     /// Populated only when a <c>--baseline</c> is supplied. Each entry is a scope (solution or
@@ -108,10 +112,10 @@ public sealed record ConservationAnchor(
 
 /// <summary>
 /// Computes a Surface Score for a Roslyn <see cref="Solution"/> using the supplied
-/// <see cref="SurfaceScoreConfig"/>. The engine is intentionally generic: domain
-/// knowledge enters only through config (group rules, classifications, weights,
-/// DbSet ownership). Three scoring passes — durable surface, dependency use,
-/// internal shape — accumulate into a single per-group total.
+/// <see cref="SurfaceScoreConfig"/>. The engine is intentionally generic: sections come from
+/// the solution's assemblies, and the remaining domain knowledge (classifications, weights,
+/// per-section policy) enters only through config. Three scoring passes — durable surface,
+/// dependency use, internal shape — accumulate into a single per-group total.
 /// </summary>
 public sealed class SurfaceScoreEngine
 {
@@ -127,9 +131,10 @@ public sealed class SurfaceScoreEngine
     public async Task<ScoreReport> ScoreAsync(Solution solution, CancellationToken ct, int maxBuildDiagnostics = 25)
     {
         var report = new ScoreReport();
-        report.ConfiguredSections.AddRange(_config.EffectiveSections.Select(s => s.Name));
         var classified = (await SolutionClassifier.ClassifyAsync(solution, _config, _solutionDirectory, ct)).ToList();
         report.TypesAnalyzed = classified.Count;
+        report.ConfiguredSections.AddRange(classified
+            .Select(c => c.Group).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.Ordinal));
 
         // Single canonical index — built once, used by both dependency-use and DI-registration
         // passes. Safe under duplicate ToDisplayString because `classified` is already deduped.
@@ -524,7 +529,7 @@ public sealed class SurfaceScoreEngine
         // Index canonical DTO names across all sections — a Tickets method returning Users's
         // canonical DTO still earns the credit.
         var canonicalNames = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var s in _config.EffectiveSections)
+        foreach (var s in _config.Sections.Values)
             foreach (var n in s.CanonicalReadDtos)
                 canonicalNames.Add(n);
 
@@ -760,18 +765,24 @@ public sealed class SurfaceScoreEngine
 
     // ---------------- Cross-cutting: duplicate DbSet owners ----------------
 
+    /// <summary>
+    /// A table belongs to the section that declares its <c>DbSet</c> — i.e. the section of the
+    /// declaring <c>DbContext</c>'s assembly. Any class in another section that reads or writes
+    /// that DbSet is a second owner. Ownership is read off the model, never off a config map, so
+    /// it cannot drift; when a section extracts its own context the ownership moves with it.
+    /// </summary>
     private void ScoreDuplicateDbSetOwners(
         List<ClassifiedType> classified,
         Solution solution,
         ScoreReport report,
         CancellationToken ct)
     {
-        var ownerMap = _config.Resources.DbSets.OwnerByName;
+        var weight = _config.Weight("duplicateDbSetOwner");
+        if (weight == 0) return;
+
+        var ownerMap = DbSetOwnersByDeclaringContext(classified);
         if (ownerMap.Count == 0) return;
 
-        // For each repository implementation, collect which DbSets it touches, then flag
-        // any DbSet read or written by a class outside the configured owning group.
-        var weight = _config.Weight("duplicateDbSetOwner");
         var alreadyReported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var c in classified)
@@ -799,6 +810,40 @@ public sealed class SurfaceScoreEngine
                 report.DuplicateOwners.Add($"{c.Type.ToDisplayString()} touches {dbSet} (owner: {owner})");
             }
         }
+    }
+
+    /// <summary>
+    /// DbSet property name -> owning section, derived from every source-declared DbContext. When
+    /// two contexts in different sections expose the same DbSet name the table has no single owner,
+    /// so it is dropped rather than attributed to whichever context was enumerated first.
+    /// </summary>
+    private static Dictionary<string, string> DbSetOwnersByDeclaringContext(List<ClassifiedType> classified)
+    {
+        var owners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var contested = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var c in classified)
+        {
+            if (c.Type.TypeKind != TypeKind.Class) continue;
+            if (!DbContextAnalyzer.IsDbContextType(c.Type)) continue;
+
+            foreach (var member in c.Type.GetMembers())
+            {
+                if (member is not IPropertySymbol prop) continue;
+                if (!DbContextAnalyzer.IsDbSetType(prop.Type)) continue;
+
+                if (owners.TryGetValue(prop.Name, out var existing)
+                    && !string.Equals(existing, c.Group, StringComparison.OrdinalIgnoreCase))
+                {
+                    contested.Add(prop.Name);
+                    continue;
+                }
+                owners[prop.Name] = c.Group;
+            }
+        }
+
+        foreach (var name in contested) owners.Remove(name);
+        return owners;
     }
 
     private async Task ScoreDiRegistrationsAsync(
@@ -1043,8 +1088,8 @@ public sealed class SurfaceScoreEngine
     /// <summary>
     /// Scores the section shapes onto the surface axis: the <c>readSurfaceProjectionMethod</c>
     /// surcharge for charged read methods, the repo-backed <c>missing*</c> rules, and the
-    /// cross-section <c>crossSectionWriteSurface</c> rule. Only configured sections produce shapes,
-    /// so default-config runs (no sections) add nothing here.
+    /// cross-section <c>crossSectionWriteSurface</c> rule. Every assembly-derived section is
+    /// shaped, so these rules fire with or without a config file.
     /// </summary>
     private void ScoreSectionArchitecture(SectionArchitecture arch, ScoreReport report)
     {

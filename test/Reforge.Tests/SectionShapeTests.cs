@@ -12,23 +12,16 @@ public class SectionShapeTests
     public async Task SectionShape_RendersCampShapeAndAdvisory()
     {
         // Drive the analyzer directly (command IO is covered by a CLI smoke test in dogfooding).
-        var cfg = new SurfaceScoreConfig
+        // Section membership needs no config; only the escape hatch (visible debt) is policy.
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Sections["Camp"] = new SectionRule
         {
-            Sections =
+            EscapeHatchReadMethods =
             {
-                ["Camp"] = new SectionRule
-                {
-                    RepositoryInterfaces = { "ICampRepository" },
-                    ServiceInterfaces = { "ICampSectionService" },
-                    ReadServiceInterfaces = { "ICampServiceRead" },
-                    EscapeHatchReadMethods =
-                    {
-                        new EscapeHatchReadMethod { Method = "ICampServiceRead.IsUserCampLeadAsync", Reason = "legacy", Since = "2026-02", Owner = "camps" }
-                    }
-                }
+                new EscapeHatchReadMethod { Method = "ICampServiceRead.IsUserCampLeadAsync", Reason = "legacy", Since = "2026-02", Owner = "camps" }
             }
         };
-        cfg.BuildEffectiveSections();
+
         var dir = LocationHelper.GetSolutionDirectory(_fixture.Solution);
         var classified = (await SolutionClassifier.ClassifyAsync(_fixture.Solution, cfg, dir, CancellationToken.None)).ToList();
         var arch = await SectionShapeAnalyzer.AnalyzeAsync(_fixture.Solution, classified, cfg, dir, CancellationToken.None);

@@ -7,6 +7,12 @@ namespace Reforge;
 /// types, resolves each into a section (group) and assigns role tags. Extracted from
 /// SurfaceScoreEngine so surface-score, section-shape, and the baseline gate share one pass.
 /// </summary>
+/// <remarks>
+/// Section identity is the type's <b>containing assembly</b> (see <see cref="AssemblySections"/>),
+/// never config. An assembly boundary is structural and compiler-enforced — strictly stronger than
+/// either a name glob or a path glob, and it cannot drift from the solution because it *is* the
+/// solution. Config carries policy only; it no longer describes where sections are.
+/// </remarks>
 public static class SolutionClassifier
 {
     public static async Task<IReadOnlyList<ClassifiedType>> ClassifyAsync(
@@ -15,9 +21,13 @@ public static class SolutionClassifier
         var classified = new List<ClassifiedType>();
         var seenByDisplay = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var project in solution.Projects)
+        var projects = solution.Projects
+            .Where(p => !p.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var sectionByAssembly = AssemblySections.Resolve(projects.Select(p => p.AssemblyName));
+
+        foreach (var project in projects)
         {
-            if (project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase)) continue;
             var compilation = await project.GetCompilationAsync(ct);
             if (compilation is null) continue;
 
@@ -26,6 +36,13 @@ public static class SolutionClassifier
                 if (!type.Locations.Any(l => l.IsInSource)) continue;
                 if (type.IsImplicitlyDeclared) continue;
                 if (type.DeclaredAccessibility == Accessibility.Private) continue;
+
+                // A compilation's global namespace also reaches referenced projects' source types,
+                // so the enumerating project is NOT the owner — the containing assembly is. Types
+                // from assemblies outside the analyzed set (test projects reached by reference)
+                // drop out here.
+                var assembly = type.ContainingAssembly?.Name;
+                if (assembly is null || !sectionByAssembly.TryGetValue(assembly, out var group)) continue;
                 if (!seenByDisplay.Add(type.ToDisplayString())) continue;
 
                 var primaryLocation = type.Locations.First(l => l.IsInSource);
@@ -33,28 +50,7 @@ public static class SolutionClassifier
                 var relPath = LocationHelper.NormalizePath(filePath, solutionDirectory);
                 var nsName = type.ContainingNamespace?.ToDisplayString() ?? "";
 
-                var (group, sectionMatch) = ResolveSection(config, type, relPath, nsName);
                 var tags = Classify(config, type, relPath, nsName);
-
-                if (sectionMatch?.MatchKind == SectionMatchKind.RepositoryInterface)
-                {
-                    tags.Add("repositoryInterface");
-                    tags.Remove("fullServiceInterface");
-                    tags.Remove("readServiceInterface");
-                }
-                else if (sectionMatch?.MatchKind == SectionMatchKind.ReadServiceInterface)
-                {
-                    tags.Add("readServiceInterface");
-                    tags.Remove("fullServiceInterface");
-                    tags.Remove("repositoryInterface");
-                }
-                else if (sectionMatch?.MatchKind == SectionMatchKind.ServiceInterface)
-                {
-                    tags.Add("fullServiceInterface");
-                    tags.Remove("readServiceInterface");
-                    tags.Remove("repositoryInterface");
-                }
-
                 classified.Add(new ClassifiedType(type, group, tags, relPath, primaryLocation));
             }
         }
@@ -79,43 +75,6 @@ public static class SolutionClassifier
             }
         }
     }
-
-    private static (string Group, SectionMatchResult? MatchResult) ResolveSection(
-        SurfaceScoreConfig config, INamedTypeSymbol type, string filePath, string namespaceName)
-    {
-        foreach (var rule in config.EffectiveSections)
-        {
-            if (rule.RepositoryInterfaces.Contains(type.Name, StringComparer.Ordinal))
-                return (rule.Name, new SectionMatchResult(SectionMatchKind.RepositoryInterface));
-            if (rule.ReadServiceInterfaces.Contains(type.Name, StringComparer.Ordinal))
-                return (rule.Name, new SectionMatchResult(SectionMatchKind.ReadServiceInterface));
-            if (rule.ServiceInterfaces.Contains(type.Name, StringComparer.Ordinal))
-                return (rule.Name, new SectionMatchResult(SectionMatchKind.ServiceInterface));
-
-            foreach (var p in rule.Paths)
-                if (GlobMatcher.MatchesPath(filePath, p))
-                    return (rule.Name, new SectionMatchResult(SectionMatchKind.Path));
-            foreach (var n in rule.Namespaces)
-                if (namespaceName.StartsWith(n, StringComparison.Ordinal))
-                    return (rule.Name, new SectionMatchResult(SectionMatchKind.Namespace));
-            foreach (var s in rule.Symbols)
-                if (GlobMatcher.MatchesName(type.Name, s))
-                    return (rule.Name, new SectionMatchResult(SectionMatchKind.Symbol));
-        }
-
-        if (config.GroupByNamespaceFallback && !string.IsNullOrEmpty(namespaceName))
-        {
-            var parts = namespaceName.Split('.');
-            if (parts.Length >= 3) return (parts[2], null);
-            if (parts.Length >= 2) return (parts[1], null);
-            return (parts[0], null);
-        }
-
-        return ("(ungrouped)", null);
-    }
-
-    internal enum SectionMatchKind { Path, Namespace, Symbol, RepositoryInterface, ServiceInterface, ReadServiceInterface }
-    internal sealed record SectionMatchResult(SectionMatchKind MatchKind);
 
     private static HashSet<string> Classify(SurfaceScoreConfig config, INamedTypeSymbol type, string filePath, string namespaceName)
     {
@@ -169,6 +128,56 @@ public static class SolutionClassifier
         foreach (var iface in type.AllInterfaces)
             if (iface.Name == name) return true;
         return false;
+    }
+}
+
+/// <summary>
+/// Maps assembly names to section names. Two rules, both purely structural:
+/// <list type="number">
+///   <item><c>&lt;X&gt;.Contracts</c> folds into <c>&lt;X&gt;</c> — a contracts assembly is the
+///         published face of its section, not a section of its own.</item>
+///   <item>The dot-segment prefix shared by every assembly in the solution is stripped for display,
+///         so <c>Humans.Store</c> reports as <c>Store</c>. When stripping would leave nothing (the
+///         monolith assembly that IS the prefix), the last segment is kept.</item>
+/// </list>
+/// </summary>
+public static class AssemblySections
+{
+    private const string ContractsSuffix = ".Contracts";
+
+    /// <summary>Assembly name -> section name, for the whole analyzed assembly set at once (the shared prefix is a property of the set, not of one name).</summary>
+    public static Dictionary<string, string> Resolve(IEnumerable<string> assemblyNames)
+    {
+        var names = assemblyNames.Where(n => !string.IsNullOrEmpty(n)).Distinct(StringComparer.Ordinal).ToList();
+        var folded = names.ToDictionary(n => n, Fold, StringComparer.Ordinal);
+        var segmented = folded.Values.Distinct(StringComparer.Ordinal).Select(v => v.Split('.')).ToList();
+
+        int shared = segmented.Count == 0 ? 0 : segmented[0].Length;
+        foreach (var segments in segmented.Skip(1))
+            shared = Math.Min(shared, CommonLeadingSegments(segmented[0], segments));
+
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (name, foldedName) in folded)
+        {
+            var segments = foldedName.Split('.');
+            result[name] = shared < segments.Length
+                ? string.Join('.', segments.Skip(shared))
+                : segments[^1];
+        }
+        return result;
+    }
+
+    private static string Fold(string assemblyName) =>
+        assemblyName.EndsWith(ContractsSuffix, StringComparison.OrdinalIgnoreCase)
+        && assemblyName.Length > ContractsSuffix.Length
+            ? assemblyName[..^ContractsSuffix.Length]
+            : assemblyName;
+
+    private static int CommonLeadingSegments(string[] a, string[] b)
+    {
+        int i = 0;
+        while (i < a.Length && i < b.Length && string.Equals(a[i], b[i], StringComparison.OrdinalIgnoreCase)) i++;
+        return i;
     }
 }
 

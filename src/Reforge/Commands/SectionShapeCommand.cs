@@ -7,12 +7,11 @@ using System.Text.Json.Serialization;
 namespace Reforge.Commands;
 
 /// <summary>
-/// <c>section-shape</c> — renders the resolved architectural shape of each configured section:
-/// owned repositories, read/full service interfaces, primary/settings/cache DTOs (with
+/// <c>section-shape</c> — renders the resolved architectural shape of each section (one per
+/// assembly): owned repositories, read/full service interfaces, primary/settings/cache DTOs (with
 /// provenance), documented read shards, cross-section read/write-surface use, missing surfaces,
 /// visible-debt suppressions (grandfathered deps + escape-hatch reads), and advisory candidates
-/// (derivable reads, missing info facts, cache-answerable facts). Config-driven; sections without
-/// a <c>SectionRule</c> are not shaped.
+/// (derivable reads, missing info facts, cache-answerable facts).
 /// </summary>
 public static class SectionShapeCommand
 {
@@ -27,15 +26,15 @@ public static class SectionShapeCommand
     {
         var configOption = new Option<string?>("--config")
         {
-            Description = "Path to reforge.surface-score.json (default: search upward from solution dir). Sections are read from its `sections` map."
+            Description = "Path to reforge.surface-score.json (default: search upward from solution dir). Supplies per-section policy; sections themselves come from the solution's assemblies."
         };
         var sectionOption = new Option<string?>("--section")
         {
-            Description = "Restrict output to a single configured section by name."
+            Description = "Restrict output to a single section by name (the assembly name, common solution prefix stripped)."
         };
 
         var command = new Command("section-shape",
-            "Render each configured section's architectural shape (interfaces, DTO anchors, cross-section use, missing surfaces, visible debt, advisories). Supports Compact, Markdown, and JSON.")
+            "Render each section's architectural shape (interfaces, DTO anchors, cross-section use, missing surfaces, visible debt, advisories). Supports Compact, Markdown, and JSON.")
         {
             configOption,
             sectionOption
@@ -62,8 +61,8 @@ public static class SectionShapeCommand
                     .ToList();
 
                 if (sectionFilter is not null && sections.Count == 0)
-                    Console.Error.WriteLine($"WARNING: --section '{sectionFilter}' did not match any configured section. " +
-                        $"Configured sections: {string.Join(", ", arch.Sections.Select(s => s.Name))}.");
+                    Console.Error.WriteLine($"WARNING: --section '{sectionFilter}' is not a section of this solution. " +
+                        $"Sections: {string.Join(", ", arch.Sections.Select(s => s.Name))}.");
 
                 if (format == OutputFormat.Json)
                     WriteJson(sections, loadedFrom);
@@ -128,7 +127,7 @@ public static class SectionShapeCommand
 
         if (sections.Count == 0)
         {
-            Console.WriteLine("No configured sections to shape (sections are defined in reforge.surface-score.json).");
+            Console.WriteLine("No sections to shape (no non-test project produced source types).");
             return;
         }
 

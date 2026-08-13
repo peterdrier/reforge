@@ -5,7 +5,8 @@ namespace Reforge.Tests;
 /// <summary>
 /// Plan B - section-architecture scored rules (crossSectionWriteSurface, missing*,
 /// readSurfaceProjectionMethod) + conservationAnchors, exercised end-to-end through
-/// SurfaceScoreEngine against the sample solution with an explicit Camp-section config.
+/// SurfaceScoreEngine against the sample solution. Sections are the sample's assemblies
+/// (Camp + Camp.Contracts, Lodge, Dorm, Tent, Reporting) - no config maps types into them.
 /// </summary>
 [Collection("SampleSolution")]
 public class SectionArchitectureTests
@@ -15,38 +16,9 @@ public class SectionArchitectureTests
 
     private string Dir => LocationHelper.GetSolutionDirectory(_fixture.Solution);
 
-    /// <summary>A config that maps the Camp fixtures into a repo-backed "Camp" section.</summary>
-    private static SurfaceScoreConfig CampConfig() => WithDefaults(new SurfaceScoreConfig
+    private async Task<ScoreReport> Score(SurfaceScoreConfig? cfg = null)
     {
-        Sections =
-        {
-            ["Camp"] = new SectionRule
-            {
-                RepositoryInterfaces = { "ICampRepository" },
-                ServiceInterfaces = { "ICampSectionService" },
-                ReadServiceInterfaces = { "ICampServiceRead" }
-                // primaryInfoDto / settingsInfoDto left to convention -> CampInfo / CampSettingsInfo
-            }
-        }
-    });
-
-    /// <summary>
-    /// Merges default classifications + weights into a hand-built section config (as
-    /// <see cref="SurfaceScoreConfig.LoadOrDefault"/> does in production) and finalizes the
-    /// effective-section list. Section rules need the default weights to score.
-    /// </summary>
-    private static SurfaceScoreConfig WithDefaults(SurfaceScoreConfig cfg)
-    {
-        var defaults = SurfaceScoreConfig.Default();
-        foreach (var (k, v) in defaults.Classifications) cfg.Classifications.TryAdd(k, v);
-        foreach (var (k, v) in defaults.Weights) cfg.Weights.TryAdd(k, v);
-        cfg.BuildEffectiveSections();
-        return cfg;
-    }
-
-    private async Task<ScoreReport> Score(SurfaceScoreConfig cfg)
-    {
-        var engine = new SurfaceScoreEngine(cfg, Dir);
+        var engine = new SurfaceScoreEngine(cfg ?? SurfaceScoreConfig.Default(), Dir);
         return await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
     }
 
@@ -82,7 +54,7 @@ public class SectionArchitectureTests
     [Fact]
     public async Task ReadSurfaceProjectionMethod_ChargesProjectionAndPredicateReads()
     {
-        var report = await Score(CampConfig());
+        var report = await Score();
 
         Assert.True(report.ByRule.TryGetValue("readSurfaceProjectionMethod", out var pts) && pts > 0);
         var camp = report.Groups["Camp"];
@@ -95,22 +67,14 @@ public class SectionArchitectureTests
     [Fact]
     public async Task ReadSurfaceProjectionMethod_ExemptsEscapeHatch()
     {
-        var cfg = WithDefaults(new SurfaceScoreConfig
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Sections["Camp"] = new SectionRule
         {
-            Sections =
+            EscapeHatchReadMethods =
             {
-                ["Camp"] = new SectionRule
-                {
-                    RepositoryInterfaces = { "ICampRepository" },
-                    ServiceInterfaces = { "ICampSectionService" },
-                    ReadServiceInterfaces = { "ICampServiceRead" },
-                    EscapeHatchReadMethods =
-                    {
-                        new EscapeHatchReadMethod { Method = "ICampServiceRead.IsUserCampLeadAsync", Reason = "legacy", Since = "2026-02" }
-                    }
-                }
+                new EscapeHatchReadMethod { Method = "ICampServiceRead.IsUserCampLeadAsync", Reason = "legacy", Since = "2026-02" }
             }
-        });
+        };
         var report = await Score(cfg);
 
         // only the projection method remains charged -> 4
@@ -122,30 +86,18 @@ public class SectionArchitectureTests
     [Fact]
     public async Task MissingSurfaceRules_FireOnlyForRepoBackedSections()
     {
-        var cfg = WithDefaults(new SurfaceScoreConfig
-        {
-            Sections =
-            {
-                ["Lodge"] = new SectionRule { RepositoryInterfaces = { "ILodgeRepository" }, ServiceInterfaces = { "ILodgeService" } },
-                ["Dorm"] = new SectionRule { RepositoryInterfaces = { "IDormRepository" }, ReadServiceInterfaces = { "IDormServiceRead" } },
-                ["Tent"] = new SectionRule { RepositoryInterfaces = { "ITentRepository" }, ServiceInterfaces = { "ITentService" }, ReadServiceInterfaces = { "ITentServiceRead" } },
-                ["Booking"] = new SectionRule { Symbols = { "*Orchestrator" } }
-            }
-        });
-        var report = await Score(cfg);
+        // Each fixture section is its own assembly; repo-backing is read off what it declares.
+        var report = await Score();
 
         Assert.True(report.Groups["Lodge"].ByRule.ContainsKey("missingReadSurface"));
         Assert.True(report.Groups["Dorm"].ByRule.ContainsKey("missingWriteSurface"));
         Assert.True(report.Groups["Tent"].ByRule.ContainsKey("missingPrimaryInfoDto"));
 
-        // Orchestrator-only: none of the missing* rules
-        var booking = report.Groups.TryGetValue("Booking", out var b) ? b : null;
-        if (booking is not null)
-        {
-            Assert.False(booking.ByRule.ContainsKey("missingReadSurface"));
-            Assert.False(booking.ByRule.ContainsKey("missingWriteSurface"));
-            Assert.False(booking.ByRule.ContainsKey("missingPrimaryInfoDto"));
-        }
+        // Reporting owns no repository and no DbContext: none of the missing* rules
+        var reporting = report.Groups["Reporting"];
+        Assert.False(reporting.ByRule.ContainsKey("missingReadSurface"));
+        Assert.False(reporting.ByRule.ContainsKey("missingWriteSurface"));
+        Assert.False(reporting.ByRule.ContainsKey("missingPrimaryInfoDto"));
 
         // Lodge has LodgeInfo + write but no read; must NOT be charged missingPrimaryInfoDto or missingWriteSurface
         Assert.False(report.Groups["Lodge"].ByRule.ContainsKey("missingPrimaryInfoDto"));
@@ -154,29 +106,19 @@ public class SectionArchitectureTests
 
     // ---------------- Task 5: crossSectionWriteSurface + unverified advisory + escape analysis ----------------
 
-    private static SurfaceScoreConfig CampReportingConfig(params GrandfatheredDependency[] grandfathered)
+    private static SurfaceScoreConfig ReportingConfig(params GrandfatheredDependency[] grandfathered)
     {
-        var reporting = new SectionRule { Symbols = { "*ReportBuilder", "*Delegator" } };
+        var cfg = SurfaceScoreConfig.Default();
+        var reporting = new SectionRule();
         foreach (var g in grandfathered) reporting.GrandfatheredDependencies.Add(g);
-        return WithDefaults(new SurfaceScoreConfig
-        {
-            Sections =
-            {
-                ["Camp"] = new SectionRule
-                {
-                    RepositoryInterfaces = { "ICampRepository" },
-                    ServiceInterfaces = { "ICampSectionService" },
-                    ReadServiceInterfaces = { "ICampServiceRead" }
-                },
-                ["Reporting"] = reporting
-            }
-        });
+        cfg.Sections["Reporting"] = reporting;
+        return cfg;
     }
 
     [Fact]
     public async Task CrossSectionWriteSurface_FiresOnCrossSectionReadOnlyConsumer_SuppressesGeneric()
     {
-        var report = await Score(CampReportingConfig());
+        var report = await Score();
 
         var reporting = report.Groups["Reporting"];
         Assert.True(reporting.ByRule.ContainsKey("crossSectionWriteSurface"));
@@ -189,7 +131,7 @@ public class SectionArchitectureTests
     [Fact]
     public async Task CrossSectionWriteSurfaceUnverified_WhenDependencyEscapes_NoConfidentPenalty()
     {
-        var report = await Score(CampReportingConfig());
+        var report = await Score();
 
         // CampDelegator passes the dep onward -> NOT a confident crossSectionWriteSurface; an advisory diagnostic instead.
         var reporting = report.Groups["Reporting"];
@@ -200,7 +142,7 @@ public class SectionArchitectureTests
     [Fact]
     public async Task CrossSectionWriteSurface_GrandfatheredDependency_IsSuppressed()
     {
-        var report = await Score(CampReportingConfig(
+        var report = await Score(ReportingConfig(
             new GrandfatheredDependency { Dependency = "CampReportBuilder->ICampSectionService", Reason = "legacy", Since = "2026-03", Owner = "camps" }));
 
         Assert.DoesNotContain(report.Groups["Reporting"].Entries, e => e.Rule == "crossSectionWriteSurface" && e.Symbol == "CampReportBuilder");
@@ -211,7 +153,7 @@ public class SectionArchitectureTests
     [Fact]
     public async Task ConservationAnchors_EmittedFqKeyedWithRecursivePaths()
     {
-        var report = await Score(CampConfig());
+        var report = await Score();
 
         var primary = report.ConservationAnchors.Single(a => a.Key.EndsWith("CampInfo") && a.Role == "primaryInfoDto");
         Assert.Equal("Camp", primary.Section);
@@ -228,7 +170,7 @@ public class SectionArchitectureTests
     {
         // The engine emits conservationAnchors at the report level; no command --top/--top-symbols
         // cap can suppress them. Assert the list is populated straight off the engine.
-        var report = await Score(CampConfig());
+        var report = await Score();
 
         Assert.NotEmpty(report.ConservationAnchors);
         Assert.Contains(report.ConservationAnchors, a => a.Role == "readServiceInterface");
@@ -240,7 +182,7 @@ public class SectionArchitectureTests
     [Fact]
     public async Task ConservationGate_EndToEnd_ExistingFactConsolidation()
     {
-        var now = await Score(CampConfig());
+        var now = await Score();
 
         // Baseline = the current real anchors + an EXTRA removed read method "GetMembersAsync"
         // whose fact "Members" is already on CampInfo.Seasons[].Members[...] in both the baseline

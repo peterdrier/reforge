@@ -7,26 +7,22 @@ namespace Reforge;
 /// <summary>
 /// Configuration for the <c>surface-score</c> command. Loaded from
 /// <c>reforge.surface-score.json</c> next to the solution. Reforge is deliberately
-/// domain-agnostic: every concept of "section", "ownership", "service kind" lives
-/// in this config. If no file is present, <see cref="Default"/> supplies a generic
-/// classification by name-pattern and groups by top-level namespace segment.
+/// domain-agnostic: every concept of "ownership" and "service kind" lives in this config.
+/// Sections are NOT configured — they are the solution's assemblies (see
+/// <see cref="AssemblySections"/>). If no file is present, <see cref="Default"/> supplies a
+/// generic classification by name-pattern and the standard weights.
 /// </summary>
 public sealed class SurfaceScoreConfig
 {
     /// <summary>
-    /// Primary form. Keyed by section name. Each section can match by paths, namespaces,
-    /// symbol-name globs, or explicit interface lists; the interface lists also auto-classify
-    /// the named types (sugar — saves writing a separate classification entry).
+    /// Per-section <b>policy</b>, keyed by the assembly-derived section name (e.g. "Store" for
+    /// <c>Humans.Store</c>). Purely optional: a section with no entry gets <see cref="SectionRule.None"/>.
+    /// This map no longer decides membership — it only carries the DTO anchors, surface-requirement
+    /// overrides, and visible-debt lists that cannot be derived from structure.
     /// </summary>
     public Dictionary<string, SectionRule> Sections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Legacy ordered form, kept for backward compatibility with 0.10/0.11 configs.
-    /// Merged into <see cref="Sections"/> at load time.
-    /// </summary>
-    public List<GroupRule> Groups { get; set; } = new();
     public Dictionary<string, ClassificationRule> Classifications { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-    public ResourceConfig Resources { get; set; } = new();
     public Dictionary<string, int> Weights { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -44,15 +40,6 @@ public sealed class SurfaceScoreConfig
     /// the escape hatch for a genuinely cohesive dispatcher the heuristic misjudges.
     /// </summary>
     public List<string> AllowedDispatcherMethods { get; set; } = new();
-
-    [JsonIgnore] public bool GroupByNamespaceFallback { get; set; } = true;
-
-    /// <summary>
-    /// Internal section list in declaration order. First match wins. Built once from
-    /// <see cref="Sections"/> + <see cref="Groups"/> at load time so the engine has a
-    /// single canonical view regardless of which form the user wrote.
-    /// </summary>
-    [JsonIgnore] public List<SectionRule> EffectiveSections { get; private set; } = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -88,34 +75,8 @@ public sealed class SurfaceScoreConfig
         foreach (var (k, v) in defaults.Weights)
             loaded.Weights.TryAdd(k, v);
 
-        loaded.BuildEffectiveSections();
-        loaded.GroupByNamespaceFallback = loaded.EffectiveSections.Count == 0;
         loadedFrom = path;
         return loaded;
-    }
-
-    /// <summary>
-    /// Merges <see cref="Sections"/> + legacy <see cref="Groups"/> into the canonical
-    /// <see cref="EffectiveSections"/> list. Dict ordering follows JSON insertion order
-    /// (System.Text.Json preserves it for objects); legacy groups are appended after.
-    /// </summary>
-    public void BuildEffectiveSections()
-    {
-        EffectiveSections = new List<SectionRule>();
-        foreach (var (name, rule) in Sections)
-        {
-            rule.Name = name;
-            EffectiveSections.Add(rule);
-        }
-        foreach (var g in Groups)
-        {
-            EffectiveSections.Add(new SectionRule
-            {
-                Name = g.Name,
-                Paths = g.Match.Paths,
-                Namespaces = g.Match.Namespaces
-            });
-        }
     }
 
     private static string? DiscoverConfigFile(string solutionDirectory)
@@ -137,10 +98,8 @@ public sealed class SurfaceScoreConfig
     /// </summary>
     public static SurfaceScoreConfig Default()
     {
-        var config = new SurfaceScoreConfig
+        return new SurfaceScoreConfig
         {
-            Groups = new List<GroupRule>(),
-            GroupByNamespaceFallback = true,
             Classifications = new(StringComparer.OrdinalIgnoreCase)
             {
                 ["dto"] = new ClassificationRule
@@ -188,7 +147,6 @@ public sealed class SurfaceScoreConfig
                     Namespaces = new() { }
                 }
             },
-            Resources = new ResourceConfig(),
             Weights = new(StringComparer.OrdinalIgnoreCase)
             {
                 // Durable surface
@@ -254,38 +212,27 @@ public sealed class SurfaceScoreConfig
                 ["flagsControlFlow"] = 1
             }
         };
-        config.BuildEffectiveSections();
-        return config;
     }
 
     public int Weight(string key) => Weights.TryGetValue(key, out var v) ? v : 0;
 
     /// <summary>
-    /// Returns true if the named section is configured (in either <see cref="Sections"/>
-    /// or legacy <see cref="Groups"/>). Useful for distinguishing "the user asked for a
-    /// section that doesn't exist" from "the section exists but matched no types".
+    /// The policy block for an assembly-derived section, or <see cref="SectionRule.None"/> when
+    /// the section has no config entry (the normal case — policy is the exception, not the rule).
     /// </summary>
-    public bool HasConfiguredSection(string name) =>
-        EffectiveSections.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+    public SectionRule Policy(string section) =>
+        Sections.TryGetValue(section, out var rule) ? rule : SectionRule.None;
 }
 
 /// <summary>
-/// Canonical section rule used by the engine. <see cref="SurfaceScoreConfig.Sections"/>
-/// and legacy <see cref="SurfaceScoreConfig.Groups"/> are both merged into a list of
-/// these at load time. A type joins a section if any one of its matchers fires.
+/// Per-section policy: the facts about a section that structure cannot state. Section
+/// <i>membership</i> is not here — that is the containing assembly (see <see cref="AssemblySections"/>).
 /// </summary>
 public sealed class SectionRule
 {
-    public string Name { get; set; } = "";
-    public List<string> Paths { get; set; } = new();
-    public List<string> Namespaces { get; set; } = new();
-    public List<string> Symbols { get; set; } = new();
-    /// <summary>Names that should be treated as repository interfaces (auto-classified and section-owned).</summary>
-    public List<string> RepositoryInterfaces { get; set; } = new();
-    /// <summary>Names that should be treated as full-service interfaces (auto-classified and section-owned).</summary>
-    public List<string> ServiceInterfaces { get; set; } = new();
-    /// <summary>Names that should be treated as read-only service interfaces (auto-classified and section-owned).</summary>
-    public List<string> ReadServiceInterfaces { get; set; } = new();
+    /// <summary>Shared empty policy for sections with no config entry. Never mutated by the engine.</summary>
+    public static readonly SectionRule None = new();
+
     /// <summary>
     /// Canonical read DTOs for this section. When any public method's return type's simple
     /// name matches one of these (across any section), that method earns the
@@ -313,22 +260,6 @@ public sealed class SectionRule
     public List<GrandfatheredDependency> GrandfatheredDependencies { get; set; } = new();
     /// <summary>Read methods exempt from readSurfaceProjectionMethod (visible debt).</summary>
     public List<EscapeHatchReadMethod> EscapeHatchReadMethods { get; set; } = new();
-
-    /// <summary>True when the section owns at least one repository by config. The engine widens this
-    /// with classified repositories resolved into the section (see SolutionClassifier).</summary>
-    public bool HasConfiguredRepository => RepositoryInterfaces.Count > 0;
-}
-
-public sealed class GroupRule
-{
-    public string Name { get; set; } = "";
-    public MatchSpec Match { get; set; } = new();
-}
-
-public sealed class MatchSpec
-{
-    public List<string> Paths { get; set; } = new();
-    public List<string> Namespaces { get; set; } = new();
 }
 
 public sealed class ClassificationRule
@@ -338,16 +269,6 @@ public sealed class ClassificationRule
     public List<string> Namespaces { get; set; } = new();
     public List<string> Inherits { get; set; } = new();
     public List<string> AttributeNames { get; set; } = new();
-}
-
-public sealed class ResourceConfig
-{
-    public DbSetConfig DbSets { get; set; } = new();
-}
-
-public sealed class DbSetConfig
-{
-    public Dictionary<string, string> OwnerByName { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class ReadShard

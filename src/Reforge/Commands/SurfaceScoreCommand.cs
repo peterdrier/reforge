@@ -134,27 +134,23 @@ public static class SurfaceScoreCommand
 
                 // Build a missing-group diagnostic *before* writing output so every format
                 // surfaces the same signal. Two distinct cases:
-                //   - the name doesn't match any configured section AND isn't a known group
-                //   - the section is configured but matched zero types
+                //   - the name is not a section of this solution (no assembly of that name)
+                //   - the section exists but scored nothing
                 if (groupFilter is not null)
                 {
                     var present = report.Groups.ContainsKey(groupFilter);
-                    var configured = config.HasConfiguredSection(groupFilter);
-                    if (!present && !configured)
+                    var known = report.ConfiguredSections.Contains(groupFilter, StringComparer.OrdinalIgnoreCase);
+                    if (!present && !known)
                     {
                         report.Diagnostics.Add(new ScoreDiagnostic("warning", "group-not-found",
-                            $"--group '{groupFilter}' did not match any configured section or discovered group. " +
-                            (report.ConfiguredSections.Count > 0
-                                ? $"Configured sections: {string.Join(", ", report.ConfiguredSections)}. "
-                                : "No sections configured. ") +
-                            $"Discovered groups: {string.Join(", ", report.Groups.Keys.OrderBy(k => k, StringComparer.Ordinal))}."));
+                            $"--group '{groupFilter}' is not a section of this solution. " +
+                            $"Sections (one per assembly): {string.Join(", ", report.ConfiguredSections)}."));
                     }
-                    else if (!present && configured)
+                    else if (!present)
                     {
                         report.Diagnostics.Add(new ScoreDiagnostic("warning", "group-empty",
-                            $"--group '{groupFilter}' is configured but matched no scored entries. " +
-                            "Likely causes: paths/symbols/namespaces in the config don't match the actual layout, " +
-                            "or every type in the section is unscored (e.g. pure DTOs that fail the data-carrier check)."));
+                            $"--group '{groupFilter}' is a section of this solution but scored no entries — " +
+                            "every type in that assembly is unscored (e.g. pure DTOs that fail the data-carrier check)."));
                     }
                 }
 
@@ -705,12 +701,9 @@ public static class SurfaceScoreCommand
             return;
         }
 
-        Console.WriteLine($"Configured sections ({report.ConfiguredSections.Count}):");
-        if (report.ConfiguredSections.Count == 0)
-            Console.WriteLine("  (none — using namespace-fallback grouping)");
-        else
-            foreach (var s in report.ConfiguredSections)
-                Console.WriteLine($"  {s}");
+        Console.WriteLine($"Sections ({report.ConfiguredSections.Count}, one per assembly):");
+        foreach (var s in report.ConfiguredSections)
+            Console.WriteLine($"  {s}");
 
         Console.WriteLine();
         Console.WriteLine($"Discovered groups ({report.Groups.Count}):");
