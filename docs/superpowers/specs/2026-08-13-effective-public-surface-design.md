@@ -72,6 +72,22 @@ So the gate follows what a rule charges for:
 `crossSectionRepository`, `writeCapableInterfaceUsedReadOnly`, `crossSectionWriteSurface`,
 `duplicateDbSetOwner`, `diRegistration`.
 
+## Conservation anchors
+
+The Plan C gate holds a refactor to per-section anchors, diffing interface method names between
+baseline and now. Anchors therefore have to track the same thing the score does: an internal
+interface in the anchor set makes a later deletion of one of its methods read as
+`capability-evaporation`, for surface that scores zero and no consumer can reach.
+
+Filtered at the construction site in `SectionShapeAnalyzer` (exported interfaces, and exported
+methods within them) rather than in `BuildConservationAnchors`, because `InterfaceAnchor` carries no
+symbol to test. `InterfaceAnchors` has exactly one consumer, so the section-shape view is unaffected;
+`SectionShape.ReadServiceInterfaces` / `FullServiceInterfaces` and the `missing*` computation keep
+reading the unfiltered lists.
+
+On Humans: 125 -> 90 anchors, 816 -> 477 anchor methods. 42% of what the gate policed was
+unreachable internal surface. No score movement.
+
 ## Deliberately unchanged
 
 - **Private types stay out of the corpus.** `ClassifyAsync` still skips

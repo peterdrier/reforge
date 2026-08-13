@@ -33,6 +33,13 @@ decoupling win — was invisible.
   another section's repository still forces the assembly reference and still calls across the
   boundary — gating those would have made coupling free and recreated the exact gaming this change
   exists to close, one rule family over.
+- **Conservation anchors track exported surface only.** The Plan C gate diffs interface method
+  names between baseline and now, so an internal interface in the anchor set meant deleting one of
+  its methods later read as capability evaporation — for surface that scores zero and no consumer
+  can reach. Anchors now cover exported interfaces and exported methods. On Humans that is
+  125 -> 90 anchors and 816 -> 477 anchor methods: 42% of what the gate policed was unreachable.
+  `SectionShape.ReadServiceInterfaces` / `FullServiceInterfaces` and the `missing*` rules still see
+  the unfiltered lists, so shape detection and the section-shape view are unchanged.
 - **Every baseline from before v0.24.0 is incomparable.** Surface totals fall by construction, so a
   `--baseline` comparison against an older file reports a large fake improvement. Re-baseline
   deliberately. Output JSON shape is unchanged — only values move.
