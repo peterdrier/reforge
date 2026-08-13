@@ -43,7 +43,10 @@ public class SampleSolutionFixture : IAsyncLifetime
         var dir = new DirectoryInfo(start);
         while (dir != null)
         {
-            if (dir.GetDirectories(".git").Length > 0)
+            // In a linked worktree `.git` is a FILE pointing at the real git dir, not a directory.
+            // Accepting only the directory form walks past the worktree root and silently tests
+            // the main checkout's sample solution instead of this one's.
+            if (dir.GetDirectories(".git").Length > 0 || File.Exists(Path.Combine(dir.FullName, ".git")))
                 return dir.FullName;
             dir = dir.Parent;
         }

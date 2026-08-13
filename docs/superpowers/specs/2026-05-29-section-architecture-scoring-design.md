@@ -1,8 +1,37 @@
 # Section-Architecture Scoring - Design
 
 **Date:** 2026-05-29
-**Status:** Approved design, pending implementation plan
+**Status:** Implemented; Section 1 superseded by v0.23.0 (see "Amendment (v0.23.0)")
 **Target version:** v0.18.0
+
+> **Amendment (v0.23.0) — section membership is structural, not configured.**
+>
+> Everything below still holds except *how a type joins a section*. Sections are no longer
+> matched by config (interface lists -> path globs -> namespace prefixes -> symbol globs, with a
+> namespace fallback); a type belongs to the section of its **containing assembly**, with
+> `<X>.Contracts` folded into `<X>` and the solution-common prefix stripped for display.
+>
+> **This supersedes principle #2 for the grouping question specifically.** Assembly membership is
+> neither behavioral nor nominal: it is **structural and compiler-enforced**, which is strictly
+> stronger than both. Principle #2 exists because a nominal signal can be laundered by renaming —
+> and the symbol globs this replaces (`Admin*`) were exactly that. You cannot rename a type into
+> another assembly; moving it means changing the project file and the reference graph, which is a
+> real architectural act the compiler validates. Behavioral analysis remains the rule for
+> read-vs-mutation and projection-vs-primitive-read; it was never the right tool for "which
+> section owns this type", because ownership is a fact about the build, not about behavior.
+>
+> Consequences for the sections below:
+> - `SectionRule` keeps **policy only** — DTO anchors, `canonicalReadDtos`, `readShards`,
+>   `requires*Surface`, `grandfatheredDependencies`, `escapeHatchReadMethods`. Its matchers
+>   (`paths`/`namespaces`/`symbols`) and the `repositoryInterfaces`/`serviceInterfaces`/
+>   `readServiceInterfaces` sugar are deleted.
+> - `repoBacked` is derived from what the assembly **declares** (a repository interface or
+>   implementation, or a DbContext), never from a config list.
+> - Resource ownership (`duplicateDbSetOwner`) is the assembly of the `DbContext` declaring the
+>   `DbSet`; the `resources.dbSets.ownerByName` map is deleted.
+> - Every assembly-derived section is shaped, so the `missing*` and `crossSectionWriteSurface`
+>   rules fire with no config present. A section that has not been extracted from the monolith
+>   yet scores under the monolith's assembly — deliberately coarse until the split happens.
 
 ## Goal
 
@@ -53,6 +82,9 @@ parsers/builders/mappers - baseline-only catches the gaming case at the moment i
 
 ## Section 1 - Config: extend `SectionRule`
 
+*(v0.23.0: membership matchers removed — see the amendment above. The policy fields below are
+current.)*
+
 All conventions are *defaults*, overridable in `reforge.surface-score.json`. No domain
 literal enters the engine. New optional fields on `SectionRule`:
 
@@ -79,9 +111,8 @@ literal enters the engine. New optional fields on `SectionRule`:
 
 - **`CanonicalReadDtos`** (existing) remains the consolidation-target *set*.
   `primaryInfoDto`/`cacheDto` name the *specific* members the conservation gate watches.
-- **`repoBacked`** (inferred, not stored in config): a section is repo-backed when it owns
-  >=1 repository interface or implementation (via `RepositoryInterfaces` or a classified
-  `repositoryInterface`/`repositoryImplementation` resolved into the section).
+- **`repoBacked`** (inferred, not stored in config): a section is repo-backed when its assembly
+  declares >=1 classified `repositoryInterface`/`repositoryImplementation`, or a `DbContext`.
   `requiresReadSurface`, `requiresWriteSurface`, and `requiresPrimaryInfoDto` default to
   `repoBacked`; explicit config overrides.
 - **`cacheDto` inference** (best-effort, only when not configured): find a caching-decorator
@@ -95,7 +126,7 @@ literal enters the engine. New optional fields on `SectionRule`:
 ## Section 2 - `reforge section-shape` command (item 1)
 
 A *view*, not a score -> its own command. The engine's classification
-(`ResolveSection`/`Classify`/`BuildFullToReadPairs`) is factored into a shared
+(`Classify`/`BuildFullToReadPairs`, over assembly-derived sections) is factored into a shared
 `SectionShapeAnalyzer` so `surface-score` and `section-shape` run one classification pass.
 
 CLI: `reforge section-shape [--solution <path>] [--section <name>] [--config <path>] [--format compact|markdown|json]`.

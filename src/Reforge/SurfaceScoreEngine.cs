@@ -48,7 +48,11 @@ public sealed class ScoreReport
     /// so the JSON `build` object is always present. Populated by ScoreAsync.
     /// </summary>
     public BuildHealth BuildHealth { get; set; } = new(false, 0, 0, false);
-    /// <summary>Configured section names — used by --list-groups and the missing-section diagnostic.</summary>
+    /// <summary>
+    /// The solution's section names (one per analyzed assembly, <c>.Contracts</c> folded in) —
+    /// used by --list-groups and the missing-section diagnostic. Serialized as
+    /// <c>configuredSections</c> for downstream consumers.
+    /// </summary>
     public List<string> ConfiguredSections { get; } = new();
     /// <summary>
     /// Populated only when a <c>--baseline</c> is supplied. Each entry is a scope (solution or
@@ -108,10 +112,10 @@ public sealed record ConservationAnchor(
 
 /// <summary>
 /// Computes a Surface Score for a Roslyn <see cref="Solution"/> using the supplied
-/// <see cref="SurfaceScoreConfig"/>. The engine is intentionally generic: domain
-/// knowledge enters only through config (group rules, classifications, weights,
-/// DbSet ownership). Three scoring passes — durable surface, dependency use,
-/// internal shape — accumulate into a single per-group total.
+/// <see cref="SurfaceScoreConfig"/>. The engine is intentionally generic: sections come from
+/// the solution's assemblies, and the remaining domain knowledge (classifications, weights,
+/// per-section policy) enters only through config. Three scoring passes — durable surface,
+/// dependency use, internal shape — accumulate into a single per-group total.
 /// </summary>
 public sealed class SurfaceScoreEngine
 {
@@ -127,13 +131,30 @@ public sealed class SurfaceScoreEngine
     public async Task<ScoreReport> ScoreAsync(Solution solution, CancellationToken ct, int maxBuildDiagnostics = 25)
     {
         var report = new ScoreReport();
-        report.ConfiguredSections.AddRange(_config.EffectiveSections.Select(s => s.Name));
         var classified = (await SolutionClassifier.ClassifyAsync(solution, _config, _solutionDirectory, ct)).ToList();
         report.TypesAnalyzed = classified.Count;
+        report.ConfiguredSections.AddRange(classified
+            .Select(c => c.Group).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.Ordinal));
+
+        // Policy keyed to a section that no assembly produces is inert by design — but silently
+        // inert is a trap when config keys used to DEFINE the sections and now have to match
+        // assembly-derived names. Name them so a mis-keyed or stale block is visible instead of
+        // quietly dropping its DTO anchors, overrides, and grandfathered debt.
+        var unknownSections = _config.Sections.Keys
+            .Where(k => !report.ConfiguredSections.Contains(k, StringComparer.OrdinalIgnoreCase))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
+        if (unknownSections.Count > 0)
+            report.Diagnostics.Add(new ScoreDiagnostic("warning", "unknown-config-section",
+                $"Config section policy has no matching assembly and is ignored: {string.Join(", ", unknownSections)}. " +
+                $"Sections are assembly-derived; known sections are: {string.Join(", ", report.ConfiguredSections)}."));
 
         // Single canonical index — built once, used by both dependency-use and DI-registration
-        // passes. Safe under duplicate ToDisplayString because `classified` is already deduped.
-        var typesByDisplay = classified.ToDictionary(c => c.Type.ToDisplayString(), c => c, StringComparer.Ordinal);
+        // passes. Keyed by SolutionClassifier.TypeKey (declaring assembly + fully qualified name):
+        // the name alone is not unique across a solution, and collapsing two assemblies' identically
+        // named types would resolve a consumer into the wrong section.
+        var typesByDisplay = classified.ToDictionary(
+            c => SolutionClassifier.TypeKey(c.Type), c => c, StringComparer.Ordinal);
 
         // Section architecture (Plan B): resolve each configured section's shape once. Used to
         // score the five section rules and to emit conservation anchors. Computed before Pass 5
@@ -373,7 +394,7 @@ public sealed class SurfaceScoreEngine
                 if (ctor.IsImplicitlyDeclared) continue;
                 foreach (var param in ctor.Parameters)
                 {
-                    var depDisplay = param.Type.ToDisplayString();
+                    var depDisplay = SolutionClassifier.TypeKey(param.Type);
                     if (!typesByDisplay.TryGetValue(depDisplay, out var dep)) continue;
 
                     // Same-group dependencies don't cost anything (or are zero-weighted).
@@ -521,12 +542,20 @@ public sealed class SurfaceScoreEngine
         var entityWeight = _config.Weight("methodReturnsEntityAcrossSection");
         if (canonicalWeight == 0 && entityWeight == 0) return;
 
-        // Index canonical DTO names across all sections — a Tickets method returning Users's
-        // canonical DTO still earns the credit.
+        // Index canonical DTO names across all LIVE sections — a Tickets method returning Users's
+        // canonical DTO still earns the credit, but a policy block keyed to an assembly that no
+        // longer exists must be inert. Canonical names apply globally, so importing them from a
+        // stale key would let a deleted or renamed section keep silently granting credit and
+        // suppressing the entity penalty solution-wide.
+        var liveSections = new HashSet<string>(
+            classified.Select(c => c.Group), StringComparer.OrdinalIgnoreCase);
         var canonicalNames = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var s in _config.EffectiveSections)
-            foreach (var n in s.CanonicalReadDtos)
+        foreach (var (section, rule) in _config.Sections)
+        {
+            if (!liveSections.Contains(section)) continue;
+            foreach (var n in rule.CanonicalReadDtos)
                 canonicalNames.Add(n);
+        }
 
         foreach (var c in classified)
         {
@@ -560,7 +589,7 @@ public sealed class SurfaceScoreEngine
                 }
 
                 if (entityWeight == 0) continue;
-                if (!typesByDisplay.TryGetValue(named.ToDisplayString(), out var returnTypeInfo)) continue;
+                if (!typesByDisplay.TryGetValue(SolutionClassifier.TypeKey(named), out var returnTypeInfo)) continue;
                 if (!returnTypeInfo.Tags.Contains("entity")) continue;
                 if (string.Equals(returnTypeInfo.Group, c.Group, StringComparison.OrdinalIgnoreCase)) continue;
 
@@ -646,7 +675,7 @@ public sealed class SurfaceScoreEngine
                 if (ctor.IsImplicitlyDeclared) continue;
                 foreach (var p in ctor.Parameters)
                 {
-                    var d = p.Type.ToDisplayString();
+                    var d = SolutionClassifier.TypeKey(p.Type);
                     if (fullByDisplay.Contains(d))
                         injectedFulls.Add((d, p));
                 }
@@ -680,7 +709,7 @@ public sealed class SurfaceScoreEngine
                         // both `_dep.Foo()` and `dep.Foo()` (constructor-only stash).
                         var receiverType = model.GetTypeInfo(ma.Expression).Type;
                         if (receiverType is null) continue;
-                        if (!string.Equals(receiverType.ToDisplayString(), fullDisplay, StringComparison.Ordinal))
+                        if (!string.Equals(SolutionClassifier.TypeKey(receiverType), fullDisplay, StringComparison.Ordinal))
                             continue;
 
                         var methodName = ma.Name.Identifier.Text;
@@ -727,7 +756,10 @@ public sealed class SurfaceScoreEngine
             c.Type.TypeKind == TypeKind.Interface && c.Tags.Contains("readServiceInterface")).ToList();
         if (fullInterfaces.Count == 0 || readInterfaces.Count == 0) return pairs;
 
-        var readByDisplay = readInterfaces.ToDictionary(r => r.Type.ToDisplayString(), r => r, StringComparer.Ordinal);
+        // Keyed by TypeKey for the same reason as typesByDisplay: a display name is unique per
+        // assembly, not solution-wide.
+        var readByDisplay = readInterfaces.ToDictionary(
+            r => SolutionClassifier.TypeKey(r.Type), r => r, StringComparer.Ordinal);
         var readByNameInNamespace = readInterfaces.ToLookup(
             r => $"{r.Type.ContainingNamespace?.ToDisplayString()}|{r.Type.Name}",
             StringComparer.Ordinal);
@@ -736,10 +768,10 @@ public sealed class SurfaceScoreEngine
         {
             // Strategy 1: direct inheritance. The full interface lists the read interface as a base.
             var inheritedRead = full.Type.Interfaces.FirstOrDefault(i =>
-                readByDisplay.ContainsKey(i.ToDisplayString()));
+                readByDisplay.ContainsKey(SolutionClassifier.TypeKey(i)));
             if (inheritedRead is not null)
             {
-                pairs[full.Type.ToDisplayString()] = readByDisplay[inheritedRead.ToDisplayString()];
+                pairs[SolutionClassifier.TypeKey(full.Type)] = readByDisplay[SolutionClassifier.TypeKey(inheritedRead)];
                 continue;
             }
 
@@ -751,7 +783,7 @@ public sealed class SurfaceScoreEngine
             var sibling = readByNameInNamespace[siblingKey].FirstOrDefault();
             if (sibling is not null)
             {
-                pairs[full.Type.ToDisplayString()] = sibling;
+                pairs[SolutionClassifier.TypeKey(full.Type)] = sibling;
             }
         }
 
@@ -760,18 +792,24 @@ public sealed class SurfaceScoreEngine
 
     // ---------------- Cross-cutting: duplicate DbSet owners ----------------
 
+    /// <summary>
+    /// A table belongs to the section that declares its <c>DbSet</c> — i.e. the section of the
+    /// declaring <c>DbContext</c>'s assembly. Any class in another section that reads or writes
+    /// that DbSet is a second owner. Ownership is read off the model, never off a config map, so
+    /// it cannot drift; when a section extracts its own context the ownership moves with it.
+    /// </summary>
     private void ScoreDuplicateDbSetOwners(
         List<ClassifiedType> classified,
         Solution solution,
         ScoreReport report,
         CancellationToken ct)
     {
-        var ownerMap = _config.Resources.DbSets.OwnerByName;
+        var weight = _config.Weight("duplicateDbSetOwner");
+        if (weight == 0) return;
+
+        var ownerMap = DbSetOwnersByDeclaringContext(classified);
         if (ownerMap.Count == 0) return;
 
-        // For each repository implementation, collect which DbSets it touches, then flag
-        // any DbSet read or written by a class outside the configured owning group.
-        var weight = _config.Weight("duplicateDbSetOwner");
         var alreadyReported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var c in classified)
@@ -799,6 +837,40 @@ public sealed class SurfaceScoreEngine
                 report.DuplicateOwners.Add($"{c.Type.ToDisplayString()} touches {dbSet} (owner: {owner})");
             }
         }
+    }
+
+    /// <summary>
+    /// DbSet property name -> owning section, derived from every source-declared DbContext. When
+    /// two contexts in different sections expose the same DbSet name the table has no single owner,
+    /// so it is dropped rather than attributed to whichever context was enumerated first.
+    /// </summary>
+    private static Dictionary<string, string> DbSetOwnersByDeclaringContext(List<ClassifiedType> classified)
+    {
+        var owners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var contested = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var c in classified)
+        {
+            if (c.Type.TypeKind != TypeKind.Class) continue;
+            if (!DbContextAnalyzer.IsDbContextType(c.Type)) continue;
+
+            foreach (var member in c.Type.GetMembers())
+            {
+                if (member is not IPropertySymbol prop) continue;
+                if (!DbContextAnalyzer.IsDbSetType(prop.Type)) continue;
+
+                if (owners.TryGetValue(prop.Name, out var existing)
+                    && !string.Equals(existing, c.Group, StringComparison.OrdinalIgnoreCase))
+                {
+                    contested.Add(prop.Name);
+                    continue;
+                }
+                owners[prop.Name] = c.Group;
+            }
+        }
+
+        foreach (var name in contested) owners.Remove(name);
+        return owners;
     }
 
     private async Task ScoreDiRegistrationsAsync(
@@ -1043,8 +1115,8 @@ public sealed class SurfaceScoreEngine
     /// <summary>
     /// Scores the section shapes onto the surface axis: the <c>readSurfaceProjectionMethod</c>
     /// surcharge for charged read methods, the repo-backed <c>missing*</c> rules, and the
-    /// cross-section <c>crossSectionWriteSurface</c> rule. Only configured sections produce shapes,
-    /// so default-config runs (no sections) add nothing here.
+    /// cross-section <c>crossSectionWriteSurface</c> rule. Every assembly-derived section is
+    /// shaped, so these rules fire with or without a config file.
     /// </summary>
     private void ScoreSectionArchitecture(SectionArchitecture arch, ScoreReport report)
     {
@@ -1222,7 +1294,7 @@ public sealed class SurfaceScoreEngine
 
         foreach (var u in usage.Values)
         {
-            if (!typesByDisplay.TryGetValue(u.Type.ToDisplayString(), out var c)) continue;
+            if (!typesByDisplay.TryGetValue(SolutionClassifier.TypeKey(u.Type), out var c)) continue;
             var t = u.Type;
 
             int dataMembers = BoundaryInput.DataMemberCount(t);
@@ -1285,7 +1357,7 @@ public sealed class SurfaceScoreEngine
                         if (!BoundaryInput.IsBoundaryName(t.Name)) continue;
                         int count = Math.Max(oc.ArgumentList?.Arguments.Count ?? 0, oc.Initializer?.Expressions.Count ?? 0);
                         if (count < 4) continue;
-                        var key = t.ToDisplayString();
+                        var key = SolutionClassifier.TypeKey(t);
                         siteCountByType[key] = siteCountByType.GetValueOrDefault(key) + 1;
                     }
                 }

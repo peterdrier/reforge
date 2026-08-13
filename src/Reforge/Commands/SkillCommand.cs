@@ -74,48 +74,46 @@ public static class SkillCommand
 
         ### Surface score config — `reforge.surface-score.json`
 
-        `surface-score` is fully config-driven. The file is searched for upward from the
-        solution directory; with no file present the command falls back to namespace-based
-        grouping and conventional name-pattern classifications, which is enough to score
-        any solution but won't reflect project-specific section boundaries or DbSet ownership.
+        **Sections are assemblies, not config.** A type belongs to the section of its containing
+        assembly: `App.Tickets` and `App.Tickets.Contracts` are both section `Tickets` (the
+        `.Contracts` assembly folds into its parent, and the dot-segment prefix shared by every
+        assembly is stripped for display). Test projects are excluded. Nothing to author, nothing
+        to keep in sync — the compiler enforces it.
 
-        **Schema** (all sections are optional — unspecified keys inherit the built-in defaults):
+        The config file is optional, searched for upward from the solution directory, and carries
+        policy only. With no file present the built-in name-pattern classifications and default
+        weights still produce a full score.
+
+        **Schema** (every key is optional — unspecified keys inherit the built-in defaults):
 
         ```jsonc
         {
-          // Sections — preferred form. Keyed by section name. A type joins the first section
-          // whose ANY criterion matches: paths, namespaces, symbols (name globs), or one of the
-          // three interface-name lists (which also auto-classify the named types so you don't
-          // have to write a separate classification entry).
-          //
-          // If no section matches and no sections are configured at all, types fall back to
-          // grouping by top-level namespace segment.
+          // Per-section policy, keyed by the assembly-derived section name. These are the facts
+          // the assembly graph can't state; membership is NOT among them.
           "sections": {
             "Tickets": {
-              "paths":      ["src/App.Application/Services/Tickets/**", "src/App.Web/Controllers/Tickets/**"],
-              "namespaces": ["App.Application.Tickets"],
-              "symbols":    ["Ticket*", "ITicket*"],
-              "repositoryInterfaces": ["ITicketRepository", "ITicketTransferRepository"],
-              "serviceInterfaces":    ["ITicketService", "ITicketingBudgetService"],
-              "readServiceInterfaces": ["ITicketServiceRead"],
               // Section-blessed read DTOs. Returning one of these from a public method earns
               // the `canonicalReadDtoReturn` credit (negative weight). Canonical DTOs are
               // also exempt from the `methodReturnsEntityAcrossSection` penalty.
-              "canonicalReadDtos": ["TicketOrderInfo", "TicketingBudgetInfo"]
+              "canonicalReadDtos": ["TicketOrderInfo", "TicketingBudgetInfo"],
+              "primaryInfoDto":   "TicketOrderInfo",   // default convention: "<Section>Info"
+              "settingsInfoDto":  "TicketSettingsInfo",// default convention: "<Section>SettingsInfo"
+              "cacheDto":         "TicketOrderInfo",   // default: primaryInfoDto, else inferred from a caching decorator
+              "readShards": [ { "name": "TicketsByEvent", "purpose": "event-scoped read model" } ],
+              // Surface expectations. Null/omitted = inferred from repo-backed (the assembly
+              // declares a repository or a DbContext).
+              "requiresReadSurface": null,
+              "requiresWriteSurface": null,
+              "requiresPrimaryInfoDto": null,
+              // Visible debt: exempt from the penalty, always rendered by `section-shape`.
+              "grandfatheredDependencies": [
+                { "dependency": "PlacementService->ITicketService", "reason": "legacy write path", "since": "2026-03", "owner": "tickets" }
+              ],
+              "escapeHatchReadMethods": [
+                { "method": "ITicketServiceRead.MigrateLegacy*", "reason": "one-shot", "since": "2026-02" }
+              ]
             }
           },
-
-          // Legacy ordered form (0.10–0.11 compatibility). Merged into `sections` at load time.
-          // Prefer `sections` for new configs.
-          "groups": [
-            {
-              "name": "Tickets",
-              "match": {
-                "paths":      ["src/App.Application/**/Tickets/**"],
-                "namespaces": ["App.Application.Tickets"]
-              }
-            }
-          ],
 
           // Classifications tag types. A type may receive multiple tags; precedence handled by
           // the engine (e.g. on interfaces, repository/read-service tags override fullService).
@@ -139,17 +137,10 @@ public static class SkillCommand
             "repositoryInterface":  { "namePatterns": ["I*Repository"], "inherits": ["IRepository"] }
           },
 
-          // Resource ownership — currently DbSets. Each DbSet property name maps to the group
-          // that owns it. Any read OR write of that DbSet from a class outside the owning group
-          // contributes `duplicateDbSetOwner` points to the offending class's group.
-          "resources": {
-            "dbSets": {
-              "ownerByName": {
-                "TicketOrders": "Tickets",
-                "ShiftSignups": "Shifts"
-              }
-            }
-          },
+          // Resource ownership is DERIVED, not configured: a DbSet belongs to the section of the
+          // DbContext that declares it. Any read OR write of that DbSet from a class outside the
+          // owning section contributes `duplicateDbSetOwner` points to the offending class's
+          // section. (Set the weight to 0 to disable the rule.)
 
           // Weights — every value here overrides the built-in default. Setting a weight to 0
           // disables that rule. Full list of rule keys (group: durable / dependency / shape):
@@ -164,7 +155,7 @@ public static class SkillCommand
           //   canonicalReadDtoReturn (-3, credit when a method returns a section's canonical DTO),
           //   methodReturnsEntityAcrossSection (15, method returns a domain entity from a different section)
           //
-          // Dependency use (constructor injection across configured groups):
+          // Dependency use (constructor injection across sections):
           //   sameSectionReadService (0), crossSectionReadInterface (2),
           //   crossSectionFullService (8), crossSectionRepository (25),
           //   writeCapableInterfaceUsedReadOnly (12, full-service interface paired with a read
@@ -185,14 +176,14 @@ public static class SkillCommand
 
         **Authoring guidance for agents:**
 
-        1. **Start with `groups`.** Identify the project's section boundaries (usually by folder
-           or namespace). If you can't tell, omit `groups` entirely — the namespace fallback is
-           often good enough for an initial pass.
+        1. **Start with no config at all.** Sections come from the assemblies; run
+           `reforge surface-score --list-groups` to see them. Add a `sections` entry only for a
+           section whose canonical DTOs or surface expectations you actually need to state.
         2. **Only override `classifications` if the project uses non-default name patterns.** The
            built-in defaults already match `I*Repository`, `I*Service`, `*Dto`, `*Controller`, etc.
-        3. **Populate `resources.dbSets.ownerByName` from the DbContext.** Every `DbSet<T>` property
-           on the project's `DbContext` is a candidate key; map each to its owning group. Without
-           this map, the `duplicateDbSetOwner` rule produces no findings.
+        3. **A section that hasn't been extracted into its own assembly scores under whichever
+           assembly holds it** (`Application`, `Web`, …). That's coarse on purpose; per-section
+           numbers appear the moment the section becomes a project.
         4. **Weights are project-policy.** Defaults reflect a "repositories are expensive,
            cross-section calls are costly" architecture. Adjust to match how heavily the project
            penalises each pattern.

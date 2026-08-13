@@ -40,6 +40,39 @@ Every reference is found via the compiler's semantic model — including referen
 | `reforge audit-surface <type>` | Per-method inbound view: caller counts (prod/test) + body shape for classes (passthrough-repo/-service/-self, linq-over-repo/-service, write, composite, complex) |
 | `reforge audit-downstream <class>` | Per-method outbound view: dependency calls, DbSet reads/writes traced one hop through repository implementations with `via` attribution, untraced repo-to-repo hops, and external IO |
 
+## Surface Score
+
+`reforge surface-score` scores a solution's durable public surface (and, on a separate axis, the
+implementation complexity hiding behind it), grouped by **section**.
+
+**A section is an assembly.** There is nothing to configure: every non-test project is a section,
+`<X>.Contracts` folds into `<X>`, and the dot-segment prefix shared by all of them is stripped for
+display — `Humans.Store` + `Humans.Store.Contracts` both report as `Store`. Assembly membership is
+structural and compiler-enforced, so it can't drift from the solution the way a path/namespace/symbol
+glob does. A monolith that hasn't been split yet simply scores under its own assembly name until it is.
+
+`reforge.surface-score.json` (searched upward from the solution) is optional and carries **policy
+only**:
+
+```jsonc
+{
+  "sections": {                    // keyed by section name, i.e. the assembly
+    "Store": {
+      "primaryInfoDto": "StoreInfo",          // default convention: "<Section>Info"
+      "canonicalReadDtos": ["StoreInfo"],
+      "requiresReadSurface": null,            // default: inferred from repo-backed
+      "grandfatheredDependencies": [ /* visible debt, exempt but always reported */ ],
+      "escapeHatchReadMethods":  [ /* visible debt, exempt but always reported */ ]
+    }
+  },
+  "classifications": { /* name/path/attribute patterns -> role tags */ },
+  "weights":         { /* per-rule points; 0 disables a rule */ }
+}
+```
+
+`reforge section-shape` renders the same sections as a report (interfaces, DTO anchors,
+cross-section use, missing surfaces, visible debt, advisories).
+
 ## Install
 
 Requires [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).

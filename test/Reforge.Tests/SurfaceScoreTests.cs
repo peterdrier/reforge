@@ -15,7 +15,7 @@ public class SurfaceScoreTests
     // ---------------- Config loading ----------------
 
     [Fact]
-    public void LoadOrDefault_NoFile_ReturnsDefaultsWithNamespaceFallback()
+    public void LoadOrDefault_NoFile_ReturnsDefaults()
     {
         var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-no-file");
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
@@ -24,14 +24,13 @@ public class SurfaceScoreTests
         var cfg = SurfaceScoreConfig.LoadOrDefault(null, dir, out var loadedFrom);
 
         Assert.Null(loadedFrom);
-        Assert.Empty(cfg.EffectiveSections);
-        Assert.True(cfg.GroupByNamespaceFallback);
-        Assert.NotEmpty(cfg.Classifications); // defaults present
+        Assert.Empty(cfg.Sections);            // sections are assemblies; config carries policy only
+        Assert.NotEmpty(cfg.Classifications);  // defaults present
         Assert.NotEmpty(cfg.Weights);          // defaults present
     }
 
     [Fact]
-    public void LoadOrDefault_ParsesSectionsBlock()
+    public void LoadOrDefault_ParsesSectionPolicy()
     {
         var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-sections");
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
@@ -41,13 +40,11 @@ public class SurfaceScoreTests
             {
               "sections": {
                 "Users": {
-                  "paths": ["**/SampleSolution.Services/User*.cs"],
-                  "symbols": ["IUser*"],
-                  "repositoryInterfaces": ["IUserRepository"],
-                  "serviceInterfaces": ["IUserService"]
+                  "primaryInfoDto": "UserInfo",
+                  "canonicalReadDtos": ["UserInfo"]
                 },
                 "Orders": {
-                  "symbols": ["Order*", "IOrder*"]
+                  "requiresReadSurface": false
                 }
               }
             }
@@ -56,160 +53,105 @@ public class SurfaceScoreTests
         var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out var loadedFrom);
 
         Assert.Equal(configPath, loadedFrom);
-        Assert.Equal(2, cfg.EffectiveSections.Count);
-
-        var users = cfg.EffectiveSections.Single(s => s.Name == "Users");
-        Assert.Contains("**/SampleSolution.Services/User*.cs", users.Paths);
-        Assert.Contains("IUser*", users.Symbols);
-        Assert.Contains("IUserRepository", users.RepositoryInterfaces);
-        Assert.Contains("IUserService", users.ServiceInterfaces);
-
-        var orders = cfg.EffectiveSections.Single(s => s.Name == "Orders");
-        Assert.Contains("Order*", orders.Symbols);
-        Assert.False(cfg.GroupByNamespaceFallback); // sections present -> fallback off
+        Assert.Equal("UserInfo", cfg.Policy("Users").PrimaryInfoDto);
+        Assert.Contains("UserInfo", cfg.Policy("Users").CanonicalReadDtos);
+        Assert.False(cfg.Policy("Orders").RequiresReadSurface);
+        // A section with no policy block still resolves — to the shared empty policy.
+        Assert.Same(SectionRule.None, cfg.Policy("Nope"));
     }
 
     [Fact]
-    public void LoadOrDefault_LegacyGroupsBlockStillWorks()
+    public void LoadOrDefault_PolicyKeys_MatchSectionNamesCaseInsensitively()
     {
+        // System.Text.Json assigns new dictionaries through the setters, dropping the
+        // OrdinalIgnoreCase comparers from the field initializers. Section names are now derived
+        // from assembly names, so a hand-written "camp" key has to reach the derived "Camp".
+        var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-case");
+        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "reforge.surface-score.json");
+        File.WriteAllText(configPath, """
+            {
+              "sections": { "camp": { "primaryInfoDto": "CampInfo" } },
+              "weights": { "CROSSSECTIONFULLSERVICE": 7 },
+              "classifications": { "ENTITY": { "namePatterns": ["Zzz$"] } }
+            }
+            """);
+
+        var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
+
+        Assert.Equal("CampInfo", cfg.Policy("Camp").PrimaryInfoDto);
+        Assert.Equal(7, cfg.Weight("crossSectionFullService"));
+        // The case-variant override must REPLACE the default, not sit beside it as a second entry.
+        Assert.Single(cfg.Classifications, c => string.Equals(c.Key, "entity", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void LoadOrDefault_RetiredMatcherKeys_AreIgnoredNotFatal()
+    {
+        // v0.22 and earlier described section membership with paths/namespaces/symbols and a
+        // legacy `groups` array. Those keys are gone; a stale config must still load (the section
+        // simply groups by assembly now) rather than throwing on the way in.
         var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-legacy");
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
         Directory.CreateDirectory(dir);
         var configPath = Path.Combine(dir, "reforge.surface-score.json");
         File.WriteAllText(configPath, """
             {
-              "groups": [
-                { "name": "Legacy", "match": { "paths": ["**/Legacy/**"] } }
-              ]
+              "groups": [ { "name": "Legacy", "match": { "paths": ["**/Legacy/**"] } } ],
+              "resources": { "dbSets": { "ownerByName": { "Users": "Legacy" } } },
+              "sections": {
+                "Users": {
+                  "paths": ["**/SampleSolution.Services/User*.cs"],
+                  "symbols": ["IUser*"],
+                  "repositoryInterfaces": ["IUserRepository"],
+                  "primaryInfoDto": "UserInfo"
+                }
+              }
             }
             """);
 
         var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
 
-        Assert.Single(cfg.EffectiveSections);
-        Assert.Equal("Legacy", cfg.EffectiveSections[0].Name);
-        Assert.Contains("**/Legacy/**", cfg.EffectiveSections[0].Paths);
+        Assert.Equal("UserInfo", cfg.Policy("Users").PrimaryInfoDto);  // policy survives
+        Assert.Single(cfg.Sections);
     }
 
     // ---------------- Engine behavior ----------------
 
     [Fact]
-    public async Task NamespaceFallback_ProducesGroupsWithoutConfig()
+    public async Task Grouping_IsByAssembly_WithoutAnyConfig()
     {
-        var cfg = SurfaceScoreConfig.Default();
-        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+        var report = await ScoreDefaultAsync();
 
-        // Without any config the namespace heuristic must produce at least one group.
-        // The exact name depends on the sample solution's namespace shape, but it must
-        // be non-empty and non-empty-named.
-        Assert.NotEmpty(report.Groups);
-        Assert.All(report.Groups.Keys, k => Assert.False(string.IsNullOrWhiteSpace(k)));
+        // One section per non-test assembly, ".Contracts" folded into its parent.
+        Assert.Equal(
+            new[] { "Camp", "Core", "Dorm", "Lodge", "Reporting", "Services", "Tent", "Web" },
+            report.ConfiguredSections.ToArray());
+        Assert.All(report.Groups.Keys, k => Assert.Contains(k, report.ConfiguredSections));
     }
 
     [Fact]
-    public async Task Section_ByPaths_AssignsMatchingTypesToSection()
+    public async Task ContractsAssembly_ScoresIntoItsParentSection()
     {
-        var cfg = new SurfaceScoreConfig();
-        cfg.Sections["Users"] = new SectionRule
-        {
-            Paths = { "**/SampleSolution.Services/User*.cs", "**/SampleSolution.Services/Cached*.cs" }
-        };
-        // Keep classification defaults so anything is actually scored.
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Classifications)
-            cfg.Classifications.TryAdd(k, v);
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Weights)
-            cfg.Weights.TryAdd(k, v);
-        cfg.BuildEffectiveSections();
+        var report = await ScoreDefaultAsync();
 
-        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
-
-        Assert.True(report.Groups.ContainsKey("Users"),
-            $"Expected 'Users' section. Got: {string.Join(", ", report.Groups.Keys)}");
-
-        // Every entry in the Users section must be from a file matched by the configured paths.
-        var users = report.Groups["Users"];
-        Assert.NotEmpty(users.Entries);
-        Assert.All(users.Entries, e =>
-            Assert.True(
-                e.File.Contains("/User", StringComparison.Ordinal) ||
-                e.File.Contains("/Cached", StringComparison.Ordinal),
-                $"Entry from unexpected file: {e.File}"));
+        // ICampServiceRead lives in SampleSolution.Camp.Contracts; its methods must be charged
+        // to Camp, and no "Camp.Contracts" group may exist.
+        Assert.DoesNotContain(report.Groups.Keys, k => k.Contains("Contracts", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(report.Groups["Camp"].Entries,
+            e => e.Rule == "readServiceInterfaceMethod" && e.Symbol == "GetByIdAsync");
     }
 
     [Fact]
-    public async Task Section_BySymbols_AssignsByNamePattern()
+    public async Task CrossSectionRepository_FiresAcrossAnAssemblyBoundary()
     {
-        var cfg = new SurfaceScoreConfig();
-        cfg.Sections["Orders"] = new SectionRule
-        {
-            Symbols = { "Order*", "IOrder*" }
-        };
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Classifications)
-            cfg.Classifications.TryAdd(k, v);
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Weights)
-            cfg.Weights.TryAdd(k, v);
-        cfg.BuildEffectiveSections();
+        // UserService (SampleSolution.Services) injects IUserRepository (SampleSolution.Core).
+        var report = await ScoreDefaultAsync();
 
-        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
-
-        Assert.True(report.Groups.ContainsKey("Orders"),
-            $"Expected 'Orders' section. Got: {string.Join(", ", report.Groups.Keys)}");
-
-        // Every scored entry should be from a type whose simple name starts with Order or IOrder
-        // (we can only check this via the entry's Symbol since we don't carry full type names).
-        var orders = report.Groups["Orders"];
-        Assert.NotEmpty(orders.Entries);
-        Assert.All(orders.Entries, e =>
-        {
-            // Entries reference symbol names — those may be members rather than types, so the
-            // strongest check we can make at this layer is that the file path participates in
-            // the section (the engine pins entries to their declaring type's section, and the
-            // type matched Order*/IOrder*).
-            Assert.NotNull(e.Symbol);
-        });
-    }
-
-    [Fact]
-    public async Task Section_RepositoryInterfaces_AutoClassifiesAndIsCrossSection()
-    {
-        // Two sections: Users (claims IUserRepository) and Orders (claims IOrderRepository).
-        // Then UserService — which depends on IUserRepository via constructor — should NOT
-        // produce a crossSectionRepository entry against itself (same section),
-        // but OrderService — which depends on IOrderRepository AND lives in Users by namespace
-        // fallback — should not be the test target because services live in the same project.
-        // Instead, build an asymmetric setup where the service is in one section and the
-        // repository it injects is in another.
-        var cfg = new SurfaceScoreConfig();
-        cfg.Sections["RepoSection"] = new SectionRule
-        {
-            RepositoryInterfaces = { "IUserRepository", "IOrderRepository", "IAuditLogRepository" }
-        };
-        cfg.Sections["ServiceSection"] = new SectionRule
-        {
-            // Pull every Service into a different section. UserService injects IUserRepository
-            // which lives in RepoSection — that's the cross-section dependency we want to assert on.
-            Symbols = { "*Service" }
-        };
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Classifications)
-            cfg.Classifications.TryAdd(k, v);
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Weights)
-            cfg.Weights.TryAdd(k, v);
-        cfg.BuildEffectiveSections();
-
-        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
-
-        Assert.True(report.Groups.ContainsKey("ServiceSection"),
-            $"Expected ServiceSection. Got: {string.Join(", ", report.Groups.Keys)}");
-
-        // ServiceSection should have at least one crossSectionRepository entry (UserService
-        // injecting IUserRepository, which is owned by RepoSection).
-        var services = report.Groups["ServiceSection"];
-        var crossRepo = services.Entries.Where(e => e.Rule == "crossSectionRepository").ToList();
+        var crossRepo = report.Groups["Services"].Entries.Where(e => e.Rule == "crossSectionRepository").ToList();
         Assert.NotEmpty(crossRepo);
+        Assert.Contains(crossRepo, e => e.Detail is not null && e.Detail.Contains("IUserRepository", StringComparison.Ordinal));
     }
 
     // ---------------- Diagnostic ----------------
@@ -217,20 +159,48 @@ public class SurfaceScoreTests
     [Fact]
     public async Task MissingGroup_ProducesDiagnostic_WhenNothingMatches()
     {
-        var cfg = SurfaceScoreConfig.Default();
-        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+        var report = await ScoreDefaultAsync();
 
         // Simulate the command-layer diagnostic — the engine itself doesn't add it, the command
         // wrapper does. Replicate the check here so the assertion lives near the rule.
         const string requested = "TotallyMadeUpSection";
-        var present = report.Groups.ContainsKey(requested);
-        var configured = cfg.HasConfiguredSection(requested);
+        Assert.False(report.Groups.ContainsKey(requested));
+        Assert.DoesNotContain(requested, report.ConfiguredSections);
+        // The contract: when both are false, the command emits a "group-not-found" diagnostic
+        // listing report.ConfiguredSections (the solution's assemblies).
+    }
 
-        Assert.False(present);
-        Assert.False(configured);
-        // The contract: when both are false, the command emits a "group-not-found" diagnostic.
-        // We verify the contract is reachable here; the WriteCompact tests would cover formatting.
+    // ---------------- Stale config section policy ----------------
+
+    [Fact]
+    public async Task ScoreAsync_StaleSectionPolicy_IsInertAndReported()
+    {
+        // A policy block keyed to an assembly that no longer exists must not reach into scoring.
+        // canonicalReadDtos apply solution-wide, so importing them from a dead key would let a
+        // deleted section keep granting canonicalReadDtoReturn credit and suppressing the
+        // entity penalty everywhere — silently changing current scores.
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Sections["GhostSectionThatNoAssemblyProduces"] = new SectionRule
+        {
+            CanonicalReadDtos = new() { "UserDto" }
+        };
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        var diagnostic = Assert.Single(report.Diagnostics, d => d.Code == "unknown-config-section");
+        Assert.Contains("GhostSectionThatNoAssemblyProduces", diagnostic.Message);
+        Assert.DoesNotContain("GhostSectionThatNoAssemblyProduces", report.ConfiguredSections);
+    }
+
+    [Fact]
+    public async Task ScoreAsync_LiveSectionPolicy_IsNotReportedAsUnknown()
+    {
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Sections["Camp"] = new SectionRule { PrimaryInfoDto = "CampInfo" };
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        Assert.DoesNotContain(report.Diagnostics, d => d.Code == "unknown-config-section");
     }
 
     // ---------------- Rule glossary ----------------
@@ -311,26 +281,15 @@ public class SurfaceScoreTests
     [Fact]
     public async Task CanonicalReadDto_ReturnTypeCredits()
     {
-        // Mark "User" as the canonical DTO for a "Users" section. The Users section is
-        // claimed by symbol pattern so it includes UserService — whose public Get methods
-        // return User, which should now earn the credit.
-        var cfg = new SurfaceScoreConfig();
-        cfg.Sections["Users"] = new SectionRule
-        {
-            Symbols = { "User*", "IUser*" },
-            CanonicalReadDtos = { "User" }
-        };
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Classifications)
-            cfg.Classifications.TryAdd(k, v);
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Weights)
-            cfg.Weights.TryAdd(k, v);
-        cfg.BuildEffectiveSections();
+        // Canonical DTO names are global policy: UserService (Services) returns Core's User, and
+        // naming User canonical must credit the returning method wherever it lives.
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Sections["Core"] = new SectionRule { CanonicalReadDtos = { "User" } };
 
         var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
         var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
 
-        var users = report.Groups["Users"];
-        var canonical = users.Entries.Where(e => e.Rule == "canonicalReadDtoReturn").ToList();
+        var canonical = report.Groups["Services"].Entries.Where(e => e.Rule == "canonicalReadDtoReturn").ToList();
         Assert.NotEmpty(canonical);
         Assert.All(canonical, e => Assert.True(e.Points < 0, "canonicalReadDtoReturn must contribute a credit (negative points)"));
     }
@@ -340,31 +299,12 @@ public class SurfaceScoreTests
     [Fact]
     public async Task MethodReturnsEntityAcrossSection_FiresWhenReturnTypeLivesInDifferentSection()
     {
-        // Sample-solution layout: User lives in SampleSolution.Core.Models (matched by the
-        // default `entity` classification's "**/Models/**" path). UserService lives in
-        // SampleSolution.Services. We put User into a "Domain" section and UserService into
-        // a "Services" section, so UserService.GetUserAsync returning User is a cross-section
-        // entity leak.
-        var cfg = new SurfaceScoreConfig();
-        cfg.Sections["Domain"] = new SectionRule
-        {
-            Paths = { "**/SampleSolution.Core/Models/**" }
-        };
-        cfg.Sections["Services"] = new SectionRule
-        {
-            Paths = { "**/SampleSolution.Services/**" }
-        };
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Classifications)
-            cfg.Classifications.TryAdd(k, v);
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Weights)
-            cfg.Weights.TryAdd(k, v);
-        cfg.BuildEffectiveSections();
+        // User lives in SampleSolution.Core/Models (matched by the default `entity`
+        // classification's "**/Models/**" path) — i.e. section Core. UserService lives in
+        // SampleSolution.Services, so GetUserAsync returning User leaks an entity across the
+        // assembly boundary. No config needed to see it.
+        var report = await ScoreDefaultAsync();
 
-        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
-
-        Assert.True(report.Groups.ContainsKey("Services"),
-            $"Expected 'Services'. Got: {string.Join(", ", report.Groups.Keys)}");
         var leaks = report.Groups["Services"].Entries
             .Where(e => e.Rule == "methodReturnsEntityAcrossSection")
             .ToList();
@@ -376,23 +316,10 @@ public class SurfaceScoreTests
     [Fact]
     public async Task MethodReturnsEntityAcrossSection_ExemptsCanonicalDtos()
     {
-        // Same setup as above but mark User as a canonical DTO. The entity penalty should
-        // be replaced by the canonical credit — never both for the same method.
-        var cfg = new SurfaceScoreConfig();
-        cfg.Sections["Domain"] = new SectionRule
-        {
-            Paths = { "**/SampleSolution.Core/Models/**" },
-            CanonicalReadDtos = { "User" }
-        };
-        cfg.Sections["Services"] = new SectionRule
-        {
-            Paths = { "**/SampleSolution.Services/**" }
-        };
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Classifications)
-            cfg.Classifications.TryAdd(k, v);
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Weights)
-            cfg.Weights.TryAdd(k, v);
-        cfg.BuildEffectiveSections();
+        // Same setup but mark User as a canonical DTO. The entity penalty is replaced by the
+        // canonical credit — never both for the same method.
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Sections["Core"] = new SectionRule { CanonicalReadDtos = { "User" } };
 
         var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
         var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
@@ -409,6 +336,25 @@ public class SurfaceScoreTests
             .Where(e => e.Detail?.Contains("-> User", StringComparison.Ordinal) == true)
             .ToList();
         Assert.NotEmpty(userCredits);
+    }
+
+    // ---------------- duplicateDbSetOwner ----------------
+
+    [Fact]
+    public async Task DuplicateDbSetOwner_DerivesOwnershipFromTheDeclaringContextsAssembly()
+    {
+        // AppDbContext (SampleSolution.Services) declares the Users DbSet, so Users belongs to
+        // Services. BadController (SampleSolution.Web) touches it directly -> second owner.
+        // No ownership map in config: the owner is read off the model.
+        var report = await ScoreDefaultAsync();
+
+        Assert.Contains(report.Groups["Web"].Entries,
+            e => e.Rule == "duplicateDbSetOwner" && e.Symbol == "BadController");
+        Assert.Contains(report.DuplicateOwners, d => d.Contains("Users", StringComparison.Ordinal)
+                                                 && d.Contains("owner: Services", StringComparison.Ordinal));
+
+        // The declaring section itself is never its own duplicate.
+        Assert.DoesNotContain(report.Groups["Services"].Entries, e => e.Rule == "duplicateDbSetOwner");
     }
 
     // ---------------- helperCandidates (conservation gate) ----------------
@@ -429,20 +375,20 @@ public class SurfaceScoreTests
     public async Task WriteCapableUsedReadOnly_FiresOnReadOnlyConsumerOfFullInterface()
     {
         // IGreetingService inherits IGreetingServiceRead and adds RecordGreetingAsync (write).
-        // ReadOnlyGreetingConsumer holds IGreetingService but only calls Get methods that
-        // also exist on the read interface — the rule should fire.
-        // FullGreetingConsumer calls RecordGreetingAsync (write) — the rule should NOT fire.
-        var cfg = SurfaceScoreConfig.Default();
-        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+        // SameSectionGreetingConsumer (same assembly as the interface) holds the full interface
+        // but only calls Get methods that also exist on the read interface — the generic rule
+        // fires. FullGreetingConsumer calls RecordGreetingAsync (write) — it must NOT fire.
+        // ReadOnlyGreetingConsumer sits in another assembly, so the cross-section specialization
+        // claims it instead (asserted below).
+        var report = await ScoreDefaultAsync();
 
-        var allEntries = report.Groups.Values
-            .SelectMany(g => g.Entries)
-            .Where(e => e.Rule == "writeCapableInterfaceUsedReadOnly")
-            .ToList();
+        var readOnly = AllEntries(report).Where(e => e.Rule == "writeCapableInterfaceUsedReadOnly").ToList();
+        Assert.Contains(readOnly, e => e.Symbol == "SameSectionGreetingConsumer");
+        Assert.DoesNotContain(readOnly, e => e.Symbol == "FullGreetingConsumer");
 
-        Assert.Contains(allEntries, e => e.Symbol == "ReadOnlyGreetingConsumer");
-        Assert.DoesNotContain(allEntries, e => e.Symbol == "FullGreetingConsumer");
+        Assert.DoesNotContain(readOnly, e => e.Symbol == "ReadOnlyGreetingConsumer");
+        Assert.Contains(AllEntries(report),
+            e => e.Rule == "crossSectionWriteSurface" && e.Symbol == "ReadOnlyGreetingConsumer");
     }
 
     // ---------------- Internal complexity: dispatcher / read-shape ----------------
@@ -733,9 +679,6 @@ public class SurfaceScoreTests
             {
               "sections": {
                 "Camp": {
-                  "repositoryInterfaces": ["ICampRepository"],
-                  "serviceInterfaces": ["ICampService"],
-                  "readServiceInterfaces": ["ICampServiceRead"],
                   "primaryInfoDto": "CampInfo",
                   "settingsInfoDto": "CampSettingsInfo",
                   "cacheDto": "CampInfo",
@@ -753,7 +696,7 @@ public class SurfaceScoreTests
             """);
 
         var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
-        var camp = cfg.EffectiveSections.Single(s => s.Name == "Camp");
+        var camp = cfg.Policy("Camp");
 
         Assert.Equal("CampInfo", camp.PrimaryInfoDto);
         Assert.Equal("CampSettingsInfo", camp.SettingsInfoDto);
@@ -767,26 +710,18 @@ public class SurfaceScoreTests
     }
 
     [Fact]
-    public async Task ConfiguredButEmptySection_IsDistinguishableFromUnknownSection()
+    public async Task PolicyForAnAssemblyThatDoesNotExist_CreatesNoSection()
     {
-        var cfg = new SurfaceScoreConfig();
-        cfg.Sections["DefinitelyEmpty"] = new SectionRule
-        {
-            Paths = { "**/this-path-cannot-match-anything-1234567890/**" }
-        };
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Classifications)
-            cfg.Classifications.TryAdd(k, v);
-        foreach (var (k, v) in SurfaceScoreConfig.Default().Weights)
-            cfg.Weights.TryAdd(k, v);
-        cfg.BuildEffectiveSections();
+        // Policy can't conjure a section any more — only an assembly can. A stale policy block
+        // (section renamed or deleted) is inert, not a phantom group.
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Sections["DefinitelyEmpty"] = new SectionRule { PrimaryInfoDto = "NothingInfo" };
 
         var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
         var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
 
-        Assert.True(cfg.HasConfiguredSection("DefinitelyEmpty"));
         Assert.False(report.Groups.ContainsKey("DefinitelyEmpty"));
-        // Command layer should emit a "group-empty" diagnostic for this case (distinct from
-        // "group-not-found").
+        Assert.DoesNotContain("DefinitelyEmpty", report.ConfiguredSections);
     }
 
     // ---------------- Build health ----------------

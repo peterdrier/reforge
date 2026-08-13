@@ -1,9 +1,9 @@
 namespace Reforge;
 
 /// <summary>
-/// Resolved per-section architectural expectations. RepoBacked is inferred (config repository
-/// OR a classified repository resolved into the section); the requiresX flags default to
-/// RepoBacked unless the config overrides them.
+/// Resolved per-section architectural expectations. RepoBacked is derived from structure (the
+/// section's assembly declares a repository or a DbContext); the requiresX flags default to
+/// RepoBacked unless the section's policy overrides them.
 /// </summary>
 public sealed record SectionFacts(
     string Name,
@@ -15,21 +15,19 @@ public sealed record SectionFacts(
     /// <summary>
     /// Resolves the architectural expectations for a single section.
     /// </summary>
-    /// <param name="classifiedRepoSectionNames">
-    /// Names of sections that are repo-backed by classification. Per the spec, a section is
-    /// repo-backed if it owns EITHER a repositoryInterface OR a repositoryImplementation, so the
-    /// caller building this set must include section names tagged with either — not just the
-    /// interface-tagged groups.
+    /// <param name="repoBackedSections">
+    /// Names of sections that own persistence. Per the spec, a section is repo-backed if it
+    /// declares EITHER a repositoryInterface, a repositoryImplementation, OR a DbContext — so the
+    /// caller building this set must include all three, not just the interface-tagged groups.
     /// </param>
-    public static SectionFacts For(SectionRule rule, IReadOnlySet<string> classifiedRepoSectionNames)
+    public static SectionFacts For(string name, SectionRule policy, IReadOnlySet<string> repoBackedSections)
     {
-        bool repoBacked = rule.HasConfiguredRepository
-            || classifiedRepoSectionNames.Contains(rule.Name);
+        bool repoBacked = repoBackedSections.Contains(name);
         return new SectionFacts(
-            rule.Name,
+            name,
             repoBacked,
-            rule.RequiresReadSurface ?? repoBacked,
-            rule.RequiresWriteSurface ?? repoBacked,
-            rule.RequiresPrimaryInfoDto ?? repoBacked);
+            policy.RequiresReadSurface ?? repoBacked,
+            policy.RequiresWriteSurface ?? repoBacked,
+            policy.RequiresPrimaryInfoDto ?? repoBacked);
     }
 }

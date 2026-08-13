@@ -2,6 +2,89 @@
 
 What changed and why. Newest first.
 
+## v0.23.0 - sections are assemblies (BREAKING config change)
+
+`surface-score` grouped types with a config cascade: per-section interface-name lists, then
+path globs, then namespace prefixes, then symbol-name globs, first match wins, with a
+namespace-segment fallback. In Humans that cascade had grown to 883 lines re-describing
+boundaries the solution already states — every new section was a manual config edit that
+mis-grouped **silently** when forgotten, and the symbol globs (`Admin*`) were exactly the
+nominal matching the scoring design's own principle #2 warns against.
+
+A type's containing assembly says the same thing, but structurally: the compiler enforces it,
+it cannot drift from the solution, and it costs zero config.
+
+- **Grouping is now the containing assembly.** `<X>.Contracts` folds into `<X>` (a contracts
+  assembly is the published face of its section, not a section), and the dot-segment prefix
+  shared by every assembly is stripped for display, so `Humans.Store` reports as `Store` —
+  the same group names the config used to produce. Test projects are still excluded. Grouping
+  reads `ContainingAssembly`, not the enumerating project, because a project's compilation
+  also sees referenced projects' source types.
+- **Hard cut, no fallback.** `SectionRule.Paths/Namespaces/Symbols`, the per-section
+  `repositoryInterfaces`/`serviceInterfaces`/`readServiceInterfaces` sugar, the legacy `groups`
+  array, and the namespace fallback are **deleted**. A not-yet-extracted section now scores
+  under whatever assembly it lives in (`Application`, `Infrastructure`, `Web`, `Domain`, `UI`).
+  That is coarse and intentional: per-section visibility comes back automatically as each
+  section becomes its own assembly, instead of being asserted by config that may be a lie.
+- **What to do with your config:** delete the `sections` block's matchers (or the whole block).
+  Stale keys are ignored, not fatal — an old config still loads, it just no longer groups.
+  `sections` now carries **policy only**, keyed by the assembly-derived section name:
+  `primaryInfoDto`/`settingsInfoDto`/`cacheDto`, `canonicalReadDtos`, `readShards`,
+  `requires*Surface`, `grandfatheredDependencies`, `escapeHatchReadMethods`. `classifications`,
+  `weights`, and the allowed-shape/dispatcher escape hatches are unchanged.
+- **Ownership is derived, not declared.** `resources.dbSets.ownerByName` is gone:
+  `duplicateDbSetOwner` now takes a table's owner to be the section of the `DbContext` that
+  declares its `DbSet`, and fires on any class outside that section touching it. A DbSet
+  declared by two contexts in different sections has no single owner and is skipped rather
+  than attributed arbitrarily. Same for repo-backing: a section is repo-backed when it declares
+  a repository or a DbContext. Both were hand-maintained lists before.
+- **Section shapes cover every section**, not only configured ones — so the `missing*` and
+  `crossSectionWriteSurface` rules now fire with no config file at all. Expect new points on a
+  default-config run; set a rule's weight to `0` to silence it.
+- **JSON output shape is unchanged** (`groups[]`, `byRule`, totals, `topSymbols`,
+  `conservationAnchors`, …). `configuredSections` keeps its key and its type but now lists the
+  solution's assemblies. Humans' `pr-surface-report.py` parses it unmodified.
+- Sample solution split into real section assemblies (`SampleSolution.Camp` +
+  `.Camp.Contracts`, `.Lodge`, `.Dorm`, `.Tent`, `.Reporting`) so the tests exercise assembly
+  grouping and the `.Contracts` fold rather than a synthetic config.
+- Fixed alongside: the test fixture treated only a `.git` *directory* as a repo root, so inside
+  a git worktree it silently opened the main checkout's sample solution.
+- Fixed alongside: `System.Text.Json` assigns brand-new dictionaries through the `Sections` /
+  `Classifications` / `Weights` setters, discarding the `OrdinalIgnoreCase` comparers from their
+  field initializers — so a config key differing only in case silently never matched. Latent
+  before, but it bites now that section names are derived from assembly names instead of being
+  defined by these very keys (`"camp"` no longer reaches `Camp`). The three maps are re-keyed
+  case-insensitively at load, ahead of the defaults merge so a case-variant override replaces
+  the default rather than sitting beside it.
+- Fixed alongside: type dedup keyed on the fully qualified name alone, but every project's
+  compilation reaches its references' source types, so the key had to be per ASSEMBLY. Two
+  assemblies may legitimately declare the same fully qualified name (an internal helper); the
+  second was dropped from scoring, and an assembly whose every type collided vanished from the
+  section map. Dedup is now `assembly|displayName`; the three display-name indexes downstream
+  became first-wins rather than throwing on the now-possible duplicate.
+- Every type-lookup map in the scoring passes is now keyed by `SolutionClassifier.TypeKey`
+  (declaring assembly + fully qualified name) instead of the name alone — `typesByDisplay` in
+  both the engine and the section-shape analyzer, `readByDisplay`, the full→read `pairs` map, and
+  the inline-parameter-object site counter. Keeping both same-named types in `classified` was only
+  half the fix: the maps then collapsed them again, so a consumer of its own assembly's
+  `Shared.IOrderService` could resolve to the *other* assembly's declaration and make the
+  dependency, return-type, DI, and write-surface passes report false cross-section findings or
+  suppress real ones. Keying on the *declaring* assembly keeps cross-assembly lookups correct: a
+  consumer in A injecting B's type resolves through B's key, because the symbol it holds is B's.
+- Fixed alongside: `canonicalReadDtos` were imported from EVERY config section, including keys
+  naming an assembly that no longer exists. Canonical names apply solution-wide, so a stale key
+  kept granting `canonicalReadDtoReturn` credit and suppressing `methodReturnsEntityAcrossSection`
+  everywhere — the opposite of the "policy for a section that doesn't exist is inert" contract.
+  Now restricted to live sections, and a new `unknown-config-section` **warning** names any policy
+  block that matches no assembly, so a mis-keyed or stale block is visible rather than silently
+  dropping its DTO anchors, overrides, and grandfathered debt. That matters for the migration this
+  release forces: config keys used to *define* sections and now have to match derived names.
+- Fixed alongside: stripping the shared prefix could land two different assemblies on one
+  section name (`Company.Product` falls back to its last segment while `Company.Product.Product`
+  strips to its tail — both `Product`), silently pooling two unrelated assemblies' scores into
+  one group. Post-strip collisions now fall back to the full folded name; the guard keys on the
+  folded name so the intended `X` + `X.Contracts` collapse is untouched.
+
 ## v0.22.0 - guard --baseline against a build-state mismatch
 
 `surface-score` gives materially different totals for the same commit depending on whether the

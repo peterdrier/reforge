@@ -2,4 +2,10 @@
   <Project Path="SampleSolution.Core/SampleSolution.Core.csproj" />
   <Project Path="SampleSolution.Services/SampleSolution.Services.csproj" />
   <Project Path="SampleSolution.Web/SampleSolution.Web.csproj" />
+  <Project Path="SampleSolution.Camp/SampleSolution.Camp.csproj" />
+  <Project Path="SampleSolution.Camp.Contracts/SampleSolution.Camp.Contracts.csproj" />
+  <Project Path="SampleSolution.Lodge/SampleSolution.Lodge.csproj" />
+  <Project Path="SampleSolution.Dorm/SampleSolution.Dorm.csproj" />
+  <Project Path="SampleSolution.Tent/SampleSolution.Tent.csproj" />
+  <Project Path="SampleSolution.Reporting/SampleSolution.Reporting.csproj" />
 </Solution>
