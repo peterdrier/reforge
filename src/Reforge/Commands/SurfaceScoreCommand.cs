@@ -121,6 +121,9 @@ public static class SurfaceScoreCommand
                         if (baseline.BaselineAnchorsMissing)
                             report.Diagnostics.Add(new ScoreDiagnostic("info", "baseline-anchors-missing",
                                 "Baseline JSON predates conservationAnchors (v0.19+); conservation coverage degraded to ambiguous."));
+                        if (baseline.BuildStateMismatch)
+                            report.Diagnostics.Add(new ScoreDiagnostic("warning", "baseline-build-state-mismatch",
+                                baseline.BuildStateMismatchMessage!));
                     }
                     else
                     {
@@ -259,8 +262,9 @@ public static class SurfaceScoreCommand
         if (baseline is not null)
         {
             var s = baseline.Solution;
+            var lowConfidence = baseline.BuildStateMismatch ? " lowConfidence=true" : "";
             Console.WriteLine();
-            Console.WriteLine($"vs baseline ({Path.GetFileName(baseline.BaselinePath)}): verdict={s.Verdict} improvement={s.Improvement} " +
+            Console.WriteLine($"vs baseline ({Path.GetFileName(baseline.BaselinePath)}): verdict={s.Verdict} improvement={s.Improvement}{lowConfidence} " +
                               $"surface {s.BaseSurface}->{s.NowSurface} ({s.SurfaceDelta:+0;-0;0}) internalComplexity {s.BaseInternal}->{s.NowInternal} ({s.InternalDelta:+0;-0;0})");
             if (report.SuspiciousImprovements.Count > 0)
             {
@@ -488,9 +492,10 @@ public static class SurfaceScoreCommand
     private static void WriteBaselineMarkdown(StringBuilder sb, ScoreReport report, BaselineComparison baseline)
     {
         var s = baseline.Solution;
+        var lowConfidence = baseline.BuildStateMismatch ? " — **LOW CONFIDENCE** (build-state mismatch; see Diagnostics)" : "";
         sb.AppendLine($"## Baseline comparison (`{Path.GetFileName(baseline.BaselinePath)}`)");
         sb.AppendLine();
-        sb.AppendLine($"- **Verdict**: `{s.Verdict}` — **improvement: {s.Improvement}** (Pareto: surface non-worse AND complexity non-worse)");
+        sb.AppendLine($"- **Verdict**: `{s.Verdict}` — **improvement: {s.Improvement}** (Pareto: surface non-worse AND complexity non-worse){lowConfidence}");
         sb.AppendLine($"- **Surface**: {s.BaseSurface} → {s.NowSurface} ({s.SurfaceDelta:+0;-0;0})");
         sb.AppendLine($"- **Internal complexity**: {s.BaseInternal} → {s.NowInternal} ({s.InternalDelta:+0;-0;0})");
         sb.AppendLine();
@@ -590,6 +595,10 @@ public static class SurfaceScoreCommand
             path = baseline.BaselinePath,
             verdict = baseline.Solution.Verdict,
             improvement = baseline.Solution.Improvement,
+            // Additive: only present (true) when the baseline and current build states differ —
+            // null (and so omitted by WhenWritingNull) on a matched comparison, so a clean-vs-clean
+            // run stays byte-identical to pre-guard output. Detail lives in `diagnostics`.
+            lowConfidence = baseline.BuildStateMismatch ? true : (bool?)null,
             surface = new { @base = baseline.Solution.BaseSurface, now = baseline.Solution.NowSurface, delta = baseline.Solution.SurfaceDelta },
             internalComplexity = new { @base = baseline.Solution.BaseInternal, now = baseline.Solution.NowInternal, delta = baseline.Solution.InternalDelta },
             groups = baseline.Groups

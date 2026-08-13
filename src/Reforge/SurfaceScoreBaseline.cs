@@ -26,6 +26,16 @@ public sealed class BaselineComparison
     public bool BaselineAnchorsMissing { get; set; }
     /// <summary>Per-section conservation verdicts (the gate's roll-up + per-method evidence audit trail).</summary>
     public List<ConservationVerdict> ConservationVerdicts { get; } = new();
+    /// <summary>
+    /// True when the baseline's build health (degraded/appearsUnbuilt) does not match the current
+    /// run's — including when the baseline JSON predates the <c>build</c> block (v0.20+) and so its
+    /// state is unknown rather than known-clean. An unbuilt/degraded workspace under-resolves
+    /// cross-section/DI/entity-return rules (see issue #9), so a mismatch means the comparison may
+    /// be off by several percent and should be treated as low-confidence, not refused.
+    /// </summary>
+    public bool BuildStateMismatch { get; set; }
+    /// <summary>Human-readable explanation naming both build states. Null when no mismatch.</summary>
+    public string? BuildStateMismatchMessage { get; set; }
 }
 
 /// <summary>Per-removed-method audit row behind a conservation verdict.</summary>
@@ -90,6 +100,17 @@ public static class SurfaceScoreBaseline
 
         var comparison = new BaselineComparison { BaselinePath = baselineJsonPath };
 
+        var baseBuildState = ReadBuildState(root);
+        var nowBuildState = new BuildState(true, now.BuildHealth.Degraded, now.BuildHealth.AppearsUnbuilt);
+        if (!baseBuildState.Known || baseBuildState.Degraded != nowBuildState.Degraded
+            || baseBuildState.AppearsUnbuilt != nowBuildState.AppearsUnbuilt)
+        {
+            comparison.BuildStateMismatch = true;
+            comparison.BuildStateMismatchMessage =
+                $"baseline was captured on {Describe(baseBuildState)} but the current run {DescribeVerb(nowBuildState)}; " +
+                "the comparison may be off by several percent, concentrated in crossSection*/diRegistration/methodReturnsEntity rules.";
+        }
+
         var nowSolution = new BaselineScope(now.SurfaceTotal, now.InternalComplexityTotal, now.ByRule);
         var allEntries = now.Groups.Values.SelectMany(g => g.Entries).ToList();
         comparison.Solution = Evaluate("solution", baseSolution, nowSolution, allEntries, comparison.Suspicious);
@@ -111,6 +132,38 @@ public static class SurfaceScoreBaseline
         RunConservationGate(now, baseAnchors, baseHelpers, comparison);
 
         return comparison;
+    }
+
+    // ---------------- Baseline build-state guard ----------------
+
+    /// <summary><see cref="Known"/> is false when the baseline JSON predates the <c>build</c>
+    /// block (pre-v0.20) — treated as an unknown state, never as implicitly clean.</summary>
+    private sealed record BuildState(bool Known, bool Degraded, bool AppearsUnbuilt);
+
+    private static BuildState ReadBuildState(JsonElement root)
+    {
+        if (!root.TryGetProperty("build", out var b) || b.ValueKind != JsonValueKind.Object)
+            return new BuildState(false, false, false);
+        bool degraded = b.TryGetProperty("degraded", out var d) && d.ValueKind == JsonValueKind.True;
+        bool appearsUnbuilt = b.TryGetProperty("appearsUnbuilt", out var a) && a.ValueKind == JsonValueKind.True;
+        return new BuildState(true, degraded, appearsUnbuilt);
+    }
+
+    /// <summary>Noun-phrase description of a build state, for "baseline was captured on ...".</summary>
+    private static string Describe(BuildState s)
+    {
+        if (!s.Known) return "an unknown build state (baseline predates build-health tracking)";
+        if (s.Degraded) return $"a degraded workspace (compile errors present, appearsUnbuilt={(s.AppearsUnbuilt ? "true" : "false")})";
+        if (s.AppearsUnbuilt) return "a degraded/unbuilt workspace (appearsUnbuilt=true)";
+        return "a cleanly-compiled workspace";
+    }
+
+    /// <summary>Verb-phrase description of a build state, for "the current run ...".</summary>
+    private static string DescribeVerb(BuildState s)
+    {
+        if (s.Degraded) return $"did not compile cleanly (compile errors present, appearsUnbuilt={(s.AppearsUnbuilt ? "true" : "false")})";
+        if (s.AppearsUnbuilt) return "appears unbuilt (appearsUnbuilt=true)";
+        return "compiled cleanly";
     }
 
     // ---------------- Conservation gate: baseline anchor/helper parsing ----------------
