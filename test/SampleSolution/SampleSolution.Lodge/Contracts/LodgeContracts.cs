@@ -30,6 +30,19 @@ public sealed class LodgeOccupancyTally : List<int>
     public int Total { get; set; }
 }
 
+// A data-only base and a derived DTO that declares NOTHING of its own. It is still the carrier of
+// that data, so it must be admitted — and its anchor inventory has to list the inherited property,
+// or the conservation gate would prove facts against an empty path set and never notice one going
+// missing.
+public abstract class LodgeRateBase
+{
+    public string Band { get; set; } = "";
+}
+
+public sealed class LodgeSeasonalRateInfo : LodgeRateBase
+{
+}
+
 // A plain data-carrying record. Every record implements IEquatable<T>, so it guards the boundary of
 // the behavior check above: counting all interface members instead of only non-abstract ones would
 // throw every record in the solution out of the DTO set.

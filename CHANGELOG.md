@@ -51,6 +51,16 @@ walk stops at `System.Object`/`System.ValueType`, and only **non-abstract** inte
 that is what keeps records in, since every record implements `IEquatable<T>`. This also tightens the
 DTO-inventory descent set in `section-shape`, which shares the same test.
 
+**`DtoInventory` walks inherited properties too.** Counting inherited data means a DTO whose
+properties live on a data-only base is admitted — but the inventory that backs its anchor only read
+declared members, so such an anchor carried an empty or partial path set and the conservation gate
+would prove facts against nothing, never noticing an inherited fact going missing. The same gap
+already applied to any `dto`-tagged type with a base class. Most-derived declaration wins, so a
+shadowed or overridden property still yields one path. Two smaller exclusions come with it: indexers
+(whose symbol name emits a nonsense path like `Foo.this[]`) and statics are skipped — an indexer
+declared directly on a DTO was previously included, so a path can disappear here, which is the one
+place anchor paths can shrink rather than grow.
+
 Also fixed here, because deriving from declaration paths depends on it: **`LocationHelper.NormalizePath`
 required only a string prefix, not a directory boundary.** With the solution at `/work/App`, a linked
 source at `/work/AppContracts/Foo.cs` normalized to `Contracts/Foo.cs` — a path that never existed.

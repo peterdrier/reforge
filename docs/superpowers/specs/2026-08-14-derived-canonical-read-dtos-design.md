@@ -61,6 +61,13 @@ it in JSON.
    (already counted) or unimplementable. That distinction is load-bearing: every record implements
    `IEquatable<T>`, so counting abstract interface members would throw every record out of the DTO
    set. `LodgeTariffRow` pins that boundary.
+
+Counting inherited *properties* has a consequence that has to be paid for: a type admitted because
+its data lives on a data-only base needs an anchor inventory that lists those inherited facts, or
+the conservation gate proves facts against an empty path set and never notices one going missing.
+So `DtoInventory.Build` walks the property hierarchy too — most-derived declaration wins, and
+indexers and statics are skipped since neither names a fact about an instance. That closes the same
+gap for any `dto`-tagged type with a base class, which had it before this change.
 4. **Declared on the contracts surface** — its declaring assembly is a `<X>.Contracts` assembly, or
    its source path has a `Contracts` directory segment.
 
@@ -143,9 +150,9 @@ Output JSON shape is unchanged — no key added or removed at any level.
 
 - The `dto` classification rule and the `publicDtoType` / `dto*Property` weights. Derivation
   decides which DTOs are a section's *published read API*; it does not change what counts as a DTO.
-- `SectionShapeAnalyzer`'s DTO-inventory descent set (every dto-tagged or data-carrier type's simple
-  name). That drives recursive path expansion inside an anchor, which has nothing to do with what a
-  section publishes.
+- `SectionShapeAnalyzer`'s DTO-inventory descent *set* (every dto-tagged or data-carrier type's
+  simple name). That drives which child types expand, which has nothing to do with what a section
+  publishes. (`DtoInventory.Build` itself did change — see below.)
 - `primaryInfoDto` / `settingsInfoDto` / `cacheDto` config. Those name *which* DTO plays a role, a
   fact the assembly graph genuinely can't state; the derived set is only the fallback when the
   `<Section>Info` convention misses.

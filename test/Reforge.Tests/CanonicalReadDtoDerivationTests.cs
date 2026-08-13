@@ -113,6 +113,17 @@ public class CanonicalReadDtoDerivationTests
     }
 
     [Fact]
+    public async Task Derive_AdmitsTypesWhoseDataIsInherited()
+    {
+        var canonical = await DeriveAsync();
+
+        // LodgeSeasonalRateInfo declares nothing at all; its one property comes from a data-only
+        // base. It is still that data's carrier. (DtoInventoryTests pins the matching half — the
+        // anchor inventory has to list the inherited property, not an empty path set.)
+        Assert.Contains("LodgeSeasonalRateInfo", Names(canonical, "Lodge"));
+    }
+
+    [Fact]
     public async Task Derive_KeepsRecordsThatOnlyCarryData()
     {
         // Guard on the fix above: every record implements IEquatable<T>, so counting all interface
