@@ -245,6 +245,26 @@ public sealed class SurfaceScoreConfig
     /// </summary>
     public SectionRule Policy(string section) =>
         Sections.TryGetValue(section, out var rule) ? rule : SectionRule.None;
+
+    /// <summary>
+    /// The warning for section blocks that still declare the removed <c>canonicalReadDtos</c> list,
+    /// or null when none do. Every command that resolves DTO anchors reports it — the field used to
+    /// change both the return-type score and the primary/settings anchors, so silence would let a
+    /// stale config look like it is still doing its job.
+    /// </summary>
+    public string? RemovedCanonicalReadDtosWarning()
+    {
+        var stale = Sections
+            .Where(s => s.Value.DeclaresRemovedCanonicalReadDtos)
+            .Select(s => s.Key)
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
+        if (stale.Count == 0) return null;
+
+        return $"'canonicalReadDtos' is no longer read and is ignored in: {string.Join(", ", stale)}. " +
+               "Canonical read DTOs are derived from each section's exported contracts surface " +
+               "(a <Section>.Contracts assembly, or a Contracts/ folder in the section's assembly).";
+    }
 }
 
 /// <summary>

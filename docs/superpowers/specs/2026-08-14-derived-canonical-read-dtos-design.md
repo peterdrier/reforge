@@ -67,12 +67,19 @@ types — never on the name or the path alone.
 This mirrors the #13 rule and the sample solution pins it: `SampleSolution.Lodge/Contracts/`
 declares `LodgeStayInfo` (public, canonical) next to `LodgeSecretInfo` (internal, excluded).
 
+Point 4 inspects **every** declaration, not just `ClassifiedType.File`. A partial type with one part
+under `Contracts/` and one part outside has several source locations, and which one is "primary"
+follows syntax-tree order — reading the primary alone would let a type enter and leave the set when
+files are merely reordered. Declaring any part of a type on the contracts surface publishes it.
+
 ### Preference order
 
 `ForSection` returns a section's DTOs in anchor-preference order: `*Info` names first, then
-shortest name, then ordinal. That is what makes `CampInfo` outrank `CampSeasonMemberInfo` as
-Camp's primary anchor, and it is deterministic — the old field carried the author's ordering, which
-derivation cannot recover.
+shortest name, then ordinal name, then the full type key. That is what makes `CampInfo` outrank
+`CampSeasonMemberInfo` as Camp's primary anchor, and it is deterministic — the old field carried the
+author's ordering, which derivation cannot recover. The type-key tiebreak is load-bearing: a section
+can span two assemblies (`X` and `X.Contracts`) and many namespaces, so simple names collide, and
+`List.Sort` is not stable — a comparator returning 0 would let enumeration order pick the anchor.
 
 ## Consumers
 
@@ -101,9 +108,13 @@ without a word, which is exactly the silent drift this issue is about — a conf
 list used to grant credit and suppress the entity penalty solution-wide, and would keep looking
 like it does.
 
-So `SectionRule` captures unrecognized members via `[JsonExtensionData]` and the engine emits a
-`removed-config-field` warning naming every section block that still declares `canonicalReadDtos`.
-Inert *and* visible, the same treatment `unknown-config-section` gives a stale section key.
+So `SectionRule` captures unrecognized members via `[JsonExtensionData]` and
+`SurfaceScoreConfig.RemovedCanonicalReadDtosWarning()` names every section block that still declares
+`canonicalReadDtos`. Inert *and* visible, the same treatment `unknown-config-section` gives a stale
+section key. **Both** commands that resolve DTO anchors report it: `surface-score` as a
+`removed-config-field` diagnostic, and `section-shape` — which loads the same config, calls the
+analyzer directly, and never touches the engine — as a stderr warning. The field used to feed
+`section-shape`'s primary/settings anchors, so its output moves too and must say why.
 
 Output JSON shape is unchanged — no key added or removed at any level.
 
@@ -120,36 +131,40 @@ Output JSON shape is unchanged — no key added or removed at any level.
 
 ## Measured impact (Humans, built, A/B on one identical tree)
 
-Both runs saw the same corpus — `typesAnalyzed` 2,836, `internalComplexityTotal` 3,127, 46
-sections — so the deltas are the change and nothing else.
+Both binaries were run back to back against one built tree and saw the same corpus —
+`typesAnalyzed` 2,840, `internalComplexityTotal` 3,111, 46 sections — so the deltas are the change
+and nothing else. A `Humans.Shifts` extraction is in flight in that repo, so the absolute totals
+are a snapshot of a moving tree; an earlier measurement the same day read 17,033 for the same
+`surfaceTotal`. Only same-tree deltas are meaningful.
 
 | | v0.24.0 | v0.25.0 |
 |---|---|---|
-| `surfaceTotal` | 17,033 | 16,886 (-0.9%) |
-| `canonicalReadDtoReturn` | -3 | -162 |
-| `missingPrimaryInfoDto` | 230 | 110 |
+| `surfaceTotal` | 14,956 | 14,880 (-0.5%) |
+| `canonicalReadDtoReturn` | -3 | -81 |
+| `missingPrimaryInfoDto` | 240 | 110 |
 | `readSurfaceProjectionMethod` | 116 | 248 |
 
 24 of 45 scoring sections did not move at all. No other rule moved.
 
 **The credit was granting almost nothing.** Nine config blocks listed 34 DTO names between them and
 earned the credit exactly once, because the names were matched against return types solution-wide
-and had drifted. Derivation credits eight sections, led by Application (-84), Infrastructure (-24)
-and GoogleIntegration (-21) — none of which had a config block at all. Config was describing a read
-API for the sections someone had thought about, while the assemblies that actually export one went
-uncredited.
+and had drifted. Derivation credits eight sections — Application (-24), GoogleIntegration (-21),
+Camps and Shifts (-12 each), Containers/Finance/Infrastructure/Tickets (-3 each) — and only two of
+those had a config block. Config was describing a read API for the sections someone had thought
+about, while the assemblies that actually export one went uncredited.
 
-**Twelve sections gained a primary anchor; one lost the one config invented for it.** Calendar goes
-0 -> 10 on `missingPrimaryInfoDto` because its configured canonical DTO, `CalendarEventInfo`, is an
-`internal sealed record` under `Sections/Humans.Calendar/Services/Dtos/`. Calendar publishes no read
-API; the config had been asserting one that no consumer can reach. That is the whole thesis of the
-change in one section.
+**Fourteen sections gained a primary anchor; one lost the one config invented for it.** Calendar
+goes 0 -> 10 on `missingPrimaryInfoDto` because its configured canonical DTO, `CalendarEventInfo`,
+is an `internal sealed record` under `Sections/Humans.Calendar/Services/Dtos/`. Calendar publishes
+no read API; the config had been asserting one that no consumer can reach. That is the whole thesis
+of the change in one section.
 
 **Resolving anchors uncovers hidden debt.** `readSurfaceProjectionMethod` only fires for a section
 with a resolved primary anchor — without one, a primitive read cannot be distinguished from a
-projection. So the twelve newly-anchored sections surface projection debt that was previously
-invisible (Governance +40, Expenses +32, four sections +12). The rule getting *more* expensive is
-the correct direction: those sections were escaping it by having no read API at all.
+projection. So the newly anchored sections surface projection debt that was previously invisible
+(Governance +40, Expenses +32, Budget/CityPlanning/Email/GoogleIntegration +12 each). The rule
+getting *more* expensive is the correct direction: those sections were escaping it by having no
+read API at all.
 
 Predictions from the issue that held: Camps and Tickets both gained credit, and the config's
 `Users`/`Dashboard`/`Admin`/`Platform` blocks — which #12 had already made inert — are now moot
@@ -170,7 +185,16 @@ Sample-solution fixtures, both shapes plus the negatives:
   boundary: the exported one is credited, the other is charged `methodReturnsEntityAcrossSection`.
 - Tent and Dorm have neither shape and contribute nothing; Tent's primary anchor stays unresolved
   and `missingPrimaryInfoDto` fires.
+- `LodgeAmenityInfo` is `partial`, split between `Contracts/LodgeContracts.cs` and a root-level
+  `AmenityPartial.cs` named so it sorts first and therefore wins the primary location. The test
+  asserts that precondition explicitly, so the fixture cannot quietly stop exercising the
+  multi-location path.
+- `SampleSolution.Lodge.Contracts.V2.LodgeStayInfo` collides on simple name with the one in
+  `.Contracts`. The tie test derives from the classified list and from its reverse and requires the
+  same order out — `List.Sort` uses a stable insertion sort at these sizes, so reversing the input
+  is what actually forces the untiebroken comparator to disagree with itself.
 
 Every new test was verified to fail with the implementation reverted: dropping the `IsExported`
 gate reddens the internal-exclusion test; accepting any location reddens six; removing the analyzer
-fallback reddens the Lodge anchor test and the existing missing-surface test.
+fallback reddens the Lodge anchor test and the existing missing-surface test; reading only the
+primary location reddens the partial test; dropping the type-key tiebreak reddens the order test.

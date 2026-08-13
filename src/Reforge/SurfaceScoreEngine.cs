@@ -152,16 +152,9 @@ public sealed class SurfaceScoreEngine
         // canonicalReadDtos is derived from each section's exported contracts surface now. A config
         // still carrying the list would otherwise change meaning in silence — it used to grant the
         // canonicalReadDtoReturn credit and suppress methodReturnsEntityAcrossSection solution-wide.
-        var staleCanonical = _config.Sections
-            .Where(s => s.Value.DeclaresRemovedCanonicalReadDtos)
-            .Select(s => s.Key)
-            .OrderBy(k => k, StringComparer.Ordinal)
-            .ToList();
-        if (staleCanonical.Count > 0)
-            report.Diagnostics.Add(new ScoreDiagnostic("warning", "removed-config-field",
-                $"'canonicalReadDtos' is no longer read and is ignored in: {string.Join(", ", staleCanonical)}. " +
-                "Canonical read DTOs are derived from each section's exported contracts surface " +
-                "(a <Section>.Contracts assembly, or a Contracts/ folder in the section's assembly)."));
+        var removedField = _config.RemovedCanonicalReadDtosWarning();
+        if (removedField is not null)
+            report.Diagnostics.Add(new ScoreDiagnostic("warning", "removed-config-field", removedField));
 
         // Single canonical index — built once, used by both dependency-use and DI-registration
         // passes. Keyed by SolutionClassifier.TypeKey (declaring assembly + fully qualified name):

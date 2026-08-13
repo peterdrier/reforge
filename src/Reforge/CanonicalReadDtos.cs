@@ -96,7 +96,14 @@ public sealed class CanonicalReadDtoSet
         var byInfo = Rank(an).CompareTo(Rank(bn));
         if (byInfo != 0) return byInfo;
         var byLength = an.Length.CompareTo(bn.Length);
-        return byLength != 0 ? byLength : string.CompareOrdinal(an, bn);
+        if (byLength != 0) return byLength;
+        var byName = string.CompareOrdinal(an, bn);
+        // Simple names collide — a section may span two assemblies (X and X.Contracts) and holds
+        // many namespaces. List.Sort is not stable, so a comparator that returned 0 here would let
+        // enumeration order pick the primary anchor. Full identity is the last word.
+        return byName != 0
+            ? byName
+            : string.CompareOrdinal(SolutionClassifier.TypeKey(a.Type), SolutionClassifier.TypeKey(b.Type));
 
         static int Rank(string name) => name.EndsWith(InfoSuffix, StringComparison.Ordinal) ? 0 : 1;
     }
@@ -125,7 +132,29 @@ public sealed class CanonicalReadDtoSet
         var assembly = c.Type.ContainingAssembly?.Name;
         if (assembly is not null && AssemblySections.IsContractsAssembly(assembly)) return true;
 
-        foreach (var segment in c.File.Split('/'))
+        // EVERY declaration, not just the primary location. A partial type with one part under
+        // Contracts/ and one part outside has several source locations, and which one
+        // SolutionClassifier picked as primary follows syntax-tree order — so keying off c.File
+        // alone would let the type enter and leave the set when files are merely reordered.
+        // Declaring any part of a type on the contracts surface publishes it.
+        if (HasContractsSegment(c.File)) return true;
+        foreach (var location in c.Type.Locations)
+        {
+            if (!location.IsInSource) continue;
+            if (HasContractsSegment(location.SourceTree?.FilePath)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Whether the path has a <c>Contracts</c> directory segment. Both separators are split on:
+    /// <see cref="ClassifiedType.File"/> is normalized to forward slashes, but a raw
+    /// <see cref="SyntaxTree.FilePath"/> is not.
+    /// </summary>
+    private static bool HasContractsSegment(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+        foreach (var segment in path.Split('/', '\\'))
             if (segment.Equals(ContractsFolder, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }

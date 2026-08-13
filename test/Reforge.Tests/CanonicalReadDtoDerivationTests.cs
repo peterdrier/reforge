@@ -97,6 +97,63 @@ public class CanonicalReadDtoDerivationTests
     }
 
     [Fact]
+    public async Task Derive_ChecksEveryPartialDeclaration_NotJustThePrimaryLocation()
+    {
+        var cfg = SurfaceScoreConfig.Default();
+        var classified = await SolutionClassifier.ClassifyAsync(
+            _fixture.Solution, cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution), CancellationToken.None);
+
+        // Precondition: the PRIMARY location of this partial type is the half outside Contracts/,
+        // so a check that reads only ClassifiedType.File would miss it. If syntax-tree ordering ever
+        // flips this, the fixture stops exercising the multi-location path and must be re-pointed.
+        var amenity = classified.Single(c => c.Type.Name == "LodgeAmenityInfo");
+        Assert.DoesNotContain("/Contracts/", amenity.File.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("LodgeAmenityInfo", Names(CanonicalReadDtoSet.Derive(classified), "Lodge"));
+    }
+
+    [Fact]
+    public async Task Derive_BreaksAnchorOrderTiesOnFullIdentity()
+    {
+        var cfg = SurfaceScoreConfig.Default();
+        var classified = (await SolutionClassifier.ClassifyAsync(
+            _fixture.Solution, cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution), CancellationToken.None)).ToList();
+
+        // Two LodgeStayInfo types, same section, different namespaces — equal on both name and
+        // length, so the comparator falls through to the type key. Deriving from the SAME set in
+        // the opposite enumeration order has to produce the same order out: List.Sort is not
+        // stable in general and is stable (insertion sort) for small inputs, so a comparator that
+        // returned 0 here would silently hand back whichever came in first.
+        var forward = Order(CanonicalReadDtoSet.Derive(classified));
+        var reversed = Order(CanonicalReadDtoSet.Derive(Enumerable.Reverse(classified)));
+
+        Assert.Equal(new[] { "SampleSolution.Lodge.Contracts.LodgeStayInfo",
+                             "SampleSolution.Lodge.Contracts.V2.LodgeStayInfo" }, forward);
+        Assert.Equal(forward, reversed);
+
+        static string[] Order(CanonicalReadDtoSet set) => set.ForSection("Lodge")
+            .Where(c => c.Type.Name == "LodgeStayInfo")
+            .Select(c => c.Type.ToDisplayString())
+            .ToArray();
+    }
+
+    [Fact]
+    public void RemovedCanonicalReadDtosWarning_NamesEverySectionStillDeclaringIt()
+    {
+        // Shared by surface-score (as a `removed-config-field` diagnostic) and section-shape (as a
+        // stderr warning) — both resolve DTO anchors the field used to feed.
+        var cfg = SurfaceScoreConfig.Default();
+        Assert.Null(cfg.RemovedCanonicalReadDtosWarning());
+
+        cfg.Sections["Zulu"] = new SectionRule { Unrecognized = new() { ["canonicalReadDtos"] = default } };
+        cfg.Sections["Alpha"] = new SectionRule { Unrecognized = new() { ["canonicalReadDtos"] = default } };
+
+        var warning = cfg.RemovedCanonicalReadDtosWarning();
+        Assert.NotNull(warning);
+        Assert.Contains("Alpha, Zulu", warning);   // ordinal, so the message is stable run to run
+    }
+
+    [Fact]
     public async Task Derive_OrdersSectionDtosByAnchorPreference()
     {
         var canonical = await DeriveAsync();

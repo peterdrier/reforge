@@ -20,3 +20,12 @@ internal sealed class LodgeSecretInfo
     public Guid Id { get; set; }
     public string Notes { get; set; } = "";
 }
+
+// The Contracts-side half of a PARTIAL DTO whose other half lives at the assembly root (see
+// AmenityPartial.cs). Only one of the two source locations is the type's "primary" one, and which
+// depends on syntax-tree order — so membership must be decided from ALL declarations, not from the
+// primary location alone, or an unrelated file reordering silently changes the score.
+public sealed partial class LodgeAmenityInfo
+{
+    public string Name { get; set; } = "";
+}
