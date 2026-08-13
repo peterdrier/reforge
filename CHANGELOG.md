@@ -56,6 +56,20 @@ it cannot drift from the solution, and it costs zero config.
   defined by these very keys (`"camp"` no longer reaches `Camp`). The three maps are re-keyed
   case-insensitively at load, ahead of the defaults merge so a case-variant override replaces
   the default rather than sitting beside it.
+- Fixed alongside: type dedup keyed on the fully qualified name alone, but every project's
+  compilation reaches its references' source types, so the key had to be per ASSEMBLY. Two
+  assemblies may legitimately declare the same fully qualified name (an internal helper); the
+  second was dropped from scoring, and an assembly whose every type collided vanished from the
+  section map. Dedup is now `assembly|displayName`; the three display-name indexes downstream
+  became first-wins rather than throwing on the now-possible duplicate.
+- Fixed alongside: `canonicalReadDtos` were imported from EVERY config section, including keys
+  naming an assembly that no longer exists. Canonical names apply solution-wide, so a stale key
+  kept granting `canonicalReadDtoReturn` credit and suppressing `methodReturnsEntityAcrossSection`
+  everywhere — the opposite of the "policy for a section that doesn't exist is inert" contract.
+  Now restricted to live sections, and a new `unknown-config-section` **warning** names any policy
+  block that matches no assembly, so a mis-keyed or stale block is visible rather than silently
+  dropping its DTO anchors, overrides, and grandfathered debt. That matters for the migration this
+  release forces: config keys used to *define* sections and now have to match derived names.
 - Fixed alongside: stripping the shared prefix could land two different assemblies on one
   section name (`Company.Product` falls back to its last segment while `Company.Product.Product`
   strips to its tail — both `Product`), silently pooling two unrelated assemblies' scores into

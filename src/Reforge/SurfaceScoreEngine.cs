@@ -136,9 +136,27 @@ public sealed class SurfaceScoreEngine
         report.ConfiguredSections.AddRange(classified
             .Select(c => c.Group).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.Ordinal));
 
+        // Policy keyed to a section that no assembly produces is inert by design — but silently
+        // inert is a trap when config keys used to DEFINE the sections and now have to match
+        // assembly-derived names. Name them so a mis-keyed or stale block is visible instead of
+        // quietly dropping its DTO anchors, overrides, and grandfathered debt.
+        var unknownSections = _config.Sections.Keys
+            .Where(k => !report.ConfiguredSections.Contains(k, StringComparer.OrdinalIgnoreCase))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
+        if (unknownSections.Count > 0)
+            report.Diagnostics.Add(new ScoreDiagnostic("warning", "unknown-config-section",
+                $"Config section policy has no matching assembly and is ignored: {string.Join(", ", unknownSections)}. " +
+                $"Sections are assembly-derived; known sections are: {string.Join(", ", report.ConfiguredSections)}."));
+
         // Single canonical index — built once, used by both dependency-use and DI-registration
-        // passes. Safe under duplicate ToDisplayString because `classified` is already deduped.
-        var typesByDisplay = classified.ToDictionary(c => c.Type.ToDisplayString(), c => c, StringComparer.Ordinal);
+        // passes. `classified` is deduped per assembly, not per display name, so two assemblies
+        // declaring the same fully qualified name both appear here; first-wins rather than throwing.
+        // A lookup by display name is inherently ambiguous in that case, and keeping only one is
+        // strictly better than the old behavior, which dropped the second type from scoring entirely.
+        var typesByDisplay = new Dictionary<string, ClassifiedType>(StringComparer.Ordinal);
+        foreach (var c in classified)
+            typesByDisplay.TryAdd(c.Type.ToDisplayString(), c);
 
         // Section architecture (Plan B): resolve each configured section's shape once. Used to
         // score the five section rules and to emit conservation anchors. Computed before Pass 5
@@ -526,12 +544,20 @@ public sealed class SurfaceScoreEngine
         var entityWeight = _config.Weight("methodReturnsEntityAcrossSection");
         if (canonicalWeight == 0 && entityWeight == 0) return;
 
-        // Index canonical DTO names across all sections — a Tickets method returning Users's
-        // canonical DTO still earns the credit.
+        // Index canonical DTO names across all LIVE sections — a Tickets method returning Users's
+        // canonical DTO still earns the credit, but a policy block keyed to an assembly that no
+        // longer exists must be inert. Canonical names apply globally, so importing them from a
+        // stale key would let a deleted or renamed section keep silently granting credit and
+        // suppressing the entity penalty solution-wide.
+        var liveSections = new HashSet<string>(
+            classified.Select(c => c.Group), StringComparer.OrdinalIgnoreCase);
         var canonicalNames = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var s in _config.Sections.Values)
-            foreach (var n in s.CanonicalReadDtos)
+        foreach (var (section, rule) in _config.Sections)
+        {
+            if (!liveSections.Contains(section)) continue;
+            foreach (var n in rule.CanonicalReadDtos)
                 canonicalNames.Add(n);
+        }
 
         foreach (var c in classified)
         {
@@ -732,7 +758,11 @@ public sealed class SurfaceScoreEngine
             c.Type.TypeKind == TypeKind.Interface && c.Tags.Contains("readServiceInterface")).ToList();
         if (fullInterfaces.Count == 0 || readInterfaces.Count == 0) return pairs;
 
-        var readByDisplay = readInterfaces.ToDictionary(r => r.Type.ToDisplayString(), r => r, StringComparer.Ordinal);
+        // First-wins, for the same reason as typesByDisplay: display names are unique per assembly,
+        // not solution-wide.
+        var readByDisplay = new Dictionary<string, ClassifiedType>(StringComparer.Ordinal);
+        foreach (var r in readInterfaces)
+            readByDisplay.TryAdd(r.Type.ToDisplayString(), r);
         var readByNameInNamespace = readInterfaces.ToLookup(
             r => $"{r.Type.ContainingNamespace?.ToDisplayString()}|{r.Type.Name}",
             StringComparer.Ordinal);

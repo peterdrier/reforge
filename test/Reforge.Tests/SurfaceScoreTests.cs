@@ -170,6 +170,39 @@ public class SurfaceScoreTests
         // listing report.ConfiguredSections (the solution's assemblies).
     }
 
+    // ---------------- Stale config section policy ----------------
+
+    [Fact]
+    public async Task ScoreAsync_StaleSectionPolicy_IsInertAndReported()
+    {
+        // A policy block keyed to an assembly that no longer exists must not reach into scoring.
+        // canonicalReadDtos apply solution-wide, so importing them from a dead key would let a
+        // deleted section keep granting canonicalReadDtoReturn credit and suppressing the
+        // entity penalty everywhere — silently changing current scores.
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Sections["GhostSectionThatNoAssemblyProduces"] = new SectionRule
+        {
+            CanonicalReadDtos = new() { "UserDto" }
+        };
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        var diagnostic = Assert.Single(report.Diagnostics, d => d.Code == "unknown-config-section");
+        Assert.Contains("GhostSectionThatNoAssemblyProduces", diagnostic.Message);
+        Assert.DoesNotContain("GhostSectionThatNoAssemblyProduces", report.ConfiguredSections);
+    }
+
+    [Fact]
+    public async Task ScoreAsync_LiveSectionPolicy_IsNotReportedAsUnknown()
+    {
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Sections["Camp"] = new SectionRule { PrimaryInfoDto = "CampInfo" };
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        Assert.DoesNotContain(report.Diagnostics, d => d.Code == "unknown-config-section");
+    }
+
     // ---------------- Rule glossary ----------------
 
     [Fact]

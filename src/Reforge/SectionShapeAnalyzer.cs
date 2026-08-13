@@ -97,7 +97,11 @@ public static class SectionShapeAnalyzer
     public static async Task<SectionArchitecture> AnalyzeAsync(Solution solution,
         List<ClassifiedType> classified, SurfaceScoreConfig config, string solutionDirectory, CancellationToken ct)
     {
-        var typesByDisplay = classified.ToDictionary(c => c.Type.ToDisplayString(), c => c, StringComparer.Ordinal);
+        // First-wins: `classified` is deduped per assembly, so two assemblies declaring the same
+        // fully qualified name both reach here and a plain ToDictionary would throw.
+        var typesByDisplay = new Dictionary<string, ClassifiedType>(StringComparer.Ordinal);
+        foreach (var c in classified)
+            typesByDisplay.TryAdd(c.Type.ToDisplayString(), c);
 
         // Cross-section write-surface use (with escape analysis), keyed by consumer section.
         var crossUses = await AnalyzeCrossSectionUsesAsync(solution, classified, typesByDisplay, config, solutionDirectory, ct);

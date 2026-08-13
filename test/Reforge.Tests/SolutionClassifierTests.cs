@@ -20,7 +20,25 @@ public class SolutionClassifierTests
 
         Assert.Contains(classified, c => c.Type.Name == "UserService" && c.Tags.Contains("applicationService"));
         Assert.Contains(classified, c => c.Type.Name == "IUserService" && c.Tags.Contains("fullServiceInterface"));
-        Assert.Equal(classified.Select(c => c.Type.ToDisplayString()).Distinct().Count(), classified.Count);
+        // Uniqueness is per (assembly, display name) — NOT per display name. Two assemblies may
+        // legitimately declare the same fully qualified name; both must survive classification.
+        var keys = classified
+            .Select(c => $"{c.Type.ContainingAssembly?.Name}|{c.Type.ToDisplayString()}")
+            .ToList();
+        Assert.Equal(keys.Distinct().Count(), classified.Count);
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_SameTypeNameInTwoAssemblies_KeepsBoth()
+    {
+        var classified = await ClassifyAsync();
+
+        // SampleSolution.Shared.SectionMarker is declared internally in BOTH .Dorm and .Tent.
+        // Deduping on the display name alone dropped whichever was enumerated second.
+        var markers = classified.Where(c => c.Type.ToDisplayString() == "SampleSolution.Shared.SectionMarker").ToList();
+
+        Assert.Equal(2, markers.Count);
+        Assert.Equal(new[] { "Dorm", "Tent" }, markers.Select(m => m.Group).OrderBy(g => g, StringComparer.Ordinal));
     }
 
     [Fact]

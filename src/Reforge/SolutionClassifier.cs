@@ -45,7 +45,13 @@ public static class SolutionClassifier
                 // drop out here.
                 var assembly = type.ContainingAssembly?.Name;
                 if (assembly is null || !analyzed.Contains(assembly)) continue;
-                if (!seenByDisplay.Add(type.ToDisplayString())) continue;
+                // Dedup is per ASSEMBLY, not per display name. Every project's compilation reaches
+                // its references' source types, so the same type is enumerated repeatedly and must
+                // collapse — but two assemblies may legitimately declare the same fully qualified
+                // name (an internal helper, a generated type). Keying on the name alone dropped the
+                // second one, and an assembly whose every type collided vanished from the section
+                // map entirely.
+                if (!seenByDisplay.Add($"{assembly}|{type.ToDisplayString()}")) continue;
 
                 var primaryLocation = type.Locations.First(l => l.IsInSource);
                 var filePath = primaryLocation.SourceTree?.FilePath ?? "";
