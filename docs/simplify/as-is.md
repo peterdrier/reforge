@@ -153,6 +153,34 @@ Plus ad-hoc `Add`/`AddRange`/`AddAsync` checks in `AuditImmutableCommand` (three
 inbound and outbound views of the same code and are the two most-used commands — they can disagree
 about whether a method writes.
 
+### The output layer models one of the four question shapes
+
+`OutputFormatter` offers `WriteResults<T>` and `WriteMessage` — a list of locations, which is
+`target.md`'s shape A. Eighteen commands use it. The eight that don't hand-roll their own
+`WriteCompact`/`WriteJson` and their own `JsonSerializerOptions`: `snapshot`, `health`, `cycles`,
+`surface-score`, `section-shape`, `service-map`, `audit-surface`, `audit-downstream`.
+
+That set is not arbitrary — it is exactly the commands whose output is a member table or an
+aggregate report rather than a list of locations. This is one abstraction covering a quarter of
+the domain, with the other three-quarters improvising around it, not eight sloppy commands. The
+Json shape is the contract agents parse.
+
+### The four `audit-*` rule commands are four copies of one sweep
+
+`audit-auth`, `audit-cache`, `audit-immutable` and `audit-ef` each carry the same
+`foreach project / foreach document` structure (twice over, in each file), differing only in the
+predicate applied and the message emitted. `CLAUDE.md`'s Phase 3 specifies the target shape
+already — "rules are classes implementing a simple interface" — so this is drift from the stated
+design, not merely repetition.
+
+### Phase 2 does not exist
+
+`CLAUDE.md` describes three phases. Phase 2 — `rename`, `inject`, `move-method`,
+`remove-parameter`, `extract-interface` — is entirely unbuilt: no `Renamer`, no `DocumentEditor`,
+no `TryApplyChanges` anywhere in the tree, only a `// Phase 2 — Mechanical Transform commands
+(future)` comment at `Program.cs:88`. Building it is out of scope for simplification, but it
+constrains two backlog items — see `target.md`, "the transform seam".
+
 ### `SurfaceScoreEngine` is a 1,569-line god class
 
 Highest churn in the repo (22 commits). Internally organised as seven numbered passes plus

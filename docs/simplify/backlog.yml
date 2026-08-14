@@ -2,6 +2,12 @@
 # Value = bug surface removed + concepts removed + hotspot relief.
 # Phase order is the execution discipline: delete -> dedup -> collapse -> rearch, each green
 # before the next. `ratchet` items land whenever they unblock the others.
+# Ids are stable labels, not an ordering; file position is the value ranking.
+#
+# The frame for the collapse items is target.md's four question shapes: 28 command names over
+# shape A (symbol relation), B (member classification), C (sweep + predicate), D (solution
+# aggregate). The names are the product and are kept; 28 separate implementations of 4 shapes
+# are the accidental part.
 #
 # No `cut` items: the user reviewed the eight zero-usage commands and the dormant surface-score
 # config knobs on 2026-08-14 and chose to keep both. See as-is.md "load-bearing weirdness".
@@ -23,6 +29,19 @@
   effort: S
   status: open
 
+- id: S004
+  title: Cover the hot path — round-trip tests for serve/stop/ServerClient
+  phase: ratchet
+  behavior: preserves
+  gain: >
+    The entire hot-mode path has zero tests, which is exactly why S001 shipped and survived four
+    months. Pin it: every command in the registry round-trips through the server, and a command
+    the server cannot dispatch is a non-zero exit. Land in the same PR as S001 as its regression
+    test — the fix without the ratchet just resets the clock.
+  risk: low
+  effort: S
+  status: open
+
 - id: S002
   title: One definition of "is this a write" shared by the audit commands
   phase: dedup
@@ -38,6 +57,23 @@
   effort: M
   status: open
 
+- id: S011
+  title: Make the output layer model all four question shapes
+  phase: collapse
+  behavior: preserves
+  gain: >
+    OutputFormatter models shape A only — a list of locations — so every command needing a member
+    table or an aggregate report had to route around it. The eight escapees are exactly the
+    non-list commands: snapshot, health, cycles, surface-score, section-shape, service-map,
+    audit-surface, audit-downstream, each hand-rolling its own WriteCompact/WriteJson and
+    JsonSerializerOptions. This is not eight sloppy commands; it is one abstraction covering a
+    quarter of the domain. The Json shape is the contract agents parse, and CLAUDE.md makes
+    output a first-class concern, so it should be four emitters matching four shapes rather than
+    one plus eight improvisations. Highest concept-removal item in the list.
+  risk: med
+  effort: M
+  status: open
+
 - id: S003
   title: Extract resolve-or-explain so command files start at "I have a symbol"
   phase: dedup
@@ -47,20 +83,26 @@
     suggestions, ambiguous with candidates, stopwatch, Telemetry.Log. ReferencesCommand.cs:15-47
     and InheritorsCommand.cs:15-47 differ only in a string. One wrapper means new commands get
     consistent error text and telemetry for free, and a fix to ambiguity handling lands once.
+    Shape it so a caller that returns a diff rather than a result list can reuse it — that is the
+    first step of every Phase 2 transform (see target.md "the transform seam").
   risk: low
   effort: M
   status: open
 
-- id: S004
-  title: Cover the hot path — round-trip tests for serve/stop/ServerClient
-  phase: ratchet
+- id: S012
+  title: Make shape-C audit rules data — one sweep, four predicates
+  phase: collapse
   behavior: preserves
   gain: >
-    The entire hot-mode path has zero tests, which is exactly why S001 shipped and survived four
-    months. Pin it: every command in the registry round-trips through the server, and a command
-    the server cannot dispatch is a non-zero exit. Land alongside S001 as its regression test.
+    audit-auth, audit-cache, audit-immutable and audit-ef are four copies of the same
+    foreach-project/foreach-document sweep differing only in a predicate and a message. CLAUDE.md
+    Phase 3 already specifies the target — "rules are classes implementing a simple interface" —
+    so this is spec-vs-reality drift, not merely duplication, and it is the delta a code-level
+    read cannot surface. Keeps all four command names (surface decision of 2026-08-14) while
+    making a fifth rule an entry rather than a file. Static rule list only; defer plugin loading,
+    as CLAUDE.md also says.
   risk: low
-  effort: S
+  effort: M
   status: open
 
 - id: S005
@@ -71,7 +113,8 @@
     --limit is Recursive=true so it attaches to all 28 commands, but surface-score, section-shape,
     snapshot and cycles accept and silently ignore it (ReSharper UnusedParameter.Global on all
     four). Accepting a flag and dropping it is a trust bug in an agent-facing CLI. Either cap the
-    output or drop the parameter from those four Create signatures.
+    output or drop the parameter from those four Create signatures. Note the four ignorers are all
+    shape D — the honest fix may be that limit belongs to shapes A and B only.
   risk: low
   effort: S
   status: open
@@ -97,7 +140,8 @@
     1,569 lines and 22 commits — the biggest file and the highest churn in the repo. It is
     already organised as seven numbered passes behind comment banners; the file just never got
     split. A session touching one scoring rule stops loading all seven. File split only — no
-    IScoreRule abstraction, see target.md "deliberately not done".
+    IScoreRule abstraction, see target.md "deliberately not done". Deliberately the opposite call
+    from S012: shape-C rules are independent predicates, scoring passes share per-pass state.
   risk: low
   effort: M
   status: open
