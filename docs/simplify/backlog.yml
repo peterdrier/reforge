@@ -1,0 +1,219 @@
+# Reforge simplification backlog — sorted by value, not effort.
+# Value = bug surface removed + concepts removed + hotspot relief.
+# Phase order is the execution discipline: delete -> dedup -> collapse -> rearch, each green
+# before the next. `ratchet` items land whenever they unblock the others.
+# Ids are stable labels, not an ordering; file position is the value ranking.
+#
+# The frame for the collapse items is target.md's four question shapes: of the 29 registered
+# commands, 24 answer a question and fall into shape A (symbol relation, 10), B (member
+# classification, 3), C (sweep + predicate, 5) or D (solution aggregate, 6); the other five are
+# plumbing (serve, stop, skill, install, request). The names are the product and are kept;
+# 24 separate implementations of 4 shapes are the accidental part.
+#
+# No `cut` items: the user reviewed the eight zero-usage commands and the dormant surface-score
+# config knobs on 2026-08-14 and chose to keep both. See as-is.md "load-bearing weirdness".
+# Two items are behavior: changes, both fixing a flag or command that is broken today —
+# S001 (commands that silently print help and exit 0 under hot mode) and S005 (a --limit that is
+# accepted and ignored). Everything else preserves external behavior.
+
+- id: S001
+  title: One command registry — Program and ServeCommand build the root command from one list
+  phase: dedup
+  behavior: changes   # commands that silently printed help + exit 0 under hot mode now run
+  gain: >
+    Fixes a live silent-failure bug. With a hot server running, `reforge snapshot` and
+    `reforge surface-score` — the #3 and #4 most-used commands, 1,331 runs — print the root help
+    text and exit 0. ServeCommand's registration list was last updated 2026-04-13 and never
+    learned about snapshot, cycles, surface-score, or section-shape; TryRelayAsync reports
+    success for any completed socket round-trip and the server nulls stderr, so an agent sees a
+    zero exit and reads it as "no findings". Verified live on 2026-08-14. Collapsing the two
+    lists into one factory makes the class of bug unrepresentable rather than fixing four names.
+  risk: low
+  effort: S
+  status: open
+
+- id: S004
+  title: Cover the hot path — round-trip tests for every relay-eligible command
+  phase: ratchet
+  behavior: preserves
+  gain: >
+    The entire hot-mode path has zero tests, which is exactly why S001 shipped and survived four
+    months. Pin it: every *relay-eligible* command round-trips through the server, and a command
+    the server cannot dispatch is a non-zero exit. Relay eligibility is a registry property, not a
+    test-side list — Program.cs:7 already excludes serve, stop, skill, install and request from
+    relaying, and a test that round-tripped all 29 entries would start a nested server, stop the
+    test server, or perform local/global writes via `install`. Making eligibility a field is what
+    lets S001's single registry serve both hosts correctly rather than just identically; note
+    ServeCommand currently registers `skill`, which can never reach it. Land in the same PR as
+    S001 as its regression test — the fix without the ratchet just resets the clock.
+  risk: low
+  effort: S
+  status: open
+
+- id: S002
+  title: One write vocabulary, three explicitly-scoped consumers
+  phase: dedup
+  behavior: preserves
+  gain: >
+    The "is this a write" judgment is written three times — AuditSurfaceCommand.IsWriteApiName,
+    AuditDownstreamCommand.WriteApiNames, ImplementationComplexity.WriteCallNames — plus ad-hoc
+    checks in AuditImmutable and AuditCache, alongside duplicated DbSet-write classifiers,
+    test-path detectors and JsonSerializerOptions. Extending the write vocabulary today means
+    three coordinated edits kept consistent by hand.
+    NOT a correctness bug, and do not implement it as one. The three differ by scope on purpose:
+    audit-surface classifies per access chain; audit-downstream omits SaveChanges from its name
+    list because HasSaveChanges scans the whole method body and CollectDbSetAccesses promotes
+    every access via `write || saveChangesPresent` (AuditDownstreamCommand.cs:377);
+    ImplementationComplexity is narrower still by design (as-is.md weirdness #4). Share the
+    vocabulary; keep three named scope policies. A flat unification collapses distinct judgments
+    and will change output despite `behavior: preserves` — pin both commands' output on the
+    sample solution before touching anything.
+  risk: high
+  effort: M
+  status: open
+
+- id: S011
+  title: Make the output layer model all four question shapes
+  phase: collapse
+  behavior: preserves
+  gain: >
+    OutputFormatter models shape A only — a list of locations — so every command needing a member
+    table or an aggregate report had to route around it. The eight escapees are exactly the
+    non-list commands: snapshot, health, cycles, surface-score, section-shape, service-map,
+    audit-surface, audit-downstream, each hand-rolling its own WriteCompact/WriteJson and
+    JsonSerializerOptions. This is not eight sloppy commands; it is one abstraction covering a
+    quarter of the domain. The Json shape is the contract agents parse, and CLAUDE.md makes
+    output a first-class concern, so it should be four emitters matching four shapes rather than
+    one plus eight improvisations. Highest concept-removal item in the list.
+    Three formats, not two: `--format Markdown` is a real contract honoured by surface-score
+    (WriteMarkdown) and section-shape (WriteText markdown:true), and it lives inside the escapees
+    precisely because OutputFormatter has no notion of it. Preserve all three and the asymmetry —
+    Markdown is legitimately absent from most command/shape cells, and OutputFormatter.cs:11's
+    doc comment claiming only surface-score honours it is stale.
+  risk: med
+  effort: M
+  status: open
+
+- id: S003
+  title: Extract resolve-or-explain so command files start at "I have a symbol"
+  phase: dedup
+  behavior: preserves
+  gain: >
+    ~480 lines of byte-identical boilerplate across 12 command files: resolve, not-found with
+    suggestions, ambiguous with candidates, stopwatch, Telemetry.Log. ReferencesCommand.cs:15-47
+    and InheritorsCommand.cs:15-47 differ only in a string. One wrapper means new commands get
+    consistent error text and telemetry for free, and a fix to ambiguity handling lands once.
+    Shape it so a caller that returns a diff rather than a result list can reuse it — that is the
+    first step of every Phase 2 transform (see target.md "the transform seam").
+  risk: low
+  effort: M
+  status: open
+
+- id: S012
+  title: Make shape-C audit rules data — one sweep, four predicates
+  phase: collapse
+  behavior: preserves
+  gain: >
+    audit-auth, audit-cache, audit-immutable and audit-ef are four copies of the same
+    foreach-project/foreach-document sweep differing only in a predicate and a message. CLAUDE.md
+    Phase 3 already specifies the target — "rules are classes implementing a simple interface" —
+    so this is spec-vs-reality drift, not merely duplication, and it is the delta a code-level
+    read cannot surface. Keeps all four command names (surface decision of 2026-08-14) while
+    making a fifth rule an entry rather than a file. Static rule list only; defer plugin loading,
+    as CLAUDE.md also says.
+  risk: low
+  effort: M
+  status: open
+
+- id: S005
+  title: Scope --limit to the shapes that implement it
+  phase: collapse
+  behavior: changes   # a silently-ignored flag starts either working or erroring
+  gain: >
+    --limit is Recursive=true so it attaches to all 29 commands, but surface-score, section-shape,
+    snapshot and cycles accept and silently ignore it (ReSharper UnusedParameter.Global on all
+    four). Accepting a flag and dropping it is a trust bug in an agent-facing CLI — verified:
+    `reforge surface-score --limit 3` is accepted and exits 0 today.
+    Dropping limitOption from those four Create signatures does NOT fix it. A Recursive option on
+    the root attaches to every descendant whether or not the factory receives the Option object,
+    so the silent ignore would survive the delete unchanged. The fix has to be either attaching
+    the option non-recursively to the commands that implement it, or rejecting it explicitly on
+    the ones that don't. The four ignorers are all shape D, so scoping it to shapes A and B is the
+    frame-consistent answer. Needs a call at execute time on work-vs-reject; either way it is a
+    visible behavior change on those four commands, which is why this is not `preserves`.
+  risk: low
+  effort: S
+  status: open
+
+- id: S006
+  title: Fix the file-watcher reload's disposed-closure and async-void faults
+  phase: delete
+  behavior: preserves
+  gain: >
+    ServeCommand.cs:83-84,140 — the debounce Timer's async void lambda captures variables the
+    outer finally disposes, so an exception during reload takes the process down instead of
+    logging, and a reload racing shutdown touches disposed state. Real crash surface in the path
+    S004 is about to start exercising. Do it while the tests are being written.
+  risk: low
+  effort: S
+  status: open
+
+- id: S007
+  title: Split SurfaceScoreEngine's seven passes into files
+  phase: collapse
+  behavior: preserves
+  gain: >
+    1,569 lines and 22 commits — the biggest file and the highest churn in the repo. It is
+    already organised as seven numbered passes behind comment banners; the file just never got
+    split. A session touching one scoring rule stops loading all seven. File split only — no
+    IScoreRule abstraction, see target.md "deliberately not done". Deliberately the opposite call
+    from S012: shape-C rules are independent predicates, scoring passes share per-pass state.
+  risk: low
+  effort: M
+  status: open
+
+- id: S008
+  title: Delete unused locals and the unread BuildFullToReadPairs parameter
+  phase: delete
+  behavior: preserves
+  gain: >
+    Nine unused locals (SurfaceScoreEngine.cs:741, CodeHealthAnalyzer.cs:95 x2,
+    AuditSurfaceCommand.cs:581, AuditEfCommand.cs:50, HealthCommand.cs:38,
+    ServiceMapCommand.cs:52, FileDependencyGraph.cs:150), an unread typesByDisplay parameter on
+    BuildFullToReadPairs, and a CS8604 possible-null at ImplementationComplexity.cs:340. Each is a
+    false lead for a future reader. Verify against the test project before touching anything
+    ReSharper marks .Global — several internals exist only for Reforge.Tests.
+    Scope note: the three empty catch blocks ReSharper also flags are deliberately NOT in this
+    item. ServeCommand.cs:178 and StopCommand.cs:61 keep a locked .reforge-port from failing
+    shutdown or stale-server recovery, and SnapshotAnalyzer.cs:278 treats killing a timed-out
+    child as best effort. Deleting them is not behavior-preserving; see as-is.md weirdness #7.
+  risk: low
+  effort: S
+  status: open
+
+- id: S009
+  title: CI that builds, tests, and runs the dead-code scan
+  phase: ratchet
+  behavior: preserves
+  gain: >
+    There is no CI, no .editorconfig, no Directory.Build.props and no analyzers — nothing stops
+    the next S008 from accumulating, and nothing would have caught S001. A workflow running
+    dotnet build + dotnet test + jb inspectcode with a curated severity gate is what keeps this
+    backlog from needing a third pass. Land after S001/S004 so the gate starts green.
+  risk: low
+  effort: M
+  status: open
+
+- id: S010
+  title: Generate the skill doc and README command table from the registry
+  phase: rearch
+  behavior: preserves
+  gain: >
+    Once S001 makes the registry authoritative, SkillCommand (24 commands, missing snapshot,
+    cycles, section-shape) and the README table (14 of 29) are the two remaining hand-maintained
+    restatements. The skill doc is what Claude Code reads to learn the tool, so its drift is a
+    direct capability loss — three working commands are currently invisible to the agent. Emit
+    both from the registry's names and descriptions.
+  risk: med
+  effort: M
+  status: open
