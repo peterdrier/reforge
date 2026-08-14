@@ -4,14 +4,17 @@
 # before the next. `ratchet` items land whenever they unblock the others.
 # Ids are stable labels, not an ordering; file position is the value ranking.
 #
-# The frame for the collapse items is target.md's four question shapes: 28 command names over
-# shape A (symbol relation), B (member classification), C (sweep + predicate), D (solution
-# aggregate). The names are the product and are kept; 28 separate implementations of 4 shapes
-# are the accidental part.
+# The frame for the collapse items is target.md's four question shapes: of the 29 registered
+# commands, 24 answer a question and fall into shape A (symbol relation, 10), B (member
+# classification, 3), C (sweep + predicate, 5) or D (solution aggregate, 6); the other five are
+# plumbing (serve, stop, skill, install, request). The names are the product and are kept;
+# 24 separate implementations of 4 shapes are the accidental part.
 #
 # No `cut` items: the user reviewed the eight zero-usage commands and the dormant surface-score
 # config knobs on 2026-08-14 and chose to keep both. See as-is.md "load-bearing weirdness".
-# Every item below preserves external behavior, except S001 which fixes a silent failure.
+# Two items are behavior: changes, both fixing a flag or command that is broken today —
+# S001 (commands that silently print help and exit 0 under hot mode) and S005 (a --limit that is
+# accepted and ignored). Everything else preserves external behavior.
 
 - id: S001
   title: One command registry — Program and ServeCommand build the root command from one list
@@ -30,30 +33,42 @@
   status: open
 
 - id: S004
-  title: Cover the hot path — round-trip tests for serve/stop/ServerClient
+  title: Cover the hot path — round-trip tests for every relay-eligible command
   phase: ratchet
   behavior: preserves
   gain: >
     The entire hot-mode path has zero tests, which is exactly why S001 shipped and survived four
-    months. Pin it: every command in the registry round-trips through the server, and a command
-    the server cannot dispatch is a non-zero exit. Land in the same PR as S001 as its regression
-    test — the fix without the ratchet just resets the clock.
+    months. Pin it: every *relay-eligible* command round-trips through the server, and a command
+    the server cannot dispatch is a non-zero exit. Relay eligibility is a registry property, not a
+    test-side list — Program.cs:7 already excludes serve, stop, skill, install and request from
+    relaying, and a test that round-tripped all 29 entries would start a nested server, stop the
+    test server, or perform local/global writes via `install`. Making eligibility a field is what
+    lets S001's single registry serve both hosts correctly rather than just identically; note
+    ServeCommand currently registers `skill`, which can never reach it. Land in the same PR as
+    S001 as its regression test — the fix without the ratchet just resets the clock.
   risk: low
   effort: S
   status: open
 
 - id: S002
-  title: One definition of "is this a write" shared by the audit commands
+  title: One write vocabulary, three explicitly-scoped consumers
   phase: dedup
   behavior: preserves
   gain: >
-    audit-surface and audit-downstream are sold as the inbound and outbound views of the same
-    code and together are 38% of all usage — yet they carry different write-API name lists
-    (AuditDownstream omits SaveChanges/SaveChangesAsync), plus separate DbSet-write classifiers,
-    test-path detectors and JSON options. They can disagree about whether a method writes.
-    Move the shared judgments into one analysis type. Keep ImplementationComplexity's narrower
-    list as a named, documented policy — see as-is.md weirdness #4 — not a silent third copy.
-  risk: med
+    The "is this a write" judgment is written three times — AuditSurfaceCommand.IsWriteApiName,
+    AuditDownstreamCommand.WriteApiNames, ImplementationComplexity.WriteCallNames — plus ad-hoc
+    checks in AuditImmutable and AuditCache, alongside duplicated DbSet-write classifiers,
+    test-path detectors and JsonSerializerOptions. Extending the write vocabulary today means
+    three coordinated edits kept consistent by hand.
+    NOT a correctness bug, and do not implement it as one. The three differ by scope on purpose:
+    audit-surface classifies per access chain; audit-downstream omits SaveChanges from its name
+    list because HasSaveChanges scans the whole method body and CollectDbSetAccesses promotes
+    every access via `write || saveChangesPresent` (AuditDownstreamCommand.cs:377);
+    ImplementationComplexity is narrower still by design (as-is.md weirdness #4). Share the
+    vocabulary; keep three named scope policies. A flat unification collapses distinct judgments
+    and will change output despite `behavior: preserves` — pin both commands' output on the
+    sample solution before touching anything.
+  risk: high
   effort: M
   status: open
 
@@ -70,6 +85,11 @@
     quarter of the domain. The Json shape is the contract agents parse, and CLAUDE.md makes
     output a first-class concern, so it should be four emitters matching four shapes rather than
     one plus eight improvisations. Highest concept-removal item in the list.
+    Three formats, not two: `--format Markdown` is a real contract honoured by surface-score
+    (WriteMarkdown) and section-shape (WriteText markdown:true), and it lives inside the escapees
+    precisely because OutputFormatter has no notion of it. Preserve all three and the asymmetry —
+    Markdown is legitimately absent from most command/shape cells, and OutputFormatter.cs:11's
+    doc comment claiming only surface-score honours it is stale.
   risk: med
   effort: M
   status: open
@@ -106,15 +126,21 @@
   status: open
 
 - id: S005
-  title: Honour --limit or stop offering it
-  phase: delete
-  behavior: preserves
+  title: Scope --limit to the shapes that implement it
+  phase: collapse
+  behavior: changes   # a silently-ignored flag starts either working or erroring
   gain: >
-    --limit is Recursive=true so it attaches to all 28 commands, but surface-score, section-shape,
+    --limit is Recursive=true so it attaches to all 29 commands, but surface-score, section-shape,
     snapshot and cycles accept and silently ignore it (ReSharper UnusedParameter.Global on all
-    four). Accepting a flag and dropping it is a trust bug in an agent-facing CLI. Either cap the
-    output or drop the parameter from those four Create signatures. Note the four ignorers are all
-    shape D — the honest fix may be that limit belongs to shapes A and B only.
+    four). Accepting a flag and dropping it is a trust bug in an agent-facing CLI — verified:
+    `reforge surface-score --limit 3` is accepted and exits 0 today.
+    Dropping limitOption from those four Create signatures does NOT fix it. A Recursive option on
+    the root attaches to every descendant whether or not the factory receives the Option object,
+    so the silent ignore would survive the delete unchanged. The fix has to be either attaching
+    the option non-recursively to the commands that implement it, or rejecting it explicitly on
+    the ones that don't. The four ignorers are all shape D, so scoping it to shapes A and B is the
+    frame-consistent answer. Needs a call at execute time on work-vs-reject; either way it is a
+    visible behavior change on those four commands, which is why this is not `preserves`.
   risk: low
   effort: S
   status: open
@@ -147,17 +173,20 @@
   status: open
 
 - id: S008
-  title: Delete unused locals, the unread BuildFullToReadPairs parameter, and empty catches
+  title: Delete unused locals and the unread BuildFullToReadPairs parameter
   phase: delete
   behavior: preserves
   gain: >
     Nine unused locals (SurfaceScoreEngine.cs:741, CodeHealthAnalyzer.cs:95 x2,
     AuditSurfaceCommand.cs:581, AuditEfCommand.cs:50, HealthCommand.cs:38,
     ServiceMapCommand.cs:52, FileDependencyGraph.cs:150), an unread typesByDisplay parameter on
-    BuildFullToReadPairs, three empty general catches, and a CS8604 possible-null at
-    ImplementationComplexity.cs:340. Each is a false lead for a future reader. Verify against the
-    test project before touching anything ReSharper marks .Global — several internals exist only
-    for Reforge.Tests.
+    BuildFullToReadPairs, and a CS8604 possible-null at ImplementationComplexity.cs:340. Each is a
+    false lead for a future reader. Verify against the test project before touching anything
+    ReSharper marks .Global — several internals exist only for Reforge.Tests.
+    Scope note: the three empty catch blocks ReSharper also flags are deliberately NOT in this
+    item. ServeCommand.cs:178 and StopCommand.cs:61 keep a locked .reforge-port from failing
+    shutdown or stale-server recovery, and SnapshotAnalyzer.cs:278 treats killing a timed-out
+    child as best effort. Deleting them is not behavior-preserving; see as-is.md weirdness #7.
   risk: low
   effort: S
   status: open
@@ -181,7 +210,7 @@
   behavior: preserves
   gain: >
     Once S001 makes the registry authoritative, SkillCommand (24 commands, missing snapshot,
-    cycles, section-shape) and the README table (14 of 28) are the two remaining hand-maintained
+    cycles, section-shape) and the README table (14 of 29) are the two remaining hand-maintained
     restatements. The skill doc is what Claude Code reads to learn the tool, so its drift is a
     direct capability loss — three working commands are currently invisible to the agent. Emit
     both from the registry's names and descriptions.

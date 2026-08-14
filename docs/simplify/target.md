@@ -22,12 +22,18 @@ Sorting the commands by what they *do* rather than what they're named:
 | **C — sweep + predicate** | sweep documents → apply a rule predicate → emit offenders | `audit-auth` `audit-cache` `audit-immutable` `audit-ef` `ownership-violations` |
 | **D — solution aggregate** | sweep → accumulate → emit a structured report | `surface-score` `section-shape` `snapshot` `health` `cycles` `service-map` |
 
-Plus plumbing that answers no question: `serve` `stop` `skill` `install` `request`.
+Plus five that answer no question: `serve` `stop` `skill` `install` `request`. 24 + 5 = the 29
+commands `Program.cs` registers.
 
-**Twenty-eight names over four shapes is the design.** The names are the product — an agent
-benefits from each question having one — and they were deliberately kept on 2026-08-14. The
-accidental part is twenty-eight *implementations*: a command should be a name, a shape, and the
-one thing unique to it.
+**Twenty-four question names over four shapes is the design.** The names are the product — an
+agent benefits from each question having one — and they were deliberately kept on 2026-08-14. The
+accidental part is twenty-four *implementations*: a command should be a name, a shape, and the one
+thing unique to it.
+
+The plumbing five are not a fifth shape; they are the reason the registry needs a **relay
+eligibility** flag. `Program.cs:7` already refuses to relay them — `serve` would nest a server,
+`stop` would kill the one being used, `install` writes globally — so "every command reaches both
+hosts" is false by design, and the registry has to say which.
 
 This is the frame the rest of the page follows from, and it is what the first pass of this audit
 missed. Reading the code bottom-up finds duplication; reading the behavior top-down finds that the
@@ -60,16 +66,20 @@ one output abstraction plus eight escape hatches become four emitters that match
 
 ## Invariants
 
-- **One command registry.** `Program`, `ServeCommand`, the skill doc and the README all read one
-  list. Adding a command means editing one place; a command reachable cold is reachable hot.
+- **One command registry, carrying relay eligibility.** `Program`, `ServeCommand`, the skill doc
+  and the README all read one list. Adding a command means editing one place. A relay-eligible
+  command reachable cold is reachable hot; an ineligible one is refused at the client, never
+  half-registered on the server.
 - **A relayed command the server cannot run is an error, not help text.** `TryRelayAsync` reports
   success only when the server actually dispatched. Silent success is the worst failure mode for
   an agent-facing tool, which cannot see a help screen and infer something went wrong.
 - **Resolve-or-explain lives once.** Not-found suggestions, ambiguity candidates, timing and
   telemetry are wrapper concerns, shared by shapes A and B — and by transforms when they arrive.
 - **Every shape has an emitter; no command hand-rolls output.** The Json contract is what agents
-  parse, so it is one thing to keep stable, not twenty-eight. An escape hatch from the output layer
-  is evidence the shape list is wrong, not evidence the command is special.
+  parse, so it is one thing to keep stable, not twenty-four. An escape hatch from the output layer
+  is evidence the shape list is wrong, not evidence the command is special. Three formats —
+  Compact, Json, Markdown — and a shape may legitimately not implement all three; today Markdown
+  exists only for `surface-score` and `section-shape`. Absent is fine; hand-rolled is not.
 - **One semantic judgment per concept.** "Is this a write" has exactly one implementation. A caller
   needing a narrower policy — `ImplementationComplexity` legitimately does — names and documents
   the variant rather than keeping a private copy that drifts.
@@ -102,7 +112,7 @@ reserve its seam, because two backlog items are shaped by whether it exists:
 
 ## Deliberately not done
 
-- **No consolidation of the 28 command names.** Reviewed 2026-08-14 and declined. The names are the
+- **No consolidation of the 29 command names.** Reviewed 2026-08-14 and declined. The names are the
   agent-facing product; only the implementations collapse.
 - **No `IScoreRule` interface for the ~45 scoring rules.** Splitting `SurfaceScoreEngine` by pass is
   a file split, not an abstraction — the rules share too much per-pass state to reify. Note this is

@@ -18,7 +18,11 @@ static class with one `Create(solutionOption, formatOption, limitOption)` return
 
 ## External surface
 
-### 28 CLI commands
+### 29 CLI commands
+
+`Program.cs` registers **29**: 24 that answer a question about the solution, plus five plumbing
+commands (`serve`, `stop`, `skill`, `install`, `request`). The 24 are what `target.md`'s four
+shapes partition.
 
 Usage counts are from `~/.reforge/usage.log` — **4,516 real invocations** since 2026-04-11,
 which makes this repo unusually well-instrumented for a surface audit.
@@ -61,9 +65,21 @@ less, since every kept command has to stay registered in four places.
 
 ### Global options
 
-`--solution`, `--format Compact|Json`, `--limit` — all `Recursive = true`, so they attach to every
-command. `--limit` is **accepted and silently ignored** by `surface-score`, `section-shape`,
-`snapshot`, and `cycles` (ReSharper: `UnusedParameter.Global` on all four). See S005.
+`--solution`, `--format Compact|Json|Markdown`, `--limit` — all `Recursive = true`, so they attach
+to every command.
+
+**`--limit` is accepted and silently ignored** by `surface-score`, `section-shape`, `snapshot` and
+`cycles` (ReSharper: `UnusedParameter.Global` on all four). Note the ignore is *not* fixable by
+dropping the parameter from those `Create` signatures: `Recursive = true` attaches the option to
+every descendant independently of whether the factory ever receives the `Option` object. Verified —
+`reforge surface-score --limit 3` is accepted and exits 0 today. See S005.
+
+**`--format Markdown` is a third output contract, honoured by two commands.** `surface-score`
+dispatches to `WriteMarkdown` (`SurfaceScoreCommand.cs:165`) and `section-shape` renders markdown
+via `WriteText(..., markdown: true)` (`SectionShapeCommand.cs:78`); every other command falls back
+to Compact. The enum's own doc comment (`OutputFormatter.cs:11`) claims Markdown is "currently only
+honored by `surface-score`" and is therefore stale. Any output consolidation (S011) has to preserve
+all three formats and this two-command asymmetry.
 
 ### Files written outside the repo
 
@@ -109,7 +125,16 @@ Things that look accidental and are not. Do not "simplify" these without reading
    reviewed this and chose to keep all of it. `weights` in particular is the documented way to
    disable a rule (weight `0`), so it is a real escape hatch even unused. **Not backlog material.**
 
-7. **`InternalsVisibleTo(Reforge.Tests)`.** Several `internal` members exist only for tests
+7. **The three empty `catch` blocks are best-effort cleanup guards, not laziness.**
+   `ServeCommand.cs:178` and `StopCommand.cs:61` stop a locked or permission-denied `.reforge-port`
+   delete from turning shutdown, or stale-server recovery, into a command failure;
+   `SnapshotAnalyzer.cs:278` treats killing a timed-out child process as best effort. Deleting them
+   is **not** behavior-preserving. Narrowing them to the specific exceptions plus a stderr log is a
+   reasonable change, but it is behavior-visible and belongs in its own item, not bundled into a
+   dead-code sweep. (An earlier draft of this audit scheduled exactly that deletion under
+   `behavior: preserves`; it was wrong.)
+
+8. **`InternalsVisibleTo(Reforge.Tests)`.** Several `internal` members exist only for tests
    (`SurfaceScoreEngine.BuildFullToReadPairs`, `AuditDownstreamCommand.CollectInstanceMembers`).
    ReSharper's `.Global` dead-code hits on such members are false positives — check the test project
    before deleting anything flagged `.Global`.
@@ -120,7 +145,7 @@ Things that look accidental and are not. Do not "simplify" these without reading
 
 | Source | Commands listed | Missing |
 |---|---:|---|
-| `Program.cs:48-86` | 28 | — (canonical) |
+| `Program.cs:48-86` | 29 | — (canonical) |
 | `ServeCommand.cs:263-283` | 21 | `snapshot`, `cycles`, `surface-score`, `section-shape` |
 | `SkillCommand.cs` (agent-facing doc) | 24 | `snapshot`, `cycles`, `section-shape` |
 | `README.md` | 14 | 10 service-ownership/health/audit commands |
@@ -141,17 +166,27 @@ Twelve command files (`references`, `callers`, `implementations`, `inheritors`, 
 ambiguous-with-candidates → stopwatch → `Telemetry.Log`. Compare `ReferencesCommand.cs:15-47`
 against `InheritorsCommand.cs:15-47` — identical but for the command-name string.
 
-### Three divergent definitions of "is this a write?"
+### The "is this a write?" judgment is expressed three times at three scopes
 
-- `AuditSurfaceCommand.IsWriteApiName` — includes `SaveChanges`, `Add`, `Update`, `Remove`, `Execute*`
-- `AuditDownstreamCommand.WriteApiNames` — same list **minus** `SaveChanges`/`SaveChangesAsync`
+- `AuditSurfaceCommand.IsWriteApiName` — `SaveChanges`, `Add`, `Update`, `Remove`, `Execute*`,
+  classified per call site, with `IsLikelyDbContextWrite` disambiguating `list.Add` from `DbSet.Add`
+- `AuditDownstreamCommand.WriteApiNames` — the same list **minus** `SaveChanges*`, because
+  `SaveChanges` is handled at method scope instead: `HasSaveChanges` scans the whole body and
+  `CollectDbSetAccesses` promotes every access in it via `write || saveChangesPresent`
 - `ImplementationComplexity.WriteCallNames` — only `SaveChanges`/`Execute*`, deliberately (see
   weirdness #4)
 
 Plus ad-hoc `Add`/`AddRange`/`AddAsync` checks in `AuditImmutableCommand` (three sites) and a
-`SaveChanges` check in `AuditCacheCommand`. `audit-surface` and `audit-downstream` are sold as the
-inbound and outbound views of the same code and are the two most-used commands — they can disagree
-about whether a method writes.
+`SaveChanges` check in `AuditCacheCommand`.
+
+**These do not currently disagree.** An earlier draft of this audit claimed `audit-surface` and
+`audit-downstream` could reach opposite conclusions because of the `SaveChanges` omission; that was
+wrong, and the promotion at `AuditDownstreamCommand.cs:377` is the reason. The two commands classify
+at different scopes — per-access-chain versus per-method — and each is correct for its own view.
+What is accidental is that one judgment is written three times in three shapes, so a future change
+to the write vocabulary has to be made in three places and kept consistent by hand. That makes S002
+a maintainability item, not a correctness fix, and raises its risk: a naive unification collapses
+two distinct scopes and *will* change output.
 
 ### The output layer models one of the four question shapes
 
@@ -164,6 +199,11 @@ That set is not arbitrary — it is exactly the commands whose output is a membe
 aggregate report rather than a list of locations. This is one abstraction covering a quarter of
 the domain, with the other three-quarters improvising around it, not eight sloppy commands. The
 Json shape is the contract agents parse.
+
+The escape also carries the third format: `Markdown` is implemented only inside two of the
+escapees (`surface-score`, `section-shape`), because `OutputFormatter` has no notion of it. So the
+consolidation has three formats × four shapes to account for, not two × one — with Markdown
+legitimately absent from most cells.
 
 ### The four `audit-*` rule commands are four copies of one sweep
 
@@ -203,7 +243,7 @@ The non-noise set:
   `AuditSurfaceCommand.cs:581`, `AuditEfCommand.cs:50`, `HealthCommand.cs:38`,
   `ServiceMapCommand.cs:52`, `FileDependencyGraph.cs:150`, and one in tests).
 - `SurfaceScoreEngine.BuildFullToReadPairs` takes a `typesByDisplay` parameter it never reads.
-- 3× `EmptyGeneralCatchClause`.
+- 3× `EmptyGeneralCatchClause` — **all three are deliberate**; see weirdness #7.
 
 ## Test coverage
 
