@@ -27,6 +27,16 @@ public sealed class CampDelegator
     private static Task Consume(ICampServiceRead svc) => Task.CompletedTask;
 }
 
+// Return-type fixtures for the derived canonical read DTO set. All three return types belong to
+// the Camp section, so all three cross a section boundary; only the two exported from Camp's
+// contracts assembly are its published read API.
+public sealed class CampFeedReader
+{
+    public Task<CampInfo> GetCampAsync(Guid id) => Task.FromResult(new CampInfo());          // canonical -> credit
+    public Task<CampStayEntity> GetStayAsync(Guid id) => Task.FromResult(new CampStayEntity()); // canonical AND entity-classified -> credit, no leak penalty
+    public Task<CampLegacyEntity> GetLegacyAsync(Guid id) => Task.FromResult(new CampLegacyEntity()); // off the contracts surface -> entity leak
+}
+
 // Orchestrator-only, no repository — must NOT trip any missing* rule.
 public interface IBookingOrchestrator { Task RunAsync(CancellationToken ct = default); }
 public sealed class BookingOrchestrator : IBookingOrchestrator

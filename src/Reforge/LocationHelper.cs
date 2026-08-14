@@ -62,24 +62,40 @@ public static class LocationHelper
     }
 
     /// <summary>
-    /// Makes a file path relative to the solution directory and uses forward slashes.
+    /// Makes a file path relative to the solution directory and uses forward slashes. A path that
+    /// is not genuinely under the solution directory is returned as-is (forward-slashed).
     /// </summary>
+    /// <remarks>
+    /// Containment requires the prefix to end at a <b>directory boundary</b>, not merely to match
+    /// as a string. Solution root <c>/work/App</c> does not contain <c>/work/AppContracts/Foo.cs</c>,
+    /// but a bare <c>StartsWith</c> would return <c>Contracts/Foo.cs</c> for it — a path that never
+    /// existed, which then matches classification path globs (<c>**/Models/**</c>), the canonical
+    /// read DTO contracts-surface check, and is reported to the caller as a file it can open.
+    /// </remarks>
     public static string NormalizePath(string absolutePath, string solutionDirectory)
     {
         if (string.IsNullOrEmpty(absolutePath))
             return absolutePath;
 
         // Make relative
-        if (absolutePath.StartsWith(solutionDirectory, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrEmpty(solutionDirectory)
+            && absolutePath.StartsWith(solutionDirectory, StringComparison.OrdinalIgnoreCase))
         {
             var relative = absolutePath[solutionDirectory.Length..];
-            if (relative.StartsWith(Path.DirectorySeparatorChar) || relative.StartsWith(Path.AltDirectorySeparatorChar))
-                relative = relative[1..];
-            return relative.Replace('\\', '/');
+            if (relative.Length == 0)
+                return "";
+            if (IsSeparator(relative[0]))
+                return relative[1..].Replace('\\', '/');
+            // The solution directory already ended in a separator, so the boundary is satisfied.
+            if (IsSeparator(solutionDirectory[^1]))
+                return relative.Replace('\\', '/');
         }
 
         // If not under solution dir, return as-is with forward slashes
         return absolutePath.Replace('\\', '/');
+
+        static bool IsSeparator(char c) =>
+            c == Path.DirectorySeparatorChar || c == Path.AltDirectorySeparatorChar || c == '/' || c == '\\';
     }
 
     /// <summary>

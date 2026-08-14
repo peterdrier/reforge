@@ -89,6 +89,31 @@ public class SectionShapeAnalyzerTests
     }
 
     [Fact]
+    public async Task Analyze_FallsBackToDerivedCanonicalDto_WhenTheConventionMisses()
+    {
+        // Lodge publishes LodgeStayInfo from SampleSolution.Lodge/Contracts/ — no "LodgeInfo"
+        // exists, so the <Section>Info convention misses and the derived set is the only thing
+        // that can resolve the anchor. No config involved.
+        var arch = await AnalyzeAsync();
+        var lodge = arch.Sections.Single(s => s.Name == "Lodge");
+
+        Assert.Equal("LodgeStayInfo", lodge.PrimaryInfoDto!.Display.Split('.').Last());
+        Assert.DoesNotContain(lodge.Missing, m => m.Rule == "missingPrimaryInfoDto");
+    }
+
+    [Fact]
+    public async Task Analyze_NoContractsSurface_LeavesThePrimaryAnchorUnresolved()
+    {
+        // Tent has neither a .Contracts assembly nor a Contracts/ folder, so it declares no read
+        // API and nothing can invent one for it. Config used to be able to.
+        var arch = await AnalyzeAsync();
+        var tent = arch.Sections.Single(s => s.Name == "Tent");
+
+        Assert.Null(tent.PrimaryInfoDto);
+        Assert.Contains(tent.Missing, m => m.Rule == "missingPrimaryInfoDto");
+    }
+
+    [Fact]
     public async Task Analyze_PolicyPrimaryInfoDto_OverridesConvention()
     {
         // A section whose canonical DTO isn't "<Section>Info" still resolves through policy —

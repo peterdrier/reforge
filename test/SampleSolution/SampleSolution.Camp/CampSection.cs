@@ -25,6 +25,15 @@ public sealed class CampSectionService : ICampSectionService
     public Task RenameAsync(Guid id, string name, CancellationToken ct = default) => Task.CompletedTask;
 }
 
+// Same shape as CampStayEntity over in SampleSolution.Camp.Contracts, but declared in the section's
+// own assembly with no Contracts/ folder above it — off the contracts surface, so it is NOT a
+// canonical read DTO and handing it to another section stays an entity leak.
+public sealed class CampLegacyEntity
+{
+    public Guid Id { get; set; }
+    public int Nights { get; set; }
+}
+
 // --- Cache-inference fixture: a caching decorator whose cache value is its OWN DTO (not CampInfo) ---
 
 public sealed class CampCacheEntry { public Guid Id { get; set; } public string Name { get; set; } = ""; }

@@ -149,6 +149,13 @@ public sealed class SurfaceScoreEngine
                 $"Config section policy has no matching assembly and is ignored: {string.Join(", ", unknownSections)}. " +
                 $"Sections are assembly-derived; known sections are: {string.Join(", ", report.ConfiguredSections)}."));
 
+        // canonicalReadDtos is derived from each section's exported contracts surface now. A config
+        // still carrying the list would otherwise change meaning in silence — it used to grant the
+        // canonicalReadDtoReturn credit and suppress methodReturnsEntityAcrossSection solution-wide.
+        var removedField = _config.RemovedCanonicalReadDtosWarning();
+        if (removedField is not null)
+            report.Diagnostics.Add(new ScoreDiagnostic("warning", "removed-config-field", removedField));
+
         // Single canonical index — built once, used by both dependency-use and DI-registration
         // passes. Keyed by SolutionClassifier.TypeKey (declaring assembly + fully qualified name):
         // the name alone is not unique across a solution, and collapsing two assemblies' identically
@@ -563,20 +570,11 @@ public sealed class SurfaceScoreEngine
         var entityWeight = _config.Weight("methodReturnsEntityAcrossSection");
         if (canonicalWeight == 0 && entityWeight == 0) return;
 
-        // Index canonical DTO names across all LIVE sections — a Tickets method returning Users's
-        // canonical DTO still earns the credit, but a policy block keyed to an assembly that no
-        // longer exists must be inert. Canonical names apply globally, so importing them from a
-        // stale key would let a deleted or renamed section keep silently granting credit and
-        // suppressing the entity penalty solution-wide.
-        var liveSections = new HashSet<string>(
-            classified.Select(c => c.Group), StringComparer.OrdinalIgnoreCase);
-        var canonicalNames = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (section, rule) in _config.Sections)
-        {
-            if (!liveSections.Contains(section)) continue;
-            foreach (var n in rule.CanonicalReadDtos)
-                canonicalNames.Add(n);
-        }
+        // The canonical read DTOs of every section, derived from what each section exports from
+        // its contracts surface. The credit applies solution-wide — a Tickets method returning
+        // Users's canonical DTO still earns it — but membership is per-symbol, not per-name: two
+        // assemblies may each declare a UserInfo and only one may be a published read API.
+        var canonical = CanonicalReadDtoSet.Derive(classified, _solutionDirectory);
 
         foreach (var c in classified)
         {
@@ -604,11 +602,14 @@ public sealed class SurfaceScoreEngine
                 var loc = m.Locations.FirstOrDefault(l => l.IsInSource);
                 var (file, line) = LocateMember(loc, c);
 
-                // Canonical DTO credit takes precedence — exempt from the entity penalty.
-                if (canonicalWeight != 0 && canonicalNames.Contains(named.Name))
+                // Canonical DTO credit takes precedence — exempt from the entity penalty. The
+                // exemption holds even when the credit is weighted to 0: a canonical DTO is the
+                // section's read API by definition, so returning one is never an entity leak.
+                if (canonical.Contains(named))
                 {
-                    AddEntry(report, c.Group, "canonicalReadDtoReturn", canonicalWeight, m, file, line,
-                        $"{m.Name} -> {named.Name}");
+                    if (canonicalWeight != 0)
+                        AddEntry(report, c.Group, "canonicalReadDtoReturn", canonicalWeight, m, file, line,
+                            $"{m.Name} -> {named.Name}");
                     continue;
                 }
 

@@ -44,3 +44,13 @@ public sealed class CampSummary
     public Guid Id { get; set; }
     public string Name { get; set; } = "";
 }
+
+// Classified as an `entity` by the default rules (name matches "*Entity"), but exported from the
+// section's contracts assembly — so it IS Camp's published read API and returning it across a
+// section boundary must be credited, not charged as an entity leak. Its twin CampLegacyEntity
+// lives in SampleSolution.Camp, off the contracts surface, and stays chargeable.
+public sealed class CampStayEntity
+{
+    public Guid Id { get; set; }
+    public int Nights { get; set; }
+}

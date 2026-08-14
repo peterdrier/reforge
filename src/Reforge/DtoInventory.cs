@@ -21,11 +21,8 @@ public static class DtoInventory
     private static void Walk(INamedTypeSymbol type, string prefix, HashSet<string> visited,
         IReadOnlySet<string> canonical, List<string> paths, int maxDepth, int depth)
     {
-        foreach (var prop in type.GetMembers().OfType<IPropertySymbol>())
+        foreach (var prop in PublicReadableProperties(type))
         {
-            if (prop.DeclaredAccessibility != Accessibility.Public) continue;
-            if (prop.GetMethod is null) continue;
-
             var (element, isCollection) = Unwrap(prop.Type);
             string suffix = isCollection ? "[]" : "";
             string path = $"{prefix}.{prop.Name}{suffix}";
@@ -39,6 +36,37 @@ public static class DtoInventory
             else
             {
                 paths.Add(path);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A DTO's public readable instance properties, <b>including inherited ones</b>. A type whose
+    /// data lives on a data-only base class is still that data's carrier, and the conservation gate
+    /// proves facts against these paths — walking only declared members left such an anchor with
+    /// empty or partial <c>Paths</c>, so inherited facts read as absent and a refactor that dropped
+    /// one would pass unnoticed.
+    /// </summary>
+    /// <remarks>
+    /// Most-derived declaration wins, so an <c>override</c> or <c>new</c> property yields one path,
+    /// not one per level. Indexers and statics are skipped: neither is a fact about an instance that
+    /// a path can name. The walk stops at <see cref="SpecialType.System_Object"/> /
+    /// <see cref="SpecialType.System_ValueType"/>, whose members are universal.
+    /// </remarks>
+    private static IEnumerable<IPropertySymbol> PublicReadableProperties(INamedTypeSymbol type)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (INamedTypeSymbol? current = type; current is not null; current = current.BaseType)
+        {
+            if (current.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType) yield break;
+            foreach (var prop in current.GetMembers().OfType<IPropertySymbol>())
+            {
+                if (prop.DeclaredAccessibility != Accessibility.Public) continue;
+                if (prop.GetMethod is null) continue;
+                if (prop.IsStatic) continue;
+                if (prop.Parameters.Length > 0) continue;   // indexer — no stable path name
+                if (!seen.Add(prop.Name)) continue;         // shadowed/overridden below
+                yield return prop;
             }
         }
     }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace Reforge;
@@ -244,6 +245,26 @@ public sealed class SurfaceScoreConfig
     /// </summary>
     public SectionRule Policy(string section) =>
         Sections.TryGetValue(section, out var rule) ? rule : SectionRule.None;
+
+    /// <summary>
+    /// The warning for section blocks that still declare the removed <c>canonicalReadDtos</c> list,
+    /// or null when none do. Every command that resolves DTO anchors reports it — the field used to
+    /// change both the return-type score and the primary/settings anchors, so silence would let a
+    /// stale config look like it is still doing its job.
+    /// </summary>
+    public string? RemovedCanonicalReadDtosWarning()
+    {
+        var stale = Sections
+            .Where(s => s.Value.DeclaresRemovedCanonicalReadDtos)
+            .Select(s => s.Key)
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
+        if (stale.Count == 0) return null;
+
+        return $"'canonicalReadDtos' is no longer read and is ignored in: {string.Join(", ", stale)}. " +
+               "Canonical read DTOs are derived from each section's exported contracts surface " +
+               "(a <Section>.Contracts assembly, or a Contracts/ folder in the section's assembly).";
+    }
 }
 
 /// <summary>
@@ -256,13 +277,12 @@ public sealed class SectionRule
     public static readonly SectionRule None = new();
 
     /// <summary>
-    /// Canonical read DTOs for this section. When any public method's return type's simple
-    /// name matches one of these (across any section), that method earns the
-    /// <c>canonicalReadDtoReturn</c> credit. Canonical DTOs are also exempt from the
-    /// <c>methodReturnsEntityAcrossSection</c> penalty even if their simple name would
-    /// otherwise match the entity classification.
+    /// Config members this version no longer reads, captured so a stale block can be reported
+    /// instead of silently changing meaning. <c>canonicalReadDtos</c> lived here until it became
+    /// derived (see <see cref="CanonicalReadDtoSet"/>).
     /// </summary>
-    public List<string> CanonicalReadDtos { get; set; } = new();
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? Unrecognized { get; set; }
 
     /// <summary>Primary read/cache DTO for this section. Default convention: "&lt;Section&gt;Info".</summary>
     public string? PrimaryInfoDto { get; set; }
@@ -278,6 +298,15 @@ public sealed class SectionRule
     public bool? RequiresWriteSurface { get; set; }
     /// <summary>Override: does this section require a primary Info DTO? Null = inferred from repo-backed.</summary>
     public bool? RequiresPrimaryInfoDto { get; set; }
+    /// <summary>
+    /// Whether this block still carries the removed <c>canonicalReadDtos</c> list. The set is now
+    /// derived from the section's exported contracts surface, so the list is inert — and inert
+    /// config that used to grant credit and suppress a penalty must be reported, not ignored.
+    /// </summary>
+    public bool DeclaresRemovedCanonicalReadDtos =>
+        Unrecognized is not null
+        && Unrecognized.Keys.Any(k => k.Equals("canonicalReadDtos", StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Cross-section write/full dependencies exempt from crossSectionWriteSurface (visible debt).</summary>
     public List<GrandfatheredDependency> GrandfatheredDependencies { get; set; } = new();
     /// <summary>Read methods exempt from readSurfaceProjectionMethod (visible debt).</summary>

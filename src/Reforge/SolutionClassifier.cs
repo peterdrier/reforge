@@ -217,11 +217,16 @@ public static class AssemblySections
         return result;
     }
 
-    private static string Fold(string assemblyName) =>
+    /// <summary>
+    /// Whether the assembly is a section's published-contracts assembly (<c>&lt;X&gt;.Contracts</c>) —
+    /// the one place a section's exported read API can live outside its own assembly.
+    /// </summary>
+    public static bool IsContractsAssembly(string assemblyName) =>
         assemblyName.EndsWith(ContractsSuffix, StringComparison.OrdinalIgnoreCase)
-        && assemblyName.Length > ContractsSuffix.Length
-            ? assemblyName[..^ContractsSuffix.Length]
-            : assemblyName;
+        && assemblyName.Length > ContractsSuffix.Length;
+
+    private static string Fold(string assemblyName) =>
+        IsContractsAssembly(assemblyName) ? assemblyName[..^ContractsSuffix.Length] : assemblyName;
 
     private static int CommonLeadingSegments(string[] a, string[] b)
     {

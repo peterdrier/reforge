@@ -80,6 +80,12 @@ public static class SkillCommand
         assembly is stripped for display). Test projects are excluded. Nothing to author, nothing
         to keep in sync — the compiler enforces it.
 
+        **Canonical read DTOs are derived, not config.** A section's published read API is the set
+        of *exported* data types it declares on its contracts surface: in its `<Section>.Contracts`
+        assembly, or under a `Contracts/` folder in its own assembly. A `Contracts` namespace or
+        folder is not evidence on its own — an `internal` type declared there is not surface and is
+        not included. A section with neither shape publishes no read API, and its score says so.
+
         The config file is optional, searched for upward from the solution directory, and carries
         policy only. With no file present the built-in name-pattern classifications and default
         weights still produce a full score.
@@ -92,11 +98,11 @@ public static class SkillCommand
           // the assembly graph can't state; membership is NOT among them.
           "sections": {
             "Tickets": {
-              // Section-blessed read DTOs. Returning one of these from a public method earns
-              // the `canonicalReadDtoReturn` credit (negative weight). Canonical DTOs are
-              // also exempt from the `methodReturnsEntityAcrossSection` penalty.
-              "canonicalReadDtos": ["TicketOrderInfo", "TicketingBudgetInfo"],
-              "primaryInfoDto":   "TicketOrderInfo",   // default convention: "<Section>Info"
+              // (There is no `canonicalReadDtos` key. The section's read API is derived from what
+              // it exports from its contracts surface — see above. A config still carrying the old
+              // key is reported as `removed-config-field`, not silently ignored.)
+              "primaryInfoDto":   "TicketOrderInfo",   // default convention: "<Section>Info",
+                                                       // then the first derived canonical read DTO
               "settingsInfoDto":  "TicketSettingsInfo",// default convention: "<Section>SettingsInfo"
               "cacheDto":         "TicketOrderInfo",   // default: primaryInfoDto, else inferred from a caching decorator
               "readShards": [ { "name": "TicketsByEvent", "purpose": "event-scoped read model" } ],
@@ -152,7 +158,7 @@ public static class SkillCommand
           //   repositoryImplementationMethod (10), newRepositoryInterface (15),
           //   newRepositoryImplementation (15), diRegistration (3), controllerAction (8),
           //   backgroundJob (12), duplicateDbSetOwner (20),
-          //   canonicalReadDtoReturn (-3, credit when a method returns a section's canonical DTO),
+          //   canonicalReadDtoReturn (-3, credit when a method returns a section's derived canonical read DTO),
           //   methodReturnsEntityAcrossSection (15, method returns a domain entity from a different section)
           //
           // Dependency use (constructor injection across sections):

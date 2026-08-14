@@ -53,6 +53,14 @@ public static class SectionShapeCommand
             {
                 var dir = LocationHelper.GetSolutionDirectory(solution);
                 var config = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out var loadedFrom);
+
+                // This command resolves the primary/settings anchors, which the removed
+                // canonicalReadDtos list used to feed. Anchors and missing-surface output can move
+                // for a config that still declares it, so say so rather than change silently.
+                var removedField = config.RemovedCanonicalReadDtosWarning();
+                if (removedField is not null)
+                    Console.Error.WriteLine($"WARNING: {removedField}");
+
                 var classified = (await SolutionClassifier.ClassifyAsync(solution, config, dir, ct)).ToList();
                 var arch = await SectionShapeAnalyzer.AnalyzeAsync(solution, classified, config, dir, ct);
 

@@ -40,8 +40,7 @@ public class SurfaceScoreTests
             {
               "sections": {
                 "Users": {
-                  "primaryInfoDto": "UserInfo",
-                  "canonicalReadDtos": ["UserInfo"]
+                  "primaryInfoDto": "UserInfo"
                 },
                 "Orders": {
                   "requiresReadSurface": false
@@ -54,7 +53,6 @@ public class SurfaceScoreTests
 
         Assert.Equal(configPath, loadedFrom);
         Assert.Equal("UserInfo", cfg.Policy("Users").PrimaryInfoDto);
-        Assert.Contains("UserInfo", cfg.Policy("Users").CanonicalReadDtos);
         Assert.False(cfg.Policy("Orders").RequiresReadSurface);
         // A section with no policy block still resolves — to the shared empty policy.
         Assert.Same(SectionRule.None, cfg.Policy("Nope"));
@@ -175,14 +173,12 @@ public class SurfaceScoreTests
     [Fact]
     public async Task ScoreAsync_StaleSectionPolicy_IsInertAndReported()
     {
-        // A policy block keyed to an assembly that no longer exists must not reach into scoring.
-        // canonicalReadDtos apply solution-wide, so importing them from a dead key would let a
-        // deleted section keep granting canonicalReadDtoReturn credit and suppressing the
-        // entity penalty everywhere — silently changing current scores.
+        // A policy block keyed to an assembly that no longer exists must not reach into scoring,
+        // and must be named rather than quietly dropped.
         var cfg = SurfaceScoreConfig.Default();
         cfg.Sections["GhostSectionThatNoAssemblyProduces"] = new SectionRule
         {
-            CanonicalReadDtos = new() { "UserDto" }
+            PrimaryInfoDto = "UserDto"
         };
         var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
         var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
@@ -281,17 +277,25 @@ public class SurfaceScoreTests
     [Fact]
     public async Task CanonicalReadDto_ReturnTypeCredits()
     {
-        // Canonical DTO names are global policy: UserService (Services) returns Core's User, and
-        // naming User canonical must credit the returning method wherever it lives.
-        var cfg = SurfaceScoreConfig.Default();
-        cfg.Sections["Core"] = new SectionRule { CanonicalReadDtos = { "User" } };
+        // No config: the credit applies solution-wide off the DERIVED set. CampFeedReader lives in
+        // Reporting and returns CampInfo, which Camp exports from its .Contracts assembly.
+        var report = await ScoreDefaultAsync();
 
-        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
-
-        var canonical = report.Groups["Services"].Entries.Where(e => e.Rule == "canonicalReadDtoReturn").ToList();
+        var canonical = report.Groups["Reporting"].Entries.Where(e => e.Rule == "canonicalReadDtoReturn").ToList();
         Assert.NotEmpty(canonical);
+        Assert.Contains(canonical, e => e.Detail?.Contains("-> CampInfo", StringComparison.Ordinal) == true);
         Assert.All(canonical, e => Assert.True(e.Points < 0, "canonicalReadDtoReturn must contribute a credit (negative points)"));
+    }
+
+    [Fact]
+    public async Task CanonicalReadDto_NoCreditForDtosOffTheContractsSurface()
+    {
+        // CampLegacyEntity is public and exported, but declared in SampleSolution.Camp with no
+        // Contracts/ folder above it. Camp never published it, so returning it earns nothing.
+        var report = await ScoreDefaultAsync();
+
+        Assert.DoesNotContain(report.Groups["Reporting"].Entries, e => e.Rule == "canonicalReadDtoReturn"
+            && e.Detail?.Contains("CampLegacyEntity", StringComparison.Ordinal) == true);
     }
 
     // ---------------- methodReturnsEntityAcrossSection ----------------
@@ -316,26 +320,44 @@ public class SurfaceScoreTests
     [Fact]
     public async Task MethodReturnsEntityAcrossSection_ExemptsCanonicalDtos()
     {
-        // Same setup but mark User as a canonical DTO. The entity penalty is replaced by the
-        // canonical credit — never both for the same method.
-        var cfg = SurfaceScoreConfig.Default();
-        cfg.Sections["Core"] = new SectionRule { CanonicalReadDtos = { "User" } };
+        // CampStayEntity and CampLegacyEntity are the same shape and both classified `entity` by
+        // name; only CampStayEntity is exported from Camp's contracts assembly. CampFeedReader
+        // (Reporting) returns both across the boundary — the published one is credited, the other
+        // is charged. No config decides this.
+        var report = await ScoreDefaultAsync();
+        var reporting = report.Groups["Reporting"];
+
+        Assert.DoesNotContain(reporting.Entries, e => e.Rule == "methodReturnsEntityAcrossSection"
+            && e.Detail?.Contains("-> CampStayEntity", StringComparison.Ordinal) == true);
+        Assert.Contains(reporting.Entries, e => e.Rule == "canonicalReadDtoReturn"
+            && e.Detail?.Contains("-> CampStayEntity", StringComparison.Ordinal) == true);
+
+        Assert.Contains(reporting.Entries, e => e.Rule == "methodReturnsEntityAcrossSection"
+            && e.Detail?.Contains("-> CampLegacyEntity", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
+    public async Task RemovedCanonicalReadDtosField_IsReportedNotSilentlyIgnored()
+    {
+        // The field is gone, and System.Text.Json would drop it without a word — but a config that
+        // still carries it used to grant credit and suppress the entity penalty solution-wide.
+        var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-removed-field");
+        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "reforge.surface-score.json");
+        File.WriteAllText(configPath, """
+            { "sections": { "Camp": { "canonicalReadDtos": ["CampInfo"] } } }
+            """);
+
+        var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
+        Assert.True(cfg.Policy("Camp").DeclaresRemovedCanonicalReadDtos);
 
         var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
         var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
 
-        var services = report.Groups["Services"];
-        var userLeaks = services.Entries
-            .Where(e => e.Rule == "methodReturnsEntityAcrossSection")
-            .Where(e => e.Detail?.Contains("-> User", StringComparison.Ordinal) == true)
-            .ToList();
-        Assert.Empty(userLeaks);
-
-        var userCredits = services.Entries
-            .Where(e => e.Rule == "canonicalReadDtoReturn")
-            .Where(e => e.Detail?.Contains("-> User", StringComparison.Ordinal) == true)
-            .ToList();
-        Assert.NotEmpty(userCredits);
+        var diagnostic = Assert.Single(report.Diagnostics, d => d.Code == "removed-config-field");
+        Assert.Contains("canonicalReadDtos", diagnostic.Message);
+        Assert.Contains("Camp", diagnostic.Message);
     }
 
     // ---------------- duplicateDbSetOwner ----------------
