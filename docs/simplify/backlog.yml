@@ -1,0 +1,146 @@
+# Reforge simplification backlog — sorted by value, not effort.
+# Value = bug surface removed + concepts removed + hotspot relief.
+# Phase order is the execution discipline: delete -> dedup -> collapse -> rearch, each green
+# before the next. `ratchet` items land whenever they unblock the others.
+#
+# No `cut` items: the user reviewed the eight zero-usage commands and the dormant surface-score
+# config knobs on 2026-08-14 and chose to keep both. See as-is.md "load-bearing weirdness".
+# Every item below preserves external behavior, except S001 which fixes a silent failure.
+
+- id: S001
+  title: One command registry — Program and ServeCommand build the root command from one list
+  phase: dedup
+  behavior: changes   # commands that silently printed help + exit 0 under hot mode now run
+  gain: >
+    Fixes a live silent-failure bug. With a hot server running, `reforge snapshot` and
+    `reforge surface-score` — the #3 and #4 most-used commands, 1,331 runs — print the root help
+    text and exit 0. ServeCommand's registration list was last updated 2026-04-13 and never
+    learned about snapshot, cycles, surface-score, or section-shape; TryRelayAsync reports
+    success for any completed socket round-trip and the server nulls stderr, so an agent sees a
+    zero exit and reads it as "no findings". Verified live on 2026-08-14. Collapsing the two
+    lists into one factory makes the class of bug unrepresentable rather than fixing four names.
+  risk: low
+  effort: S
+  status: open
+
+- id: S002
+  title: One definition of "is this a write" shared by the audit commands
+  phase: dedup
+  behavior: preserves
+  gain: >
+    audit-surface and audit-downstream are sold as the inbound and outbound views of the same
+    code and together are 38% of all usage — yet they carry different write-API name lists
+    (AuditDownstream omits SaveChanges/SaveChangesAsync), plus separate DbSet-write classifiers,
+    test-path detectors and JSON options. They can disagree about whether a method writes.
+    Move the shared judgments into one analysis type. Keep ImplementationComplexity's narrower
+    list as a named, documented policy — see as-is.md weirdness #4 — not a silent third copy.
+  risk: med
+  effort: M
+  status: open
+
+- id: S003
+  title: Extract resolve-or-explain so command files start at "I have a symbol"
+  phase: dedup
+  behavior: preserves
+  gain: >
+    ~480 lines of byte-identical boilerplate across 12 command files: resolve, not-found with
+    suggestions, ambiguous with candidates, stopwatch, Telemetry.Log. ReferencesCommand.cs:15-47
+    and InheritorsCommand.cs:15-47 differ only in a string. One wrapper means new commands get
+    consistent error text and telemetry for free, and a fix to ambiguity handling lands once.
+  risk: low
+  effort: M
+  status: open
+
+- id: S004
+  title: Cover the hot path — round-trip tests for serve/stop/ServerClient
+  phase: ratchet
+  behavior: preserves
+  gain: >
+    The entire hot-mode path has zero tests, which is exactly why S001 shipped and survived four
+    months. Pin it: every command in the registry round-trips through the server, and a command
+    the server cannot dispatch is a non-zero exit. Land alongside S001 as its regression test.
+  risk: low
+  effort: S
+  status: open
+
+- id: S005
+  title: Honour --limit or stop offering it
+  phase: delete
+  behavior: preserves
+  gain: >
+    --limit is Recursive=true so it attaches to all 28 commands, but surface-score, section-shape,
+    snapshot and cycles accept and silently ignore it (ReSharper UnusedParameter.Global on all
+    four). Accepting a flag and dropping it is a trust bug in an agent-facing CLI. Either cap the
+    output or drop the parameter from those four Create signatures.
+  risk: low
+  effort: S
+  status: open
+
+- id: S006
+  title: Fix the file-watcher reload's disposed-closure and async-void faults
+  phase: delete
+  behavior: preserves
+  gain: >
+    ServeCommand.cs:83-84,140 — the debounce Timer's async void lambda captures variables the
+    outer finally disposes, so an exception during reload takes the process down instead of
+    logging, and a reload racing shutdown touches disposed state. Real crash surface in the path
+    S004 is about to start exercising. Do it while the tests are being written.
+  risk: low
+  effort: S
+  status: open
+
+- id: S007
+  title: Split SurfaceScoreEngine's seven passes into files
+  phase: collapse
+  behavior: preserves
+  gain: >
+    1,569 lines and 22 commits — the biggest file and the highest churn in the repo. It is
+    already organised as seven numbered passes behind comment banners; the file just never got
+    split. A session touching one scoring rule stops loading all seven. File split only — no
+    IScoreRule abstraction, see target.md "deliberately not done".
+  risk: low
+  effort: M
+  status: open
+
+- id: S008
+  title: Delete unused locals, the unread BuildFullToReadPairs parameter, and empty catches
+  phase: delete
+  behavior: preserves
+  gain: >
+    Nine unused locals (SurfaceScoreEngine.cs:741, CodeHealthAnalyzer.cs:95 x2,
+    AuditSurfaceCommand.cs:581, AuditEfCommand.cs:50, HealthCommand.cs:38,
+    ServiceMapCommand.cs:52, FileDependencyGraph.cs:150), an unread typesByDisplay parameter on
+    BuildFullToReadPairs, three empty general catches, and a CS8604 possible-null at
+    ImplementationComplexity.cs:340. Each is a false lead for a future reader. Verify against the
+    test project before touching anything ReSharper marks .Global — several internals exist only
+    for Reforge.Tests.
+  risk: low
+  effort: S
+  status: open
+
+- id: S009
+  title: CI that builds, tests, and runs the dead-code scan
+  phase: ratchet
+  behavior: preserves
+  gain: >
+    There is no CI, no .editorconfig, no Directory.Build.props and no analyzers — nothing stops
+    the next S008 from accumulating, and nothing would have caught S001. A workflow running
+    dotnet build + dotnet test + jb inspectcode with a curated severity gate is what keeps this
+    backlog from needing a third pass. Land after S001/S004 so the gate starts green.
+  risk: low
+  effort: M
+  status: open
+
+- id: S010
+  title: Generate the skill doc and README command table from the registry
+  phase: rearch
+  behavior: preserves
+  gain: >
+    Once S001 makes the registry authoritative, SkillCommand (24 commands, missing snapshot,
+    cycles, section-shape) and the README table (14 of 28) are the two remaining hand-maintained
+    restatements. The skill doc is what Claude Code reads to learn the tool, so its drift is a
+    direct capability loss — three working commands are currently invisible to the agent. Emit
+    both from the registry's names and descriptions.
+  risk: med
+  effort: M
+  status: open
