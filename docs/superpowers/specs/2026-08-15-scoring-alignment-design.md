@@ -383,7 +383,20 @@ The one member worth keeping in scope now is **net-new single-caller private hel
 the direct counterweight to any surviving size-based rule and is meaningless as a stock — it only
 exists as a delta.
 
-## The cleanup loop
+## The cleanup loop (consumer context — not reforge's design)
+
+**This section is FYI, not a reforge work item.** The loop is a Humans-side skill; its design
+belongs to that repo and to its owner. It is recorded here only because it is the demanding
+consumer these scoring changes are aimed at, and because two of its needs are genuine reforge
+requirements rather than nice-to-haves:
+
+- **Per-section density, not absolute points**, must be derivable from the report — otherwise no
+  consumer can rank sections fairly. `typesAnalyzed` exists; a per-section size denominator does
+  not.
+- **A named-rule-family view** must be reportable, so a consumer can target one family per run
+  rather than "reduce the total". `byRule` already carries this; the family grouping does not exist.
+
+Everything else below is the consumer's problem, sketched so those two requirements have context.
 
 The destination: a skill running daily against Humans, guiding continuous incremental change
 largely unattended over ~6 months.
@@ -468,11 +481,24 @@ addresses. The two problems are the same problem.
 
 ## Compatibility
 
+**Scores are not comparable across reforge versions, and that is not a goal.** Owner decision,
+2026-08-15: the only comparison that matters is pre/post a change to the *codebase*, measured with
+one reforge version on both sides. Nobody tracks a Humans score longitudinally across reforge
+upgrades.
+
+This materially loosens what the changes below have to preserve. Earlier releases (v0.24.0,
+v0.25.0) documented total movements as breaking and told readers to re-baseline deliberately; that
+caution was aimed at the wrong risk. Weights, rule sets, and axis definitions may change freely.
+What must hold instead:
+
+- **Same-version comparability is absolute.** A baseline and a current run must be produced by the
+  same reforge version — otherwise the comparison silently measures the tool rather than the code.
+  `SurfaceScoreBaseline.Compare` already guards the analogous build-state mismatch (v0.22.0); it
+  should guard version mismatch the same way, as a `warning` diagnostic plus `lowConfidence`, not a
+  refusal.
 - Renaming `internalComplexity` → `implementationShape` changes a top-level JSON key. Humans'
-  `pr-surface-report.py` parses this output and must be updated in the same change.
-- The contracts multiplier, the axis re-basing, and the test axis each move totals materially.
-  **Every baseline captured before them is incomparable**, exactly as v0.24.0 documented. Re-baseline
-  deliberately at each step rather than reading a large fake improvement.
+  `pr-surface-report.py` parses this output and must be updated in the same change. This is a
+  consumer break, which still matters; a score movement is not.
 - New axes are additive JSON keys. New commands are new keys, not changes to existing ones.
 
 ## Tests
