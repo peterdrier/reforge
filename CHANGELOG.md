@@ -36,6 +36,22 @@ Three consequences:
   never compiled a variant on its own. This also enforces the self-containment rule that was
   previously left to authoring discipline.
 
+Isolation created one problem of its own, which is fixed here rather than exempted around. Sections
+are derived from assembly names, so a variant compiled as a single project has exactly one section
+and a cross-section rule cannot fire in it at all — not because the rule is sound but because the
+harness cannot build the situation. Five rules (`crossSectionRepository`, `crossSectionReadInterface`,
+`crossSectionFullService`, `crossSectionWriteSurface`, `methodReturnsEntityAcrossSection`) would have
+sat in the backlog with no path out of it, which makes the backlog uncompletable by construction and
+is the same shape of mistake as reconstructing a score: a limit of the measuring apparatus recorded
+as a fact about the thing measured.
+
+A variant may therefore carry satellite files — `<label>.<variant>.<Section>.cs` beside it — each
+compiled as `SampleSolution.<Section>` and referenced by the primary project. The reference is
+one-way, so which side is the consumer (the side a cross-section rule charges) is never ambiguous.
+`IsolatedVariantScorerTests` proves the mechanism against a probe pair rather than a fixture:
+demonstrating that the harness *can* fire a rule is a different claim from demonstrating that the
+rule survives its cheapest fix, and only the second one earns a rule the "covered" label.
+
 ## Unreleased - Gate 1 is executable
 
 No product change — no version bump, same as the CI change that preceded it. What changed is a

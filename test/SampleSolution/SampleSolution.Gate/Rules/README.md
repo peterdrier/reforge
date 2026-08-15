@@ -41,3 +41,27 @@ Two consequences for writing fixtures:
 - **Fixtures must use BCL types only** — variants compile against the test host's reference set, and
   the sample solution declares no `PackageReference` anywhere (`SampleSolutionInvariantsTests`
   enforces the latter).
+
+## Variants that span sections
+
+Sections come from assembly names, so a variant compiled as one project has exactly one section and
+a cross-section rule can never fire in it. That is a limit of the harness, not a property of those
+rules, and left alone it would have made `crossSectionRepository` and its four siblings impossible
+to fixture no matter how much fixture-writing happened.
+
+So a variant may carry **satellite files** beside it, one per extra section:
+
+```
+crossSectionRepository.Before.cs        -> SampleSolution.Gate   (the consumer)
+crossSectionRepository.Before.Camp.cs   -> SampleSolution.Camp   (what it reaches for)
+```
+
+The segment between the variant name and `.cs` is the section name; it must be a bare identifier,
+which is what stops `.GoodFix.cs` from being read as a satellite of `.Before.cs`. The primary
+project references every satellite and never the reverse, so which side is the *consumer* — the side
+a cross-section rule charges — is unambiguous.
+
+Inside the full sample solution these files are all just Gate; only the isolated harness splits
+them. `_HarnessProbe.TwoSection*.cs` is the mechanism's own probe (`IsolatedVariantScorerTests`),
+not a fixture — it is deliberately not named `*.Before.cs`, because proving the harness *can* fire a
+rule is a different claim from proving that rule survives its cheapest fix.

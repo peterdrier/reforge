@@ -24,6 +24,14 @@ namespace Reforge.Tests;
 /// <c>SampleSolution.Gate</c> folds to section <c>Gate</c>, exactly as it does inside the full
 /// solution — so config policy applies identically and the isolation changes only what the harness
 /// can see, not what the engine decides.</para>
+///
+/// <para><b>A variant may span sections.</b> Sections are assembly-derived, so a one-project variant
+/// can never fire a cross-section rule — the caller and the dependency are always in the same
+/// section by construction. That would have made <c>crossSectionRepository</c> and friends
+/// permanently unfixturable and the Gate 1 backlog impossible to finish, which is a defect in the
+/// harness rather than a property of those rules. So a variant's satellite files
+/// (<c>&lt;stem&gt;.&lt;Section&gt;.cs</c> beside it) each become a project of their own,
+/// <c>SampleSolution.&lt;Section&gt;</c>, referenced by the primary one.</para>
 /// </summary>
 internal static class IsolatedVariantScorer
 {
@@ -78,20 +86,79 @@ internal static class IsolatedVariantScorer
         return entry.Value;
     }
 
+    /// <summary>
+    /// The satellite files of <paramref name="primaryFile"/>, keyed by the section each one declares:
+    /// <c>crossSectionRepository.Before.Camp.cs</c> beside <c>crossSectionRepository.Before.cs</c>
+    /// declares section <c>Camp</c>. Only a single bare identifier counts as a section, so
+    /// <c>.GoodFix.cs</c> and other variants of the same label are not mistaken for satellites of
+    /// each other.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> SatellitesOf(string primaryFile)
+    {
+        var directory = Path.GetDirectoryName(primaryFile)!;
+        var stem = Path.GetFileNameWithoutExtension(primaryFile); // "<label>.<variant>"
+        var found = new SortedDictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var candidate in Directory.EnumerateFiles(directory, stem + ".*.cs"))
+        {
+            var name = Path.GetFileName(candidate);
+            // The primary file itself can come back from the pattern on some platforms; it has
+            // nothing between the stem and the extension, so the length check drops it.
+            if (name.Length <= stem.Length + 1 + ".cs".Length) continue;
+            var middle = name[(stem.Length + 1)..^".cs".Length];
+            if (middle.Contains('.')) continue;
+            if (!middle.All(ch => char.IsLetterOrDigit(ch) || ch == '_')) continue;
+            found[middle] = candidate;
+        }
+        return found;
+    }
+
     private static async Task<ScoreReport> ScoreUncachedAsync(string sourceFile, string assemblyName, string solutionDirectory)
     {
         var projectDirectory = Path.GetDirectoryName(sourceFile)!;
-        var projectId = ProjectId.CreateNewId(assemblyName);
+        // "SampleSolution.Gate" -> "SampleSolution.", so a satellite named Camp becomes
+        // SampleSolution.Camp and AssemblySections strips the same shared prefix it strips in the
+        // real solution. The sections a variant reports are the ones its file names ask for.
+        var prefix = assemblyName[..(assemblyName.LastIndexOf('.') + 1)];
 
+        var satellites = new List<ProjectInfo>();
+        foreach (var (section, file) in SatellitesOf(sourceFile))
+            satellites.Add(await ProjectAsync(prefix + section, projectDirectory, file, Array.Empty<ProjectReference>()));
+
+        // The primary references every satellite, never the reverse: a cross-section rule charges
+        // the consumer, and making the direction one-way is what keeps which side is the consumer
+        // unambiguous in a fixture.
+        var primary = await ProjectAsync(assemblyName, projectDirectory, sourceFile,
+            satellites.Select(s => new ProjectReference(s.Id)).ToList());
+
+        var solutionInfo = SolutionInfo.Create(
+            SolutionId.CreateNewId(),
+            VersionStamp.Create(),
+            filePath: Path.Combine(solutionDirectory, "IsolatedVariant.slnx"),
+            projects: satellites.Append(primary).ToList());
+
+        using var workspace = new AdhocWorkspace();
+        var solution = workspace.AddSolution(solutionInfo);
+
+        var engine = new SurfaceScoreEngine(SurfaceScoreConfig.Default(), solutionDirectory);
+        return await engine.ScoreAsync(solution, CancellationToken.None);
+    }
+
+    private static async Task<ProjectInfo> ProjectAsync(
+        string assemblyName, string projectDirectory, string sourceFile, IReadOnlyList<ProjectReference> references)
+    {
+        var projectId = ProjectId.CreateNewId(assemblyName);
         var documents = new List<DocumentInfo>
         {
             Document(projectId, sourceFile, await File.ReadAllTextAsync(sourceFile)),
             // Synthetic, and given a path inside the project so that if it ever did declare a type
-            // the type would classify by the same path rules as any other.
-            Document(projectId, Path.Combine(projectDirectory, "ImplicitUsings.g.cs"), ImplicitUsings),
+            // the type would classify by the same path rules as any other. Named per assembly
+            // because two projects sharing a directory would otherwise share the path, and a
+            // classification keyed on file path cannot tell the copies apart.
+            Document(projectId, Path.Combine(projectDirectory, assemblyName + ".ImplicitUsings.g.cs"), ImplicitUsings),
         };
 
-        var project = ProjectInfo.Create(
+        return ProjectInfo.Create(
             projectId,
             VersionStamp.Create(),
             name: assemblyName,
@@ -102,19 +169,8 @@ internal static class IsolatedVariantScorer
                 OutputKind.DynamicallyLinkedLibrary,
                 nullableContextOptions: NullableContextOptions.Enable),
             documents: documents,
+            projectReferences: references,
             metadataReferences: RuntimeReferences.Value);
-
-        var solutionInfo = SolutionInfo.Create(
-            SolutionId.CreateNewId(),
-            VersionStamp.Create(),
-            filePath: Path.Combine(solutionDirectory, "IsolatedVariant.slnx"),
-            projects: new[] { project });
-
-        using var workspace = new AdhocWorkspace();
-        var solution = workspace.AddSolution(solutionInfo);
-
-        var engine = new SurfaceScoreEngine(SurfaceScoreConfig.Default(), solutionDirectory);
-        return await engine.ScoreAsync(solution, CancellationToken.None);
     }
 
     private static DocumentInfo Document(ProjectId projectId, string path, string text)

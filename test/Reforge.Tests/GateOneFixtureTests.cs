@@ -24,7 +24,9 @@ namespace Reforge.Tests;
 /// a variant's score is the whole report rather than a filtered slice of a shared one. The earlier
 /// filtering approach could not see section-level rules at all and mis-read the ones that carried a
 /// file, which meant a fixture's number could move because of a different fixture entirely; issue
-/// #26 has the three ways that went wrong.</para>
+/// #26 has the three ways that went wrong. A variant may span sections by carrying satellite files
+/// (<c>&lt;label&gt;.&lt;variant&gt;.&lt;Section&gt;.cs</c>), without which no cross-section rule
+/// could ever fire in a fixture and five backlog entries would be unreachable by construction.</para>
 ///
 /// <para>Fixtures live in <c>test/SampleSolution/SampleSolution.Gate/Rules/</c>, one pair per
 /// label, discovered from disk rather than listed here — a hand-maintained registry of fixtures is
@@ -86,13 +88,9 @@ public class GateOneFixtureTests
         "controllerAction",
         "backgroundJob",
         "duplicateDbSetOwner",
-        "methodReturnsEntityAcrossSection",
         "publicInputWithHiddenState",
         "parameterBagInput",
         "inlineParameterObjectConstruction",
-        "crossSectionReadInterface",
-        "crossSectionFullService",
-        "crossSectionRepository",
         "writeCapableInterfaceUsedReadOnly",
         "booleanParameter",
         "optionsBag",
@@ -103,17 +101,28 @@ public class GateOneFixtureTests
         "mutationModeParameter",
         "flagsControlFlow",
 
-        // These five were exempt while the harness scored one shared solution: they charge a
-        // section for its shape, and a filtered slice of a shared report either could not see them
-        // (recorded with no file) or attributed them to whichever fixture they landed on. Isolation
-        // removed that blocker — a variant compiled alone IS a section, so these now measure
-        // correctly and are merely unwritten. Writing them needs fixtures that establish a section
-        // shape, which is more than a type per file; that is the next tranche, not this change.
+        // Section-shape rules. These were exempt while the harness scored one shared solution: they
+        // charge a section for its shape, and a filtered slice of a shared report either could not
+        // see them (recorded with no file) or attributed them to whichever fixture they landed on.
+        // Isolation removed that blocker — a variant compiled alone IS a section — so they now
+        // measure correctly and are merely unwritten. Writing them needs a fixture that establishes
+        // a section shape, which is more than a type per file.
         "missingReadSurface",
         "missingWriteSurface",
         "missingPrimaryInfoDto",
         "readSurfaceProjectionMethod",
+
+        // Cross-section rules: they only fire when the consumer and the dependency are in
+        // different sections, and sections come from assembly names. A one-project variant has one
+        // section by construction, so these were unfixturable in a way that no amount of fixture
+        // writing would have fixed — a defect in the harness wearing a backlog entry's clothes.
+        // A variant can now declare satellite sections (see IsolatedVariantScorer.SatellitesOf and
+        // IsolatedVariantScorerTests), so what is left here is the writing.
+        "crossSectionReadInterface",
+        "crossSectionFullService",
+        "crossSectionRepository",
         "crossSectionWriteSurface",
+        "methodReturnsEntityAcrossSection",
     };
 
     // ---------------- The gate ----------------
