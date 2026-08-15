@@ -128,7 +128,7 @@ public static class SurfaceScoreCommand
                         return DegradedBuildGate.Refuse(report.BuildHealth, "surface-score", Console.Error);
                     }
 
-                    DegradedBuildGate.Warn(report.BuildHealth, Console.Error);
+                    DegradedBuildGate.Warn(report.BuildHealth, "surface-score", Console.Error);
                 }
 
                 BaselineComparison? baseline = null;

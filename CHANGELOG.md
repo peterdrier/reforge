@@ -28,6 +28,9 @@ the only reliable check and nothing forced anyone to make it.
 - **stderr names the counts and the individual errors** — `CSxxxx  <path>:<line>  <message>
   (<project>)`, the same shape Compact and Markdown already use — followed by a pointer to
   `--allow-degraded`. Capped by `--max-build-diagnostics` (default 25); the counts are never capped.
+  The diagnosis names the command you actually ran; the shared build description used to open with
+  "Surface-score is PARTIAL" regardless, which read as a bug in the tool when you had run
+  `section-shape`. The string embedded in `surface-score`'s JSON `diagnostics` array is unchanged.
 - **`section-shape` is covered by the same contract** and gains `--allow-degraded` and
   `--max-build-diagnostics`. It never inspected build health at all, though its anchors and
   `missing*` findings come off the same semantic model and break the same way. It inspects *before*

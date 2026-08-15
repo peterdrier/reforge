@@ -59,6 +59,34 @@ public class DegradedBuildGateTests
         Assert.Contains("section-shape", stderr.ToString(), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// And names <b>only</b> that command. The diagnosis is assembled from two sources — the build
+    /// description and the gate's own refusal line — and they used to disagree: running
+    /// <c>section-shape</c> on a broken tree opened with "Surface-score is PARTIAL" and then said
+    /// "Refusing to print a section-shape result". Two commands in three lines reads as a bug in the
+    /// tool rather than a fact about the build, which is the opposite of what a refusal must do.
+    ///
+    /// <para>The obvious assertion — that the right command appears — passed throughout, because it
+    /// did appear, on the second line. Naming a wrong one is the failure worth pinning.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("surface-score", "section-shape")]
+    [InlineData("section-shape", "surface-score")]
+    public void Refuse_NamesNoCommandOtherThanTheOneAskedFor(string requested, string other)
+    {
+        var refused = new StringWriter();
+        var warned = new StringWriter();
+
+        DegradedBuildGate.Refuse(Degraded(), requested, refused);
+        DegradedBuildGate.Warn(Degraded(), requested, warned);
+
+        foreach (var text in new[] { refused.ToString(), warned.ToString() })
+        {
+            Assert.Contains(requested, text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(other, text, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     [Fact]
     public void Refuse_ListsEachDiagnosticWithCodeFileLineMessageAndProject()
     {
@@ -130,7 +158,7 @@ public class DegradedBuildGateTests
     {
         var stderr = new StringWriter();
 
-        DegradedBuildGate.Warn(Degraded(diagnostics: new[] { Diag() }), stderr);
+        DegradedBuildGate.Warn(Degraded(diagnostics: new[] { Diag() }), "surface-score", stderr);
         var text = stderr.ToString();
 
         Assert.Contains("WARNING", text, StringComparison.Ordinal);
@@ -150,7 +178,7 @@ public class DegradedBuildGateTests
         var warnErr = new StringWriter();
 
         DegradedBuildGate.Refuse(Degraded(), "surface-score", refuseErr);
-        DegradedBuildGate.Warn(Degraded(), warnErr);
+        DegradedBuildGate.Warn(Degraded(), "surface-score", warnErr);
 
         Assert.StartsWith("ERROR:", refuseErr.ToString(), StringComparison.Ordinal);
         Assert.StartsWith("WARNING:", warnErr.ToString(), StringComparison.Ordinal);

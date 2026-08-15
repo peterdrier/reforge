@@ -33,7 +33,7 @@ public static class DegradedBuildGate
     /// </summary>
     public static int Refuse(BuildHealth health, string command, TextWriter stderr)
     {
-        stderr.WriteLine($"ERROR: {BuildInspector.DescribeDegraded(health)}");
+        stderr.WriteLine($"ERROR: {BuildInspector.DescribeDegraded(health, Subject(command))}");
         stderr.WriteLine($"Refusing to print a {command} result computed from an incomplete semantic model.");
         WriteDiagnostics(health, stderr);
         stderr.WriteLine("Fix the build and re-run, or pass --allow-degraded to analyze anyway (exit 0).");
@@ -48,12 +48,20 @@ public static class DegradedBuildGate
     /// The opt-out really does exit 0. A flag that still fails is a flag people route around with
     /// <c>|| true</c>, which suppresses the genuine failures too — worse than having no flag.
     /// </remarks>
-    public static void Warn(BuildHealth health, TextWriter stderr)
+    public static void Warn(BuildHealth health, string command, TextWriter stderr)
     {
-        stderr.WriteLine($"WARNING: {BuildInspector.DescribeDegraded(health)}");
+        stderr.WriteLine($"WARNING: {BuildInspector.DescribeDegraded(health, Subject(command))}");
         stderr.WriteLine("Continuing because --allow-degraded was passed; the result below is PARTIAL.");
         WriteDiagnostics(health, stderr);
     }
+
+    /// <summary>
+    /// The command name as it starts a sentence. Derived rather than passed as a second string, so
+    /// the two lines of the diagnosis cannot end up naming different commands — which is the defect
+    /// this exists to prevent, not a hypothetical.
+    /// </summary>
+    private static string Subject(string command) =>
+        command.Length == 0 ? "This result" : char.ToUpperInvariant(command[0]) + command[1..];
 
     /// <summary>
     /// Lists the retained errors in the same shape the Compact and Markdown formats use, so the

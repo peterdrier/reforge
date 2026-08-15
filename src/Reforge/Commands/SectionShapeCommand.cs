@@ -84,7 +84,7 @@ public static class SectionShapeCommand
                         return DegradedBuildGate.Refuse(buildHealth, "section-shape", Console.Error);
                     }
 
-                    DegradedBuildGate.Warn(buildHealth, Console.Error);
+                    DegradedBuildGate.Warn(buildHealth, "section-shape", Console.Error);
                 }
 
                 // This command resolves the primary/settings anchors, which the removed
