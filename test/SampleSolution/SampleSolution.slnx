@@ -8,4 +8,5 @@
   <Project Path="SampleSolution.Dorm/SampleSolution.Dorm.csproj" />
   <Project Path="SampleSolution.Tent/SampleSolution.Tent.csproj" />
   <Project Path="SampleSolution.Reporting/SampleSolution.Reporting.csproj" />
+  <Project Path="SampleSolution.Gate/SampleSolution.Gate.csproj" />
 </Solution>

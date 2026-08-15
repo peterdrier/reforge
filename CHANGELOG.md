@@ -2,6 +2,69 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Gate 1 is executable
+
+No product change — no version bump, same as the CI change that preceded it. What changed is a
+policy that was previously a promise.
+
+The scoring spec says every scored rule must clear an anti-gaming gate: a `Before` that fires the
+rule, a `CheapestFix` that is the laziest edit stopping it firing, and the requirement that **the
+score not improve between them**. A rule whose cheapest fix lowers the score is worse than no rule,
+because it spends an agent's effort and then reports the result as progress. Until now that was a
+review promise, which is why `longMethod` — a rule the spec is now retiring — shipped despite
+failing it.
+
+`test/SampleSolution/SampleSolution.Gate/` carries the fixtures, one pair per label, discovered from
+disk rather than listed in the test. The rules a pair targets are declared in a `// gate1:` comment
+in the Before file, and the harness checks each named rule actually fires there, so a fixture that
+gates nothing fails as a broken fixture rather than passing on two zeros.
+
+The gate asserts two things per pair, not one. First, the declared rule must charge **strictly less**
+in the cheapest fix — that is what makes the fixture a fix at all, since an agent edits code because
+a number went down. Then, and only then, does "the total did not drop" mean anything. With the total
+comparison alone, an unchanged copy of the Before file passes and the rule is recorded as gated
+forever.
+
+Two pairs so far:
+
+- **`methodParameterOverflow`** — cheapest fix is the parameter object. Six values still cross the
+  boundary; `parameterBagInput` and `optionsBag` charge for what the signature stopped declaring.
+- **`tupleReturn`** — cheapest fix is a named result type. Better code, but not free: a published
+  DTO is more durable surface than a tuple, since renaming a tuple element breaks nobody.
+
+A third pair, for `dtoScalarProperty` and `publicDtoType`, was written and then withdrawn — the
+first assertion above is what caught it. Pushing five of six properties into a nested DTO drops the
+*parent type's* property count, but points are attributed by declaring file, so `dtoScalarProperty`
+still charges six and the number an agent watches never moved. It was a relocation dressed as a fix.
+Two edits that would genuinely reduce the charge — collapsing the scalars into one collection
+property, or hoisting them to an unclassified base class, which `GetMembers()` does not see — are
+suspected to lower the total as well, which would make the gate red. Both are unverified, and a
+suspected-red gate is not something to ship on a hunch, so both rules moved to not-yet-covered.
+
+The harness scores the solution once and reconstructs each variant's total by filtering to its file,
+which is exact for per-declaration rules and wrong for section-coupled ones. Two shapes, both now
+caught: the `missing*` rules are recorded against the section with an empty file and vanish from the
+comparison, so a fixture declaring a repository would make the section repo-backed and switch them
+on for every pair at once; `readSurfaceProjectionMethod` and `crossSectionWriteSurface` do carry a
+file and so look like ordinary per-declaration points, but a fixture whose type name gets adopted as
+the section's primary DTO causes them to be charged against *other* fixtures' files. Either way a
+pair's score stops being a property of that pair. That now fails as a broken harness rather than
+passing as a gate. Fixtures must also be self-contained — `oneImplementationInterface` and
+`duplicateDbSetOwner` depend on what the rest of the solution declares — which is documented rather
+than checked, because detecting it needs the compilation and not the report.
+
+All of it is one defect: the variant's score is reconstructed from a shared compilation instead of
+measured in isolation. Fixing that is #26, and it is what the five section-coupled exemptions point
+at.
+
+The other 40 rules are accounted for explicitly: 9 are exempt with a stated reason (one credit, five
+section-coupled and so ungateable by this harness, three the spec retires), and 31 are listed as
+not-yet-covered. A scored rule in none of the three buckets fails the build — so the
+next rule added without a fixture is caught at the point where the fixture could still have been
+written first. Bucket membership is checked in both directions and for overlap, so an entry that no
+longer describes something true fails too — an exemption carries a reason, and a stale reason goes
+on excusing every future rule of the same shape.
+
 ## v0.28.1 - split the scoring engine by pass
 
 No behavior change. `SurfaceScoreEngine.cs` was 1,569 lines and the highest-churn file in the repo,

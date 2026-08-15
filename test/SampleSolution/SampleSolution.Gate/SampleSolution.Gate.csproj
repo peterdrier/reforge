@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Gate 1 anti-gaming fixtures. Deliberately references no other sample project: a fixture pair
+    must score in isolation, so that the points a pair moves are the pair's own and not a
+    cross-section rule firing against Camp or Services. It also declares no repository type, which
+    keeps the section from being repo-backed and so keeps the missing* rules off the Gate group.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
