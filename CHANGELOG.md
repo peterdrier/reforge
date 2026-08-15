@@ -43,9 +43,85 @@ the only reliable check and nothing forced anyone to make it.
 empty stdout when the tree is broken. That is the point, but it needs a matching update rather
 than being surprised by it.
 
-**Hot-mode caveat.** The exit code survives the relay only from v0.26.0 onward, where the server
-sends it back in the response. Against a v0.25.0 server the refusal still suppresses the score, but
-the client reports 0.
+**Hot mode.** The contract holds there because of v0.26.0, which is what makes these two commands
+run on the server at all and what carries the exit code and stderr back through the response frame.
+A server left running from an older build cannot silently swallow the refusal either: it advertises
+no protocol version in its port file, so the client declines to relay, says so on stderr, and takes
+the cold path — correct, just not fast until `reforge stop && reforge serve` picks up the new build.
+
+## v0.26.0 - one command registry (fixes the hot-mode silent failure)
+
+With a hot server running, `reforge surface-score`, `snapshot`, `cycles` and `section-shape`
+printed the root help text and **exited 0**. Four of the tool's commands — including the #3 and #4
+most-used, 1,331 recorded runs between them — silently did nothing whenever the fast path they
+exist to use was available. An agent reads exit 0 with empty output as "ran fine, no findings".
+
+The cause was four hand-maintained lists of the command surface that disagreed: `Program` listed
+29, `ServeCommand` 21, the agent-facing skill doc 24, the README 14. `ServeCommand`'s copy was last
+updated 2026-04-13, so every command added after that date was registered on the cold path and
+nowhere else. Nothing failed loudly because `TryRelayAsync` reported success for any completed
+socket round-trip and the server redirects stderr to `TextWriter.Null`.
+
+- **New `CommandRegistry` is the single list.** `Program` (cold) and `ServeCommand` (hot) both
+  build their root command from it, so a command cannot exist on one host and not the other.
+  Adding a command is one entry plus one factory arm; a spec with no factory throws by name at
+  startup on both hosts rather than going missing at runtime.
+- **Relay eligibility is a registry property**, not a string list in `Program`. The five plumbing
+  commands are ineligible for stated reasons (`serve` would nest a server, `stop` would kill the
+  one in use, `install` and `request` write outside the repo, `skill` prints a static document),
+  and the server no longer registers them. Note `skill` *was* registered server-side and could
+  never be reached, the same drift in the other direction.
+- **An unknown command is no longer relayed.** It reaches the cold path so `System.CommandLine` can
+  report an unrecognized command with a non-zero exit. Previously any first argument was forwarded,
+  and a typo came back as help text and exit 0.
+- **Relay eligibility is decided from the whole argument list**, not `args[0]`. The root's
+  `--solution`/`--format`/`--limit` are recursive, so `reforge --format json cycles` is valid and
+  its first argument is an option; deciding on `args[0]` would have pushed every such invocation
+  onto the cold path while a server sat idle.
+
+### The relay protocol is versioned (v1)
+
+Widening what gets relayed exposed how thin the wire format was: it could carry bytes but not a
+result. Fixing that piecemeal would have left a client and server from different commits talking
+past each other, so the format is now versioned, and **the version handshake happens out of band in
+`.reforge-port`, before a byte is sent** — neither side can negotiate in-band, because the thing
+they disagree about *is* the format.
+
+- **Exit codes.** `TryRelayAsync` returns `int?`: the command's exit code, or `null` when the
+  caller should cold-start. "The server ran this and it failed" and "there is no server" were
+  previously the same `false`.
+- **stderr is carried separately** instead of being redirected to `TextWriter.Null`. Some commands
+  report only there — `section-shape --section <unknown>` names the bad filter on stderr and then
+  prints a legitimate-looking empty result on stdout — so a relayed run used to discard the one
+  actionable message. The response is length-prefixed rather than delimited, so output containing
+  the header text cannot forge a section boundary and stdout survives character for character.
+- **The client's working directory travels with the request.** The server runs in whatever
+  directory it was started from, so a relative `--config`, `--baseline` or `snapshot --append` path
+  used to resolve against the server's directory rather than the caller's — newly reachable now
+  that those commands relay, and `snapshot --append` writes a file.
+- **Version mismatch degrades to the cold path in both directions.** A pre-v1 client cannot parse a
+  v1 port file (the protocol marker is on a second line, so its `int.TryParse` of the whole file
+  fails) and skips the relay rather than printing the frame as output. A v1 client finding no
+  marker says so on stderr and cold-starts rather than relaying into a server whose command table
+  predates the commands it would send. Both are slower and correct.
+- **No cold-path retry after dispatch.** Once a request is on the wire the server may have executed
+  it, so a later transport failure reports the error instead of re-running the command locally —
+  `snapshot --append` would otherwise write its CSV row twice.
+- **The server answers even when handling throws.** A failure used to leave the client reading an
+  empty response, indistinguishable from a clean run with no output; it now returns exit 1 and the
+  message.
+- `reforge stop` still sends a bare `__shutdown__` line, understood by every server version — the
+  advertised fix for a version mismatch must not itself require a matching build.
+
+Tests: `CommandRegistryTests` pins that every spec resolves to a factory whose command name matches,
+that the two hosts differ by exactly the five plumbing commands, that the four previously-missed
+commands are served, that `skill` is not, that the command token is found behind global options,
+and that ineligible/unknown/empty/unframed requests are refused with a non-zero exit.
+`ServerProtocolTests` pins the framing both ways: exit-code round trip, stream separation,
+character-exact stdout, hostile output that mimics the header, multibyte text, and both directions
+of the port-file version gate.
+
+Scoring output and every command's behavior on the cold path are unchanged.
 
 ## v0.25.0 - derive canonical read DTOs from the exported Contracts surface (BREAKING config change)
 

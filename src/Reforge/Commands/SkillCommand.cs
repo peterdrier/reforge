@@ -281,6 +281,11 @@ public static class SkillCommand
         auto-shuts-down after 5 minutes of query inactivity to free memory; tune with
         `reforge serve --idle-timeout <minutes>` (0 disables).
 
+        A relayed command returns the server's exit code and its stderr, so hot and cold runs are
+        interchangeable. If reforge prints "a hot server is running but speaks an older protocol",
+        the server predates your client: run `reforge stop` and restart `reforge serve`. Until you
+        do, commands still work — they just take the slow cold path.
+
         ## Contributing Suggestions
 
         Reforge is built by AI assistants, for AI assistants. If you notice a gap — a query you
