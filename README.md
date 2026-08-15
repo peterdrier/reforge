@@ -90,6 +90,15 @@ only**:
 }
 ```
 
+**A degraded build is refused, not scored.** If the solution doesn't compile cleanly, both
+`surface-score` and `section-shape` print nothing and exit **2** (distinct from 1, so a broken tree
+is machine-distinguishable from a broken tool). stderr carries the error and unresolved-reference
+counts plus the individual errors with file and line. A partial score reads as authoritative and
+has been quoted from broken trees before — two runs against the same broken tree agree with each
+other and are wrong together, so matching totals are not evidence of soundness. Pass
+`--allow-degraded` to analyze anyway; it prints the result, marks it degraded in every format, and
+exits 0.
+
 `reforge section-shape` renders the same sections as a report (interfaces, DTO anchors,
 cross-section use, missing surfaces, visible debt, advisories).
 
