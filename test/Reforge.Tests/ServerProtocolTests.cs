@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace Reforge.Tests;
 
 /// <summary>
@@ -59,7 +57,7 @@ public class ServerProtocolTests
     [Fact]
     public void Response_OutputContainingTheHeaderText_DoesNotForgeABoundary()
     {
-        const string hostile = "__reforge_res_v1__ 0 0\nnot really a header";
+        const string hostile = "__reforge_res_v2__ 0 0\nnot really a header";
         var parsed = ServerClient.ParseResponse(ServerClient.FormatResponse(7, "", hostile));
 
         Assert.NotNull(parsed);
@@ -82,24 +80,25 @@ public class ServerProtocolTests
     }
 
     /// <summary>
-    /// A pre-v1 server sends bare output with no frame. It is no longer read as success — that is
+    /// An older server sends bare output with no frame. It is no longer read as success — that is
     /// exactly how the silent-success bug survived a client upgrade — and the version gate in the
-    /// port file means a v1 client should never even reach such a server.
+    /// port file means this client should never even reach such a server.
     /// </summary>
     [Theory]
     [InlineData("4 references of Foo\n  src/Foo.cs\n")]
     [InlineData("")]
     [InlineData("__reforge_exit__:0\nlegacy sentinel from a v0.26 prerelease")]
-    public void Response_WithoutV1Framing_IsRejectedRatherThanAssumedSuccessful(string response)
+    [InlineData("__reforge_res_v1__ 0 0\nthe previous protocol's framing")]
+    public void Response_WithoutCurrentFraming_IsRejectedRatherThanAssumedSuccessful(string response)
     {
         Assert.Null(ServerClient.ParseResponse(response));
     }
 
     [Theory]
-    [InlineData("__reforge_res_v1__ 0")]                 // missing the stderr length
-    [InlineData("__reforge_res_v1__ notanumber 0\nx")]   // unparseable exit code
-    [InlineData("__reforge_res_v1__ 0 -1\nx")]           // negative length
-    [InlineData("__reforge_res_v1__ 0 99\nshort")]       // length runs past the body
+    [InlineData("__reforge_res_v2__ 0")]                 // missing the stderr length
+    [InlineData("__reforge_res_v2__ notanumber 0\nx")]   // unparseable exit code
+    [InlineData("__reforge_res_v2__ 0 -1\nx")]           // negative length
+    [InlineData("__reforge_res_v2__ 0 99\nshort")]       // length runs past the body
     public void Response_Malformed_IsRejected(string response)
     {
         Assert.Null(ServerClient.ParseResponse(response));
@@ -113,79 +112,135 @@ public class ServerProtocolTests
     /// directory `reforge serve` was started in.
     /// </summary>
     [Fact]
-    public async Task Request_CarriesTheClientWorkingDirectoryAndCommandLine()
+    public void Request_CarriesTheClientWorkingDirectoryAndArguments()
     {
-        var request = ServerClient.FormatRequest("/home/pete/projects/humans", "snapshot --append out.csv");
+        var parsed = ServerClient.ParseRequest(
+            ServerClient.FormatRequest("/home/pete/projects/humans", ["snapshot", "--append", "out.csv"]));
 
-        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(request));
-        using var reader = new StreamReader(stream);
-
-        Assert.Equal("__reforge_req_v1__", await reader.ReadLineAsync());
-        Assert.Equal("/home/pete/projects/humans", await reader.ReadLineAsync());
-        Assert.Equal("snapshot --append out.csv", await reader.ReadLineAsync());
+        Assert.NotNull(parsed);
+        Assert.Equal("/home/pete/projects/humans", parsed!.Value.WorkingDirectory);
+        Assert.Equal(new[] { "snapshot", "--append", "out.csv" }, parsed.Value.Args);
     }
 
     /// <summary>
-    /// A whole line per field, so a directory containing spaces needs no quoting rule — the case a
-    /// space-separated header would get wrong.
+    /// The arguments this has to survive, each of which the previous join-and-re-split framing lost
+    /// <b>silently</b>: a literal quote was deleted outright (Codex's example — <c>snapshot
+    /// --append 'daily"run.csv'</c> relayed as <c>dailyrun.csv</c>, writing the wrong file and
+    /// reporting success), a value with both a space and a quote came apart into two arguments, and
+    /// an empty argument disappeared, shifting every positional argument after it.
+    ///
+    /// <para>Newlines and the framing's own header text are here because length prefixes make them
+    /// free: there is no character with syntactic meaning left to escape.</para>
     /// </summary>
-    [Fact]
-    public async Task Request_WorkingDirectoryWithSpaces_NeedsNoQuoting()
+    [Theory]
+    [InlineData("daily\"run.csv")]
+    [InlineData("say \"hi\"")]
+    [InlineData("")]
+    [InlineData("My Type")]
+    [InlineData("   ")]
+    [InlineData("a\nb")]
+    [InlineData("__reforge_req_v2__ 0 0")]
+    [InlineData("café — naïve")]
+    [InlineData("\"")]
+    public void Request_ArgumentsSurviveCharacterForCharacter(string hostileArgument)
     {
-        var request = ServerClient.FormatRequest(@"C:\Users\Pete Drier\My Projects", "references Foo");
+        var args = new[] { "snapshot", "--append", hostileArgument, "--trailing" };
 
-        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(request));
-        using var reader = new StreamReader(stream);
+        var parsed = ServerClient.ParseRequest(ServerClient.FormatRequest("/tmp", args));
 
-        await reader.ReadLineAsync();
-        Assert.Equal(@"C:\Users\Pete Drier\My Projects", await reader.ReadLineAsync());
+        Assert.NotNull(parsed);
+        Assert.Equal(args, parsed!.Value.Args);
+    }
+
+    /// <summary>
+    /// The working directory gets the same treatment as an argument — it is a path, and a path may
+    /// contain a space on every platform reforge runs on.
+    /// </summary>
+    [Theory]
+    [InlineData(@"C:\Users\Pete Drier\My Projects")]
+    [InlineData("/home/pete/say \"hi\"")]
+    [InlineData("/tmp")]
+    public void Request_WorkingDirectorySurvivesCharacterForCharacter(string directory)
+    {
+        var parsed = ServerClient.ParseRequest(ServerClient.FormatRequest(directory, ["references", "Foo"]));
+
+        Assert.NotNull(parsed);
+        Assert.Equal(directory, parsed!.Value.WorkingDirectory);
     }
 
     [Fact]
-    public void BuildCommandLine_QuotesArgumentsContainingSpaces()
+    public void Request_NoArguments_ParsesAsAnEmptyArray()
     {
-        Assert.Equal("references \"My Type\"", ServerClient.BuildCommandLine(["references", "My Type"]));
-        Assert.Equal("references Foo", ServerClient.BuildCommandLine(["references", "Foo"]));
+        var parsed = ServerClient.ParseRequest(ServerClient.FormatRequest("/tmp", []));
+
+        Assert.NotNull(parsed);
+        Assert.Empty(parsed!.Value.Args);
+    }
+
+    [Theory]
+    [InlineData("references Foo")]                          // an older client's bare command line
+    [InlineData("__reforge_req_v1__\n/tmp\nreferences Foo")] // the previous protocol's framing
+    [InlineData("__reforge_req_v2__ 4 1 3\n/tmp")]           // body shorter than the lengths claim
+    [InlineData("__reforge_req_v2__ 4 1 3\n/tmpfoobar")]     // body longer than the lengths claim
+    [InlineData("__reforge_req_v2__ 4 2 3\n/tmpfoo")]        // header lists fewer lengths than argCount
+    [InlineData("__reforge_req_v2__ 4 1 -1\n/tmpx")]         // negative length
+    [InlineData("__reforge_req_v2__ x 1 3\n/tmpfoo")]        // unparseable working-directory length
+    [InlineData("__reforge_req_v2__ 4 1 3")]                 // no newline at all
+    public void Request_Malformed_IsRejected(string request)
+    {
+        Assert.Null(ServerClient.ParseRequest(request));
+    }
+
+    /// <summary>
+    /// A header claiming a huge argument count must be rejected before anything is sized by it — a
+    /// length list the body cannot back is a malformed frame, not an allocation request.
+    /// </summary>
+    [Fact]
+    public void Request_ImplausibleArgumentCount_IsRejectedWithoutAllocating()
+    {
+        Assert.Null(ServerClient.ParseRequest($"__reforge_req_v2__ 0 {int.MaxValue}\n"));
     }
 
     // ---------------- Port file: the out-of-band version handshake ----------------
 
     [Fact]
-    public void PortFile_RoundTripsPortAndProtocol()
+    public void PortFile_RoundTripsPortProtocolAndBuild()
     {
         var endpoint = ServerClient.ParsePortFile(ServerClient.FormatPortFile(54321));
 
         Assert.NotNull(endpoint);
         Assert.Equal(54321, endpoint!.Port);
         Assert.Equal(ServerClient.ProtocolVersion, endpoint.Protocol);
+        Assert.Equal(ServerClient.BuildIdentity, endpoint.Build);
     }
 
     /// <summary>
-    /// A pre-v1 server writes only the port. Reporting protocol 0 is what makes the client take
+    /// An older server writes only the port. Reporting protocol 0 is what makes the client take
     /// the cold path instead of relaying into a command table that doesn't know the newer commands.
     /// </summary>
     [Theory]
     [InlineData("54321")]
     [InlineData("54321\n")]
     [InlineData("  54321  ")]
-    public void PortFile_FromAPreV1Server_ParsesWithProtocolZero(string content)
+    public void PortFile_FromAnUnversionedServer_ParsesWithProtocolZeroAndNoBuild(string content)
     {
         var endpoint = ServerClient.ParsePortFile(content);
 
         Assert.NotNull(endpoint);
         Assert.Equal(54321, endpoint!.Port);
         Assert.Equal(0, endpoint.Protocol);
-        Assert.True(endpoint.Protocol < ServerClient.ProtocolVersion);
+        Assert.Equal("", endpoint.Build);
+        Assert.NotEqual(ServerClient.ProtocolVersion, endpoint.Protocol);
     }
 
     /// <summary>
-    /// The other direction of the handshake, and the reason the marker is on a second line: a
-    /// pre-v1 client reads the whole file and does <c>int.TryParse</c> on it. That has to FAIL
-    /// against a v1 port file, so the old client finds no server and cold-starts rather than
+    /// The other direction of the handshake, and the reason the markers are on later lines: a client
+    /// predating them reads the whole file and does <c>int.TryParse</c> on it. That has to FAIL
+    /// against a current port file, so the old client finds no server and cold-starts rather than
     /// relaying into framing it would print verbatim — corrupting `--format json` output.
     /// </summary>
     [Fact]
-    public void PortFile_V1Format_IsUnparseableByAPreV1Client()
+    public void PortFile_CurrentFormat_IsUnparseableByAClientPredatingIt()
     {
         var content = ServerClient.FormatPortFile(54321);
 
@@ -203,13 +258,13 @@ public class ServerProtocolTests
 
     /// <summary>
     /// The gate is an exact match, not a minimum. A newer server is no safer to dispatch to than
-    /// an older one: the version marks a framing change, so a v2 server's reply is by definition
+    /// an older one: the version marks a framing change, so a newer server's reply is by definition
     /// something this build cannot read — and finding that out after sending is finding out after
     /// the command may already have run.
     /// </summary>
     [Theory]
     [InlineData(0)]
-    [InlineData(2)]
+    [InlineData(1)]
     [InlineData(99)]
     public void PortFile_AnyProtocolOtherThanThisOne_IsNotADispatchTarget(int advertised)
     {
@@ -219,13 +274,60 @@ public class ServerProtocolTests
         Assert.NotEqual(ServerClient.ProtocolVersion, endpoint!.Protocol);
     }
 
+    // ---------------- Port file: the build-identity gate ----------------
+
+    /// <summary>
+    /// The protocol version is not a proxy for behavior. v0.26.0 and v0.27.0 both speak protocol 1,
+    /// and yet <c>surface-score</c> on a degraded build scores it and exits 0 on the first while
+    /// refusing and exiting 2 on the second. Nothing in the envelope distinguishes them, so a client
+    /// that gated on protocol alone relayed into the old contract and reported the old answer with
+    /// no warning. The build identity is what makes that case detectable.
+    /// </summary>
+    [Theory]
+    [InlineData("0.26.0/1a2b3c4d")]     // an earlier release
+    [InlineData("0.27.0/9f8e7d6c")]     // the same version, rebuilt — the dogfooding case
+    [InlineData("")]                    // a server predating the marker entirely
+    public void PortFile_AnyBuildOtherThanThisOne_IsNotADispatchTarget(string advertised)
+    {
+        var endpoint = ServerClient.ParsePortFile(
+            $"54321\nprotocol={ServerClient.ProtocolVersion}\nbuild={advertised}");
+
+        Assert.NotNull(endpoint);
+        Assert.Equal(ServerClient.ProtocolVersion, endpoint!.Protocol);   // the envelope agrees...
+        Assert.NotEqual(ServerClient.BuildIdentity, endpoint.Build);      // ...and it is still not us
+    }
+
+    /// <summary>
+    /// Version alone would not separate two builds of the same version, which is exactly the state
+    /// of any working tree between releases — the case where a stale server is most likely.
+    /// </summary>
+    [Fact]
+    public void BuildIdentity_CarriesMoreThanTheVersion()
+    {
+        var identity = ServerClient.BuildIdentity;
+
+        var slash = identity.IndexOf('/');
+        Assert.True(slash > 0, $"expected '<version>/<module id>', got '{identity}'");
+        Assert.NotEmpty(identity[(slash + 1)..]);
+    }
+
+    /// <summary>The identity has to survive the port file intact, or every relay is a mismatch.</summary>
+    [Fact]
+    public void BuildIdentity_ContainsNothingThePortFileFormatWouldMangle()
+    {
+        Assert.DoesNotContain("\n", ServerClient.BuildIdentity, StringComparison.Ordinal);
+        Assert.DoesNotContain("\r", ServerClient.BuildIdentity, StringComparison.Ordinal);
+        Assert.Equal(ServerClient.BuildIdentity.Trim(), ServerClient.BuildIdentity);
+    }
+
     [Fact]
     public void PortFile_CarriageReturns_AreTolerated()
     {
-        var endpoint = ServerClient.ParsePortFile("54321\r\nprotocol=1\r\n");
+        var endpoint = ServerClient.ParsePortFile("54321\r\nprotocol=2\r\nbuild=0.27.0/1a2b3c4d\r\n");
 
         Assert.NotNull(endpoint);
         Assert.Equal(54321, endpoint!.Port);
-        Assert.Equal(1, endpoint.Protocol);
+        Assert.Equal(2, endpoint.Protocol);
+        Assert.Equal("0.27.0/1a2b3c4d", endpoint.Build);
     }
 }

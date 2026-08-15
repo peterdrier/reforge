@@ -249,31 +249,40 @@ public static class ServeCommand
     internal static async Task<RequestResult> RunRequestAsync(
         StreamReader reader, CancellationTokenSource shutdownCts)
     {
-        var first = await reader.ReadLineAsync(shutdownCts.Token);
-        if (string.IsNullOrWhiteSpace(first))
+        // Read the whole request, not a fixed number of lines: the argument payload is
+        // length-prefixed and may contain newlines, so the frame ends at end-of-stream. The client
+        // half-closes its send side once the request is written, which is what produces that.
+        //
+        // Bounded, because the accept loop is sequential — a client that connects and then stalls
+        // would otherwise hold up every other request indefinitely. The timeout covers only reading
+        // the request bytes (immediate over loopback), never the command's execution, which follows.
+        using var readCts = CancellationTokenSource.CreateLinkedTokenSource(shutdownCts.Token);
+        readCts.CancelAfter(TimeSpan.FromSeconds(30));
+        var request = await reader.ReadToEndAsync(readCts.Token);
+
+        if (string.IsNullOrWhiteSpace(request))
             return new RequestResult(1, $"error: empty command{Environment.NewLine}", "");
 
         // Shutdown sentinel from the `stop` command — ack, then trip the cancellation that
         // unwinds the accept loop and runs cleanup. Deliberately a bare line rather than a framed
         // request, so `stop` from any build can always shut a server down.
-        if (first.Trim() == ServerClient.ShutdownRequest)
+        if (request.Trim() == ServerClient.ShutdownRequest)
         {
             shutdownCts.Cancel();
             return new RequestResult(0, "", $"ok: shutting down{Environment.NewLine}");
         }
 
-        if (first.Trim() != ServerClient.RequestHeader)
+        var parsed = ServerClient.ParseRequest(request);
+        if (parsed is null)
             return new RequestResult(1,
                 $"error: unrecognized request framing; this server speaks protocol v{ServerClient.ProtocolVersion}.{Environment.NewLine}", "");
 
-        // The client's working directory, so a relative --config/--baseline/--append resolves
-        // against the caller's directory rather than wherever `reforge serve` happened to start.
-        var clientWorkingDirectory = await reader.ReadLineAsync(shutdownCts.Token);
-        var commandLine = await reader.ReadLineAsync(shutdownCts.Token);
-        if (string.IsNullOrWhiteSpace(commandLine))
+        // The client's working directory travels with the request, so a relative
+        // --config/--baseline/--append resolves against the caller's directory rather than wherever
+        // `reforge serve` happened to start.
+        var (clientWorkingDirectory, args) = parsed.Value;
+        if (args.Length == 0)
             return new RequestResult(1, $"error: empty command{Environment.NewLine}", "");
-
-        var args = SplitCommandLine(commandLine);
 
         // Refuse anything the registry says this host does not serve, naming the command. The
         // client filters the same way, so reaching here means a version-skewed client or a
@@ -363,39 +372,4 @@ public static class ServeCommand
     /// </summary>
     private static async Task WriteResultAsync(StreamWriter writer, RequestResult result)
         => await writer.WriteAsync(ServerClient.FormatResponse(result.ExitCode, result.Stderr, result.Stdout));
-
-    /// <summary>
-    /// Basic command line splitting that handles quoted strings.
-    /// </summary>
-    private static string[] SplitCommandLine(string line)
-    {
-        var args = new List<string>();
-        var current = new System.Text.StringBuilder();
-        bool inQuotes = false;
-
-        foreach (var c in line)
-        {
-            if (c == '"')
-            {
-                inQuotes = !inQuotes;
-            }
-            else if (c == ' ' && !inQuotes)
-            {
-                if (current.Length > 0)
-                {
-                    args.Add(current.ToString());
-                    current.Clear();
-                }
-            }
-            else
-            {
-                current.Append(c);
-            }
-        }
-
-        if (current.Length > 0)
-            args.Add(current.ToString());
-
-        return args.ToArray();
-    }
 }

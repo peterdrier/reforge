@@ -2,6 +2,66 @@
 
 What changed and why. Newest first.
 
+## v0.28.0 - the relay carries arguments, not a command line (protocol v2)
+
+Two ways a hot server could answer differently from a cold run, both silent, both found by review
+of v0.26.0 rather than by anything failing.
+
+### Arguments are length-prefixed, not joined into a command line
+
+The client used to join `args` into a shell-like string that the server re-split on spaces and
+quotes. That round trip was lossy, and every loss was silent:
+
+| Sent | Server ran |
+|---|---|
+| `snapshot --append 'daily"run.csv'` | `snapshot --append dailyrun.csv` — **wrote a different file, reported success** |
+| `references 'say "hi"'` | `references say hi` — one argument became two |
+| `references ''` | `references` — the argument vanished, shifting every positional after it |
+
+The process already *has* the argument array; re-deriving it from text is what introduced the
+ambiguity. The array now travels as an array, with each element's length in the header — the same
+technique the response framing already used for stdout, and for the same reason. There is no
+character with syntactic meaning left in the payload, so quotes, spaces, newlines, empty strings and
+the framing's own header text all survive character for character.
+
+This changes the request format, so **the protocol version is now 2** and the existing gate does the
+rest: a v1 server and a v2 client decline to talk and the caller gets the cold path.
+
+### A hot server must be the same *build*, not just the same protocol
+
+The protocol version answers "can we read each other's bytes?" It says nothing about what the
+commands inside those bytes do — and a command's contract can reverse while the envelope stays
+identical. v0.27.0 is the case that proved it: `surface-score` refuses to score a degraded build and
+exits 2, where v0.26.0 scored it and exited 0. Same protocol, opposite answers. A client that had
+been upgraded while an older `reforge serve` was still running relayed into the old contract and
+reported the old answer, with nothing to indicate the gate it had just installed hadn't run.
+
+`.reforge-port` now carries a `build=` marker — the package version plus the module identifier — and
+the client relays only to a server whose build matches its own exactly. The module identifier is not
+decoration: the version does not change between rebuilds from source, which is precisely the
+situation where a server is most likely to be stale. Any mismatch prints one line naming both sides
+and takes the cold path, so the answer is always this build's answer.
+
+The general rule this encodes: **a hot server is a cache of a build.** Anything that would make a
+command behave differently makes the cached process wrong, and the port file is where that is
+detected — before a byte is sent, because neither side can discover it in-band.
+
+### Also
+
+- The server reads a request to end-of-stream rather than a fixed three lines, since the payload may
+  now contain newlines. That read is bounded (30s) because the accept loop is sequential — a client
+  that connects and stalls would otherwise hold up every later request. The bound covers reading the
+  request bytes only, never the command's execution.
+- `SplitCommandLine` and `BuildCommandLine` are deleted rather than fixed. An escaping scheme is one
+  more thing to get right on both sides; not needing one is better than getting one right.
+
+Tests pin the arguments that used to be lost — quotes, quotes-with-spaces, empty, whitespace-only,
+newlines, multibyte, and a value that is itself the request header — plus malformed frames in both
+directions, and that a build differing only in module identifier is not a dispatch target.
+
+This also retires v0.27.0's "restart your server after upgrading" instruction. The client now
+detects a stale server itself, so nothing depends on the operator remembering.
+
 ## v0.27.0 - refuse to score a degraded build (BREAKING behavior change)
 
 Reforge already knew when the solution had not compiled — `BuildInspector` counts error

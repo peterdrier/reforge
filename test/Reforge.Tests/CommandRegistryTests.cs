@@ -212,9 +212,9 @@ public class CommandRegistryTests
 
     // ---------------- Server dispatch (no workspace involved) ----------------
 
-    private static async Task<ServeCommand.RequestResult> DispatchAsync(string commandLine)
+    private static async Task<ServeCommand.RequestResult> DispatchAsync(params string[] args)
     {
-        var request = ServerClient.FormatRequest(Directory.GetCurrentDirectory(), commandLine);
+        var request = ServerClient.FormatRequest(Directory.GetCurrentDirectory(), args);
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(request));
         using var reader = new StreamReader(stream);
         using var cts = new CancellationTokenSource();
@@ -236,7 +236,7 @@ public class CommandRegistryTests
     [Fact]
     public async Task Server_RefusesAnUnknownCommand_WithNonZeroExit()
     {
-        var result = await DispatchAsync("no-such-command --solution x.slnx");
+        var result = await DispatchAsync("no-such-command", "--solution", "x.slnx");
 
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains("no-such-command", result.Stderr, StringComparison.Ordinal);
@@ -246,14 +246,28 @@ public class CommandRegistryTests
     [Fact]
     public async Task Server_RefusesAnEmptyCommand_WithNonZeroExit()
     {
-        var result = await DispatchAsync("");
+        var result = await DispatchAsync();
 
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains("empty command", result.Stderr, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// A pre-v1 client sends a bare command line with no framing. It must be refused rather than
+    /// The arguments reach the registry as sent. This goes through the real frame, so it fails if
+    /// the transport ever goes back to reconstructing a command line: under the old join-and-split
+    /// the quote was deleted and the command name could be merged with its neighbour.
+    /// </summary>
+    [Fact]
+    public async Task Server_ArgumentsContainingQuotesAndSpaces_ReachDispatchIntact()
+    {
+        var result = await DispatchAsync("skill", "--note", "say \"hi\"", "", "My Type");
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("'skill' is not a command", result.Stderr, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An older client sends a bare command line with no framing. It must be refused rather than
     /// misparsed — its first line would otherwise be read as the working directory.
     /// </summary>
     [Fact]
