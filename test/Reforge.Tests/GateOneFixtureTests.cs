@@ -199,12 +199,19 @@ public class GateOneFixtureTests
     }
 
     /// <summary>
-    /// The other direction: a rule listed as uncovered or exempt must still be a scored rule. This
-    /// is what makes the backlog shrink honestly — deleting a rule, or landing its fixture, without
-    /// removing its entry here would leave a list that no longer describes anything.
+    /// The other direction. Every rule belongs to exactly one bucket — covered, exempt, or
+    /// not-yet-covered — and each bucket's entries must still describe something true. Without
+    /// this, the lists rot in the one direction the forward check cannot see: the forward check
+    /// only asks whether a rule is accounted for <i>somewhere</i>, so a rule that gains a fixture
+    /// while keeping its old entry stays green while the entry becomes a lie.
+    ///
+    /// <para>The exempt bucket is the one that matters most here. Its entries carry a reason, and
+    /// a reason is a claim — "this rule cannot have a cheapest-fix pair". The day someone builds
+    /// the section-shaped harness and gates <c>missingReadSurface</c>, that claim is false, and a
+    /// stale exemption would go on excusing every future rule of the same shape.</para>
     /// </summary>
     [Fact]
-    public void TheUncoveredList_DescribesRulesThatStillExistAndAreStillUncovered()
+    public void EveryRule_BelongsToExactlyOneBucket_AndEveryEntryStillDescribesSomethingTrue()
     {
         var scored = SurfaceScoreConfig.Default().Weights
             .Where(kv => kv.Value != 0)
@@ -212,16 +219,26 @@ public class GateOneFixtureTests
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var covered = CoveredRules();
+        var problems = new List<string>();
 
-        var stale = NotYetCovered.Concat(Exempt.Keys)
-            .Where(r => !scored.Contains(r))
-            .Select(r => $"{r} (no longer a scored rule)")
-            .Concat(NotYetCovered.Where(covered.Contains).Select(r => $"{r} (now has a fixture)"))
-            .OrderBy(r => r, StringComparer.Ordinal)
-            .ToList();
+        foreach (var rule in NotYetCovered.Concat(Exempt.Keys).Distinct(StringComparer.OrdinalIgnoreCase))
+            if (!scored.Contains(rule))
+                problems.Add($"{rule}: listed here but is not a scored rule — delete the entry.");
 
-        Assert.True(stale.Count == 0,
-            "Stale entries in this file's Exempt/NotYetCovered lists: " + string.Join(", ", stale));
+        foreach (var rule in NotYetCovered.Where(Exempt.ContainsKey))
+            problems.Add($"{rule}: listed as both exempt and not-yet-covered — it is one or the other.");
+
+        foreach (var rule in covered.Where(NotYetCovered.Contains))
+            problems.Add($"{rule}: has a fixture but is still listed as not-yet-covered — delete the entry.");
+
+        foreach (var rule in covered.Where(Exempt.ContainsKey))
+            problems.Add($"{rule}: has a fixture but is still listed as exempt (\"{Exempt[rule]}\") — "
+                + "that reason is now false, so delete the exemption rather than leaving it to excuse the next rule.");
+
+        problems.Sort(StringComparer.Ordinal);
+        Assert.True(problems.Count == 0,
+            "Bucket assignments in this file are stale or overlapping:" + Environment.NewLine
+            + string.Join(Environment.NewLine, problems));
     }
 
     // ---------------- Discovery ----------------
