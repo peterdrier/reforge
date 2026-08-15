@@ -63,6 +63,25 @@ jobs:
           path: artifacts/test-results
           if-no-files-found: warn
 
+      # Dogfooding. CLAUDE.md makes scoring Reforge's own solution a standing goal and nothing
+      # enforced it, so the tool could stop opening its own workspace and no check would notice.
+      #
+      # This needs no assertion of its own: surface-score refuses a degraded workspace and exits 2
+      # unless --allow-degraded is passed, so "the step succeeded" already means MSBuildWorkspace
+      # opened Reforge.slnx, every project compiled, and the engine ran end to end over a real
+      # solution. That is a strictly stronger claim than the unit suite makes — the suite scores the
+      # sample solution, which is BCL-only by invariant and therefore never exercises package
+      # resolution or a project graph with real references.
+      #
+      # Reforge.slnx was restored and built above, so this scores a compiled tree rather than a
+      # cold one. The compact report goes to the log deliberately: it is the only place the tool's
+      # own numbers are visible without a local SDK, and it is what makes the score answerable to
+      # its own output rather than to argument.
+      - name: Score own solution
+        run: >
+          dotnet run --project src/Reforge --configuration Release --no-build --
+          surface-score --solution Reforge.slnx
+
   smoke:
     name: CLI smoke
     runs-on: ubuntu-latest
