@@ -77,9 +77,20 @@ jobs:
       # cold one. The compact report goes to the log deliberately: it is the only place the tool's
       # own numbers are visible without a local SDK, and it is what makes the score answerable to
       # its own output rather than to argument.
+      #
+      # Invoked as `dotnet <dll>` rather than `dotnet run`. `dotnet run` exports MSBuild's own
+      # environment — MSBuildExtensionsPath, MSBuildSDKsPath and friends — into the child process,
+      # and MSBuildLocator then resolves against the *hosting* build rather than the installed SDK.
+      # The first attempt at this step hung there for fifteen minutes with no output. Running the
+      # built assembly directly is the same binary in a clean environment.
+      #
+      # timeout-minutes because that hang produced no signal at all: the step would have run to the
+      # job's six-hour ceiling. A tool whose whole promise is answering a question in one shot has
+      # no business taking minutes, so a bounded failure is the correct report.
       - name: Score own solution
+        timeout-minutes: 5
         run: >
-          dotnet run --project src/Reforge --configuration Release --no-build --
+          dotnet src/Reforge/bin/Release/net10.0/Reforge.dll
           surface-score --solution Reforge.slnx
 
   smoke:
