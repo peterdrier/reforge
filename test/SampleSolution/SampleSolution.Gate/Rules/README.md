@@ -15,6 +15,26 @@ Every scored rule must come with a pair here before it ships:
 2. **The total does not drop.** If it does, the rule is gameable: an agent can satisfy it without
    improving the design, and the rule is training readers to accept a worse codebase.
 
+## When a rule fails
+
+Some rules fail. Add a `// gate1-gameable: <why the cheapest fix is degenerate>` line to the
+`Before` file and the second assertion inverts: the drop becomes *required*
+(`KnownGameableFixtures_StillLowerTheScore`). If someone later repairs the rule, that test fails and
+says to delete the marker, which is the one moment the repair could otherwise pass unnoticed and
+leave a finding standing that is no longer true.
+
+The alternative was a red build, and a red build is not a finding — it is a blocked branch, and
+blocked branches get unblocked by tuning the fixture until it passes. That is the gate becoming the
+thing it exists to catch.
+
+The marker asserts something no test can check: that the cheapest fix is **degenerate** — it
+satisfies the rule while leaving the design no better, ideally worse. Some rules want surface
+*deleted*, and for those the honest cheapest fix is a genuine improvement whose score *should* fall;
+marking that pair gameable would be a false accusation with a green check next to it. The note is
+where the argument that the fix is degenerate goes, and it is required to be non-empty.
+
+## Fixture authoring
+
 Point 1 is why a fix that only *relocates* surface is not a cheapest fix. Splitting a six-property
 DTO into a parent and a nested child drops the parent's property count, but `dtoScalarProperty`
 charges per property across the variant and still charges six — the number an agent watches never

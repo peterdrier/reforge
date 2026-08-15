@@ -2,6 +2,54 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Gate 1 tranche 1, and somewhere to put a rule that fails
+
+No product change. Test infrastructure and findings.
+
+Four rules got fixtures. One holds; three do not, and the three are the point.
+
+**A failing rule needed somewhere to go.** The gate was pass/fail, so the only way to record a rule
+an agent can game was to leave the build red — and a red build is not a finding. It is a blocked
+branch, and blocked branches get unblocked by tuning the fixture until it passes, which is the gate
+quietly becoming the thing it was built to catch. A `Before` file may now carry
+`// gate1-gameable: <why the cheapest fix is degenerate>`, and the assertion inverts: the score drop
+becomes *required*. Repair the rule and the test fails, telling you to delete the marker — the one
+moment a repair could otherwise pass unnoticed and leave a finding standing that is no longer true.
+
+The marker asserts what no test can check: that the cheapest fix leaves the design no better. Some
+rules want surface deleted, and for those the honest cheapest fix is a real improvement whose score
+*should* fall. Marking that gameable would be a false accusation with a green check beside it, so
+the note carries the argument and is required to be non-empty.
+
+**Gated: `applicationServiceMethod`.** The cheapest way to make a per-method charge smaller is to
+publish one door into all the operations and pick between them with an argument. Nothing is removed,
+the boundary gets weaker, and `genericActionDispatcher`/`mutationModeParameter` charge more than the
+two method charges saved. This is the case the gate was built around and it holds.
+
+**Gameable: `dashboardAdminPageName`.** The rule matches the method's identifier, so the cheapest
+edit is a rename — no return type, no parameters, no caller, no need to read the body. Rules keyed
+on names can only ever cost an agent a rename. Fixing it is a design question (find screen coupling
+structurally, or admit it is a naming lint and not a score), so it is recorded rather than patched.
+
+**Gameable: `optionsBag`.** Unbundling the bag back into loose parameters satisfies the rule and
+costs two `methodParameterOverflow` points against the eight it saves. A weighting failure, not a
+detection failure: two rules describe roughly the same problem — too much crossing a boundary at
+once — and price it 4× apart, which reads as an instruction to unbundle.
+
+**Gameable: `dtoScalarProperty`.** Six typed properties collapse into one `Dictionary<string,
+string>` for a net saving, and the rule cannot tell that apart from a real reduction. Every value
+still crosses the boundary; what is gone is the type system's knowledge of them, which by any
+reading is *more* durable surface, not less. Property count is a proxy for contract width and is
+reducible without touching what it stands for. A second dodge is recorded in the fixture and not
+separately fixtured: hoisting the properties to a base class whose name matches no DTO pattern also
+zeroes the charge, because the rule reads `GetMembers()` and inherited members are not in it.
+
+This also settles a question left open when the earlier `dtoScalarProperty` pair was withdrawn — the
+nesting dodge really was not a fix, and the two suspected dodges recorded then are now one confirmed
+finding and one confirmed scoping bug.
+
+Buckets: 6 covered, 4 exempt, 32 pending.
+
 ## Unreleased - Gate 1 measures each variant instead of reconstructing it
 
 No product change. Test infrastructure, closing #26.

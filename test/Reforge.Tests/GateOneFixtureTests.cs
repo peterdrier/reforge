@@ -20,6 +20,13 @@ namespace Reforge.Tests;
 /// was written. This file is the executable version of that check, so the next rule to fail it
 /// fails in CI instead of after a year of shipping.</para>
 ///
+/// <para>A rule that fails gets a pair too, marked <c>// gate1-gameable:</c>, and the assertion
+/// inverts: the drop is required rather than forbidden (<see
+/// cref="KnownGameableFixtures_StillLowerTheScore"/>). Without somewhere to put a failing rule the
+/// only way to record one is a red build, and a red build is not a finding — it is a blocked branch,
+/// and blocked branches get unblocked by tuning the fixture until it passes. That is the gate
+/// quietly becoming the thing it was built to catch, so the failures are made into data instead.</para>
+///
 /// <para>Each variant is compiled and scored <b>alone</b> (<see cref="IsolatedVariantScorer"/>), so
 /// a variant's score is the whole report rather than a filtered slice of a shared one. The earlier
 /// filtering approach could not see section-level rules at all and mis-read the ones that carried a
@@ -36,6 +43,7 @@ namespace Reforge.Tests;
 public class GateOneFixtureTests
 {
     private const string GateHeader = "// gate1:";
+    private const string GameableHeader = "// gate1-gameable:";
     private const string GateAssembly = "SampleSolution.Gate";
 
     /// <summary>
@@ -67,17 +75,9 @@ public class GateOneFixtureTests
     /// </summary>
     private static readonly IReadOnlySet<string> NotYetCovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        // Withdrawn rather than never written: the nesting dodge that looked like a cheapest fix
-        // moves scalars between types without reducing dtoScalarProperty's own charge, so it is not
-        // a fix an agent would make. Two dodges that would reduce it — collapsing the scalars into
-        // one collection property, or hoisting them to an unclassified base class that
-        // GetMembers() does not see — are unverified, and a suspected-red gate is not something to
-        // ship on a hunch. See CHANGELOG for the reasoning.
-        "dtoScalarProperty",
         "dtoCollectionProperty",
         "dtoNestedProperty",
         "publicDtoType",
-        "applicationServiceMethod",
         "readServiceInterfaceMethod",
         "fullServiceInterfaceMethod",
         "repositoryInterfaceMethod",
@@ -93,8 +93,6 @@ public class GateOneFixtureTests
         "inlineParameterObjectConstruction",
         "writeCapableInterfaceUsedReadOnly",
         "booleanParameter",
-        "optionsBag",
-        "dashboardAdminPageName",
         "oneImplementationInterface",
         "actionDispatcher",
         "genericActionDispatcher",
@@ -130,7 +128,7 @@ public class GateOneFixtureTests
     [Fact]
     public async Task CheapestFix_NeverLowersTheScore()
     {
-        var pairs = DiscoverPairs();
+        var pairs = DiscoverPairs().Where(p => p.GameableNote is null).ToList();
         Assert.NotEmpty(pairs);
 
         var failures = new List<string>();
@@ -189,6 +187,43 @@ public class GateOneFixtureTests
                     + "the pair proves nothing about whether the rule is gameable. Write a cheapest fix that "
                     + "reduces this rule, or withdraw the pair and list the rule as not-yet-covered.");
             }
+        }
+
+        Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
+    }
+
+    /// <summary>
+    /// The findings. A pair marked <c>gate1-gameable</c> is one where the degenerate edit *does*
+    /// pay: the rule stops charging and the total falls, so an agent is rewarded for an edit that
+    /// improved nothing. Writing the gate as pass/fail only left nowhere to put that except a red
+    /// build, and a red build is not a finding — it is a blocked branch that gets deleted or
+    /// tuned until it passes, which is exactly the outcome the gate exists to prevent.
+    ///
+    /// <para>So the evidence stays executable and the claim is inverted: the drop is asserted. If
+    /// someone repairs the rule, this fails and says to promote the pair, which is the one moment
+    /// the repair could otherwise go unnoticed and the finding rot into a slander.</para>
+    ///
+    /// <para>The marker is a claim the fixture cannot check: that the cheapest fix is <b>degenerate</b>
+    /// — satisfying the rule while leaving the design no better, and preferably worse. Some rules
+    /// want surface deleted, and for those the honest cheapest fix is a real improvement whose score
+    /// <i>should</i> fall; marking that pair gameable would be a false accusation dressed as data.
+    /// Writing a degenerate fix is the author's job, and the note is where the argument for it goes.</para>
+    /// </summary>
+    [Fact]
+    public async Task KnownGameableFixtures_StillLowerTheScore()
+    {
+        var failures = new List<string>();
+        foreach (var pair in DiscoverPairs().Where(p => p.GameableNote is not null))
+        {
+            int before = (await ScoreAsync(pair.BeforeFile)).Total;
+            int cheapest = (await ScoreAsync(pair.CheapestFixFile)).Total;
+            if (cheapest < before) continue;
+
+            failures.Add(
+                $"{pair.Label}: marked gate1-gameable (\"{pair.GameableNote}\") but the cheapest fix "
+                + $"scores {cheapest}, not below {before}. Either the rule was repaired — in which case "
+                + "delete the marker and let CheapestFix_NeverLowersTheScore hold the line — or the "
+                + "fixture drifted and the finding it records is no longer true.");
         }
 
         Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
@@ -331,7 +366,13 @@ public class GateOneFixtureTests
 
     // ---------------- Discovery ----------------
 
-    private sealed record FixturePair(string Label, string BeforeFile, string CheapestFixFile, string? GoodFixFile, IReadOnlyList<string> Rules);
+    /// <param name="GameableNote">
+    /// Non-null when the Before file carries a <c>// gate1-gameable:</c> line: this pair records a
+    /// rule that <i>fails</i> the gate, with the note saying why the cheapest fix is degenerate.
+    /// </param>
+    private sealed record FixturePair(
+        string Label, string BeforeFile, string CheapestFixFile, string? GoodFixFile,
+        IReadOnlyList<string> Rules, string? GameableNote);
 
     private static string SampleSolutionDirectory()
     {
@@ -360,24 +401,37 @@ public class GateOneFixtureTests
             Assert.True(rules.Count > 0,
                 $"Gate 1 fixture '{label}' declares no rules. Add a '{GateHeader} ruleName, ruleName' comment to {label}.Before.cs.");
 
+            var gameable = ParseHeader(beforePath, GameableHeader);
+            Assert.True(gameable is null or { Length: > 0 },
+                $"Gate 1 fixture '{label}' has an empty '{GameableHeader}' marker. Recording a rule as gameable "
+                + "without saying why the cheapest fix is degenerate is an accusation, not a finding.");
+
             pairs.Add(new FixturePair(label, beforePath, cheapestPath,
-                File.Exists(goodPath) ? goodPath : null, rules));
+                File.Exists(goodPath) ? goodPath : null, rules, gameable));
         }
         return pairs;
     }
 
     private static List<string> ParseDeclaredRules(string path)
+        => ParseHeader(path, GateHeader)
+            ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList()
+           ?? new List<string>();
+
+    /// <summary>
+    /// The text after the first line beginning with <paramref name="header"/>, or null if there is
+    /// none. Prefix-matched on the full header including its colon, so <c>// gate1-gameable:</c> is
+    /// not read as a <c>// gate1:</c> line.
+    /// </summary>
+    private static string? ParseHeader(string path, string header)
     {
         foreach (var line in File.ReadLines(path))
         {
             var trimmed = line.Trim();
-            if (trimmed.Length == 0) continue;
-            if (!trimmed.StartsWith(GateHeader, StringComparison.Ordinal)) continue;
-            return trimmed[GateHeader.Length..]
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList();
+            if (trimmed.StartsWith(header, StringComparison.Ordinal))
+                return trimmed[header.Length..].Trim();
         }
-        return new List<string>();
+        return null;
     }
 
     private static HashSet<string> ScoredRules()
@@ -387,10 +441,12 @@ public class GateOneFixtureTests
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Rules declared by some discovered pair. Deliberately says nothing about whether the pair
-    /// passes — <see cref="CheapestFix_NeverLowersTheScore"/> owns that verdict, and a rule with a
-    /// failing fixture should be reported as gameable, not as unlisted. Folding the gate result in
-    /// here would fail two tests for one cause and put the misleading message first.
+    /// Rules declared by some discovered pair — including a pair that records the rule as gameable.
+    /// "Covered" means the question has been asked and the answer written down, not that the answer
+    /// was the good one; a rule with a finding against it is the opposite of unexamined, and putting
+    /// it back in <see cref="NotYetCovered"/> would lose the finding and invite someone to
+    /// rediscover it. Which answer a pair got is <see cref="CheapestFix_NeverLowersTheScore"/>'s and
+    /// <see cref="KnownGameableFixtures_StillLowerTheScore"/>'s to report, not this method's.
     /// </summary>
     private static HashSet<string> CoveredRules()
     {
