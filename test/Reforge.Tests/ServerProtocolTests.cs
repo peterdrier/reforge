@@ -201,6 +201,24 @@ public class ServerProtocolTests
         Assert.Null(ServerClient.ParsePortFile(content));
     }
 
+    /// <summary>
+    /// The gate is an exact match, not a minimum. A newer server is no safer to dispatch to than
+    /// an older one: the version marks a framing change, so a v2 server's reply is by definition
+    /// something this build cannot read — and finding that out after sending is finding out after
+    /// the command may already have run.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    [InlineData(99)]
+    public void PortFile_AnyProtocolOtherThanThisOne_IsNotADispatchTarget(int advertised)
+    {
+        var endpoint = ServerClient.ParsePortFile($"54321\nprotocol={advertised}");
+
+        Assert.NotNull(endpoint);
+        Assert.NotEqual(ServerClient.ProtocolVersion, endpoint!.Protocol);
+    }
+
     [Fact]
     public void PortFile_CarriageReturns_AreTolerated()
     {

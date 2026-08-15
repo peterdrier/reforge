@@ -53,14 +53,19 @@ public static class ServerClient
         if (endpoint is null)
             return null;
 
-        if (endpoint.Protocol < ProtocolVersion)
+        // An EXACT match, not a minimum. Older is the case that motivated the gate — relaying to a
+        // server whose command table predates the commands being sent is how the silent-success
+        // bug survives an upgrade. But newer is no safer: the version exists to mark a framing
+        // change, so a v2 server's replies are by definition something this build cannot read, and
+        // dispatching first would mean discovering that after the command may already have run.
+        // Unknown means don't dispatch, in both directions.
+        if (endpoint.Protocol != ProtocolVersion)
         {
-            // Relaying anyway is how the silent-success bug survives an upgrade: the old server
-            // does not know the commands this client now relays, answers with help text, and has
-            // no way to say so. Cold-start instead, and name the fix.
+            var direction = endpoint.Protocol < ProtocolVersion ? "an older" : "a newer";
             Console.Error.WriteLine(
-                "reforge: a hot server is running but speaks an older protocol; using the cold path. " +
-                "Run `reforge stop`, then restart `reforge serve`, to use it.");
+                $"reforge: a hot server is running but speaks {direction} protocol " +
+                $"(server v{endpoint.Protocol}, client v{ProtocolVersion}); using the cold path. " +
+                "Run `reforge stop`, then restart `reforge serve` with a matching build, to use it.");
             return null;
         }
 

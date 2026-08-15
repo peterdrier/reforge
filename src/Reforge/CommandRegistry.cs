@@ -137,22 +137,44 @@ public static class CommandRegistry
     /// </summary>
     /// <remarks>
     /// A scan rather than a parse, because this runs before <c>System.CommandLine</c> is loaded
-    /// (see the class remarks). Option <i>values</i> are not skipped — their arities aren't known
-    /// here — so a value that happens to equal a command name is matched instead. That is
-    /// deliberately harmless: this only decides <i>whether to relay</i>, never what to run. The
-    /// full argument list is forwarded verbatim and the server parses it properly, so the worst
-    /// case is a correct answer computed on the wrong side of the socket.
+    /// (see the class remarks). <see cref="ValueTakingRootOptions"/> is what keeps the scan honest:
+    /// a root option's value must not be mistaken for a command name.
     /// </remarks>
     public static string? FindCommandToken(string[] args)
     {
-        foreach (var arg in args)
+        for (int i = 0; i < args.Length; i++)
         {
-            if (arg.Length == 0 || arg[0] == '-') continue;
+            var arg = args[i];
+            if (arg.Length == 0) continue;
+
+            if (arg[0] == '-')
+            {
+                // `--solution app.slnx` consumes the next argument. The `--solution=app.slnx` form
+                // carries its value in the same token and consumes nothing.
+                if (TakesSeparateValue(arg)) i++;
+                continue;
+            }
+
             foreach (var spec in Specs)
                 if (string.Equals(spec.Name, arg, StringComparison.Ordinal))
                     return arg;
         }
         return null;
+    }
+
+    /// <summary>
+    /// The root options that take a separate value. Kept here rather than read off the parser
+    /// because <see cref="FindCommandToken"/> runs before <c>System.CommandLine</c> loads; both
+    /// hosts declare exactly these three, and a fourth added there must be added here too.
+    /// </summary>
+    private static readonly string[] ValueTakingRootOptions = ["--solution", "--format", "--limit"];
+
+    private static bool TakesSeparateValue(string arg)
+    {
+        foreach (var option in ValueTakingRootOptions)
+            if (string.Equals(arg, option, StringComparison.Ordinal))
+                return true;
+        return false;
     }
 
     /// <summary>

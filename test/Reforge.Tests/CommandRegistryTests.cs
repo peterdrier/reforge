@@ -158,6 +158,46 @@ public class CommandRegistryTests
         Assert.Equal("references", CommandRegistry.FindCommandToken(["references", "snapshot"]));
     }
 
+    /// <summary>
+    /// A root option's VALUE is not a command, even when it reads like one. Matching it would send
+    /// `reforge --solution references skill` to a server that does not register `skill` — so the
+    /// hot path would fail an invocation the cold path runs fine, which is a behavioral difference
+    /// between the two hosts and exactly what this PR exists to remove.
+    /// </summary>
+    [Theory]
+    [InlineData(new[] { "--solution", "references", "skill" }, null)]
+    [InlineData(new[] { "--solution", "references", "callers", "Foo" }, "callers")]
+    [InlineData(new[] { "--format", "cycles", "members", "Foo" }, "members")]
+    [InlineData(new[] { "--limit", "snapshot" }, null)]
+    public void FindCommandToken_SkipsTheValueOfAValueTakingRootOption(string[] args, string? expected)
+    {
+        Assert.Equal(expected, CommandRegistry.FindCommandToken(args));
+    }
+
+    /// <summary>
+    /// The `--opt=value` form keeps its value in the same token, so nothing is consumed after it.
+    /// </summary>
+    [Fact]
+    public void FindCommandToken_EqualsFormConsumesNoFollowingArgument()
+    {
+        Assert.Equal("references", CommandRegistry.FindCommandToken(["--solution=app.slnx", "references", "Foo"]));
+    }
+
+    /// <summary>
+    /// The value-skip must not swallow a command that legitimately follows a valueless option.
+    /// </summary>
+    [Fact]
+    public void FindCommandToken_ValuelessOptions_DoNotConsumeTheCommand()
+    {
+        Assert.Equal("references", CommandRegistry.FindCommandToken(["--verbose", "references", "Foo"]));
+    }
+
+    [Fact]
+    public void IsRelayEligible_WhenAnOptionValueLooksLikeACommandAndTheRealOneIsPlumbing_IsFalse()
+    {
+        Assert.False(CommandRegistry.IsRelayEligible(["--solution", "references", "skill"]));
+    }
+
     [Fact]
     public void IsRelayEligible_ForArgsNamingAPlumbingCommand_IsFalse()
     {
