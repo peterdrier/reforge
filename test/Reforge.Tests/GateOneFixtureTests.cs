@@ -20,22 +20,23 @@ namespace Reforge.Tests;
 /// was written. This file is the executable version of that check, so the next rule to fail it
 /// fails in CI instead of after a year of shipping.</para>
 ///
+/// <para>Each variant is compiled and scored <b>alone</b> (<see cref="IsolatedVariantScorer"/>), so
+/// a variant's score is the whole report rather than a filtered slice of a shared one. The earlier
+/// filtering approach could not see section-level rules at all and mis-read the ones that carried a
+/// file, which meant a fixture's number could move because of a different fixture entirely; issue
+/// #26 has the three ways that went wrong. A variant may span sections by carrying satellite files
+/// (<c>&lt;label&gt;.&lt;variant&gt;.&lt;Section&gt;.cs</c>), without which no cross-section rule
+/// could ever fire in a fixture and five backlog entries would be unreachable by construction.</para>
+///
 /// <para>Fixtures live in <c>test/SampleSolution/SampleSolution.Gate/Rules/</c>, one pair per
 /// label, discovered from disk rather than listed here — a hand-maintained registry of fixtures is
 /// the same shape of bug as the hand-maintained command list that made four commands silently
 /// print help for four months.</para>
 /// </summary>
-[Collection("SampleSolution")]
 public class GateOneFixtureTests
 {
     private const string GateHeader = "// gate1:";
-
-    private readonly SampleSolutionFixture _fixture;
-
-    public GateOneFixtureTests(SampleSolutionFixture fixture)
-    {
-        _fixture = fixture;
-    }
+    private const string GateAssembly = "SampleSolution.Gate";
 
     /// <summary>
     /// Rules that will not get a Gate 1 fixture, each with the reason it is excused rather than
@@ -50,18 +51,6 @@ public class GateOneFixtureTests
             // different test (CanonicalReadDtoDerivationTests) against a different question.
             ["canonicalReadDtoReturn"] =
                 "credit, not a penalty — a cheapest-fix pair does not typecheck as a concept",
-
-            // Everything ScoreSectionArchitecture emits. These fire on what the *section* looks
-            // like — which types happen to coexist in it — not on the declaration they land on, so
-            // this harness cannot gate them however they are attributed. The first three are
-            // recorded with an empty file and vanish from the comparison entirely; the last two
-            // carry a real file and are worse, because they look like ordinary per-declaration
-            // points while actually being a function of the other fixtures in the section.
-            ["missingReadSurface"] = "section-coupled; needs the isolated-variant harness",
-            ["missingWriteSurface"] = "section-coupled; needs the isolated-variant harness",
-            ["missingPrimaryInfoDto"] = "section-coupled; needs the isolated-variant harness",
-            ["readSurfaceProjectionMethod"] = "section-coupled; needs the isolated-variant harness",
-            ["crossSectionWriteSurface"] = "section-coupled; needs the isolated-variant harness",
 
             // The spec retires or re-bases all three as part of the internal-axis rework (issue
             // #19). Writing fixtures for a rule that is being deleted spends the effort twice.
@@ -99,13 +88,9 @@ public class GateOneFixtureTests
         "controllerAction",
         "backgroundJob",
         "duplicateDbSetOwner",
-        "methodReturnsEntityAcrossSection",
         "publicInputWithHiddenState",
         "parameterBagInput",
         "inlineParameterObjectConstruction",
-        "crossSectionReadInterface",
-        "crossSectionFullService",
-        "crossSectionRepository",
         "writeCapableInterfaceUsedReadOnly",
         "booleanParameter",
         "optionsBag",
@@ -115,6 +100,29 @@ public class GateOneFixtureTests
         "genericActionDispatcher",
         "mutationModeParameter",
         "flagsControlFlow",
+
+        // Section-shape rules. These were exempt while the harness scored one shared solution: they
+        // charge a section for its shape, and a filtered slice of a shared report either could not
+        // see them (recorded with no file) or attributed them to whichever fixture they landed on.
+        // Isolation removed that blocker — a variant compiled alone IS a section — so they now
+        // measure correctly and are merely unwritten. Writing them needs a fixture that establishes
+        // a section shape, which is more than a type per file.
+        "missingReadSurface",
+        "missingWriteSurface",
+        "missingPrimaryInfoDto",
+        "readSurfaceProjectionMethod",
+
+        // Cross-section rules: they only fire when the consumer and the dependency are in
+        // different sections, and sections come from assembly names. A one-project variant has one
+        // section by construction, so these were unfixturable in a way that no amount of fixture
+        // writing would have fixed — a defect in the harness wearing a backlog entry's clothes.
+        // A variant can now declare satellite sections (see IsolatedVariantScorer.SatellitesOf and
+        // IsolatedVariantScorerTests), so what is left here is the writing.
+        "crossSectionReadInterface",
+        "crossSectionFullService",
+        "crossSectionRepository",
+        "crossSectionWriteSurface",
+        "methodReturnsEntityAcrossSection",
     };
 
     // ---------------- The gate ----------------
@@ -122,15 +130,14 @@ public class GateOneFixtureTests
     [Fact]
     public async Task CheapestFix_NeverLowersTheScore()
     {
-        var report = await ScoreAsync();
         var pairs = DiscoverPairs();
         Assert.NotEmpty(pairs);
 
         var failures = new List<string>();
         foreach (var pair in pairs)
         {
-            int before = PointsIn(report, pair.BeforeFile);
-            int cheapest = PointsIn(report, pair.CheapestFixFile);
+            int before = (await ScoreAsync(pair.BeforeFile)).Total;
+            int cheapest = (await ScoreAsync(pair.CheapestFixFile)).Total;
             if (cheapest < before)
                 failures.Add(
                     $"{pair.Label}: cheapest fix scores {cheapest}, down from {before}. "
@@ -161,21 +168,22 @@ public class GateOneFixtureTests
     [Fact]
     public async Task EveryDeclaredRule_ChargesLessInItsCheapestFix()
     {
-        var report = await ScoreAsync();
-
         var failures = new List<string>();
         foreach (var pair in DiscoverPairs())
         {
+            var before = await ScoreAsync(pair.BeforeFile);
+            var cheapest = await ScoreAsync(pair.CheapestFixFile);
+
             foreach (var rule in pair.Rules)
             {
-                int before = PointsForRule(report, pair.BeforeFile, rule);
-                int cheapest = PointsForRule(report, pair.CheapestFixFile, rule);
-                if (cheapest < before) continue;
+                int was = before.ByRule.GetValueOrDefault(rule);
+                int now = cheapest.ByRule.GetValueOrDefault(rule);
+                if (now < was) continue;
 
                 failures.Add(
-                    $"{pair.Label}: '{rule}' charges {cheapest} in the cheapest fix, "
-                    + $"not less than the {before} it charges in the Before. "
-                    + (cheapest == before
+                    $"{pair.Label}: '{rule}' charges {now} in the cheapest fix, "
+                    + $"not less than the {was} it charges in the Before. "
+                    + (now == was
                         ? "The fix does not move the number the agent is optimizing, so no agent would make it — "
                         : "The fix makes the rule charge more, so no agent would make it — ")
                     + "the pair proves nothing about whether the rule is gameable. Write a cheapest fix that "
@@ -194,21 +202,16 @@ public class GateOneFixtureTests
     [Fact]
     public async Task EveryDeclaredRule_ActuallyFiresInItsBeforeFixture()
     {
-        var report = await ScoreAsync();
-
         var failures = new List<string>();
         foreach (var pair in DiscoverPairs())
         {
-            var fired = report.Groups.Values
-                .SelectMany(g => g.Entries)
-                .Where(e => SameFile(e.File, pair.BeforeFile) && e.Points != 0)
-                .Select(e => e.Rule)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var report = await ScoreAsync(pair.BeforeFile);
+            var fired = report.ByRule.Where(kv => kv.Value != 0).Select(kv => kv.Key).ToList();
 
             foreach (var rule in pair.Rules)
-                if (!fired.Contains(rule))
+                if (report.ByRule.GetValueOrDefault(rule) == 0)
                     failures.Add(
-                        $"{pair.Label}: declares '{rule}' but that rule does not fire in {pair.BeforeFile}. "
+                        $"{pair.Label}: declares '{rule}' but that rule does not fire in {Path.GetFileName(pair.BeforeFile)}. "
                         + $"Rules that did fire: {(fired.Count == 0 ? "(none)" : string.Join(", ", fired.OrderBy(r => r, StringComparer.Ordinal)))}.");
         }
 
@@ -222,13 +225,11 @@ public class GateOneFixtureTests
     [Fact]
     public async Task GoodFix_WhenPresent_LowersTheScore()
     {
-        var report = await ScoreAsync();
-
         var failures = new List<string>();
         foreach (var pair in DiscoverPairs().Where(p => p.GoodFixFile is not null))
         {
-            int before = PointsIn(report, pair.BeforeFile);
-            int good = PointsIn(report, pair.GoodFixFile!);
+            int before = (await ScoreAsync(pair.BeforeFile)).Total;
+            int good = (await ScoreAsync(pair.GoodFixFile!)).Total;
             if (good >= before)
                 failures.Add($"{pair.Label}: good fix scores {good}, not below {before}.");
         }
@@ -237,69 +238,35 @@ public class GateOneFixtureTests
     }
 
     /// <summary>
-    /// Every rule <c>ScoreSectionArchitecture</c> emits. These fire on the shape of the
-    /// <i>section</i> — which types coexist in it — rather than on the declaration the points land
-    /// against, so a fixture's score stops being a property of the fixture. Kept as a list because
-    /// it is a closed set owned by one file; when that file learns a new rule, this list is the
-    /// thing to update, and <see cref="EveryRule_BelongsToExactlyOneBucket_AndEveryEntryStillDescribesSomethingTrue"/>
-    /// will notice if a name here stops being a real rule.
-    /// </summary>
-    private static readonly IReadOnlySet<string> SectionCoupled = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-    {
-        "missingReadSurface",
-        "missingWriteSurface",
-        "missingPrimaryInfoDto",
-        "readSurfaceProjectionMethod",
-        "crossSectionWriteSurface",
-    };
-
-    /// <summary>
-    /// The harness reconstructs each variant's score by filtering one shared report to one file.
-    /// That is exact for per-declaration rules and wrong for section-coupled ones, in two different
-    /// ways, and both are silent.
-    ///
-    /// <para>The <c>missing*</c> rules are recorded against the section with an <b>empty</b> file,
-    /// so the filter discards them: a fixture that declares a repository makes the whole section
-    /// repo-backed, turns those rules on for every pair at once, and none of it appears in any
-    /// pair's total.</para>
-    ///
-    /// <para>The other two are the harder case, because they <b>do</b> carry a file and so look
-    /// like ordinary per-declaration points. A fixture declaring a conventionally-named
-    /// <c>…Info</c> type can become the section's primary DTO in <c>SectionShapeAnalyzer</c>, after
-    /// which <c>readSurfaceProjectionMethod</c> is charged against <i>other</i> fixtures' files.
-    /// The filter attributes those correctly and reads them wrongly: the number moves because of a
-    /// file the pair's author never saw.</para>
-    ///
-    /// <para>The real fix is to score each variant in its own solution — see issue #26. Until then
-    /// this fails the moment a Gate fixture scores through section state, so the gate breaks rather
-    /// than quietly measuring something that is not the variant's score.</para>
+    /// A variant that does not compile scores nearly nothing and passes the gate by being empty.
+    /// The shared-solution harness could not tell that apart from a fixture that legitimately
+    /// scored nothing, because it never compiled a variant on its own. Isolation makes the question
+    /// answerable, so it gets asked: every variant must compile by itself, which is also what
+    /// enforces the fixtures' self-containment rule rather than leaving it to authoring discipline.
     /// </summary>
     [Fact]
-    public async Task NoGateFixture_ScoresThroughSectionState()
+    public async Task EveryVariant_CompilesOnItsOwn()
     {
-        var report = await ScoreAsync();
-        var gateEntries = report.Groups
-            .Where(g => g.Key.Equals("Gate", StringComparison.OrdinalIgnoreCase))
-            .SelectMany(g => g.Value.Entries)
-            .Where(e => e.Points != 0)
-            .ToList();
+        var failures = new List<string>();
+        foreach (var pair in DiscoverPairs())
+        {
+            foreach (var file in new[] { pair.BeforeFile, pair.CheapestFixFile, pair.GoodFixFile }.Where(f => f is not null))
+            {
+                var health = (await ScoreAsync(file!)).BuildHealth;
+                if (!health.Degraded) continue;
 
-        var problems = gateEntries
-            .Where(e => string.IsNullOrWhiteSpace(e.File) || SectionCoupled.Contains(e.Rule))
-            .Select(e => $"  {e.Rule} ({e.Points:+#;-#;0}) on "
-                + (string.IsNullOrWhiteSpace(e.File) ? "(no file)" : e.File)
-                + $" — {e.Detail ?? e.Symbol}")
-            .OrderBy(s => s, StringComparer.Ordinal)
-            .ToList();
+                var errors = health.Diagnostics
+                    .Take(5)
+                    .Select(d => $"      {d.Id} line {d.Line}: {d.Message}");
+                failures.Add(
+                    $"{Path.GetFileName(file!)}: {health.CompilationErrorCount} compilation error(s) when compiled alone."
+                    + Environment.NewLine + string.Join(Environment.NewLine, errors) + Environment.NewLine
+                    + "    A fixture must be self-contained — it is scored as a solution of one file, so a type "
+                    + "it borrows from another fixture is not there.");
+            }
+        }
 
-        Assert.True(problems.Count == 0,
-            "The Gate section scores points that depend on which fixtures coexist in it, so a "
-            + "pair's before/after comparison is no longer a property of that pair:"
-            + Environment.NewLine + string.Join(Environment.NewLine, problems) + Environment.NewLine
-            + "Most likely a fixture declared a repository (making the section repo-backed) or a "
-            + "conventionally-named type that SectionShapeAnalyzer adopted as the section's primary "
-            + "DTO. Rules of this shape need each variant scored in its own solution (#26); this "
-            + "harness cannot gate them, and the fixture that triggered this belongs elsewhere.");
+        Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
     }
 
     // ---------------- The ratchet ----------------
@@ -307,11 +274,7 @@ public class GateOneFixtureTests
     [Fact]
     public void EveryScoredRule_IsCoveredOrDeclaredUncovered()
     {
-        var scored = SurfaceScoreConfig.Default().Weights
-            .Where(kv => kv.Value != 0)
-            .Select(kv => kv.Key)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
+        var scored = ScoredRules();
         var covered = CoveredRules();
 
         var unaccounted = scored
@@ -334,18 +297,15 @@ public class GateOneFixtureTests
     /// while keeping its old entry stays green while the entry becomes a lie.
     ///
     /// <para>The exempt bucket is the one that matters most here. Its entries carry a reason, and
-    /// a reason is a claim — "this rule cannot have a cheapest-fix pair". The day someone builds
-    /// the section-shaped harness and gates <c>missingReadSurface</c>, that claim is false, and a
-    /// stale exemption would go on excusing every future rule of the same shape.</para>
+    /// a reason is a claim, so a stale exemption goes on excusing every future rule of the same
+    /// shape. Five entries claiming "needs the isolated-variant harness" outlived their reason the
+    /// moment that harness landed, and moving them was a manual step this test cannot force —
+    /// which is exactly why the reasons have to be specific enough to notice.</para>
     /// </summary>
     [Fact]
     public void EveryRule_BelongsToExactlyOneBucket_AndEveryEntryStillDescribesSomethingTrue()
     {
-        var scored = SurfaceScoreConfig.Default().Weights
-            .Where(kv => kv.Value != 0)
-            .Select(kv => kv.Key)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
+        var scored = ScoredRules();
         var covered = CoveredRules();
         var problems = new List<string>();
 
@@ -373,12 +333,14 @@ public class GateOneFixtureTests
 
     private sealed record FixturePair(string Label, string BeforeFile, string CheapestFixFile, string? GoodFixFile, IReadOnlyList<string> Rules);
 
-    private static string RulesDirectory()
+    private static string SampleSolutionDirectory()
     {
         var testDir = Path.GetDirectoryName(typeof(GateOneFixtureTests).Assembly.Location)!;
-        return Path.Combine(SampleSolutionFixture.FindRepoRoot(testDir),
-            "test", "SampleSolution", "SampleSolution.Gate", "Rules");
+        return Path.Combine(SampleSolutionFixture.FindRepoRoot(testDir), "test", "SampleSolution");
     }
+
+    private static string RulesDirectory()
+        => Path.Combine(SampleSolutionDirectory(), GateAssembly, "Rules");
 
     private static List<FixturePair> DiscoverPairs()
     {
@@ -398,12 +360,8 @@ public class GateOneFixtureTests
             Assert.True(rules.Count > 0,
                 $"Gate 1 fixture '{label}' declares no rules. Add a '{GateHeader} ruleName, ruleName' comment to {label}.Before.cs.");
 
-            pairs.Add(new FixturePair(
-                label,
-                RelativeSourcePath(label, "Before"),
-                RelativeSourcePath(label, "CheapestFix"),
-                File.Exists(goodPath) ? RelativeSourcePath(label, "GoodFix") : null,
-                rules));
+            pairs.Add(new FixturePair(label, beforePath, cheapestPath,
+                File.Exists(goodPath) ? goodPath : null, rules));
         }
         return pairs;
     }
@@ -422,8 +380,11 @@ public class GateOneFixtureTests
         return new List<string>();
     }
 
-    private static string RelativeSourcePath(string label, string kind)
-        => $"SampleSolution.Gate/Rules/{label}.{kind}.cs";
+    private static HashSet<string> ScoredRules()
+        => SurfaceScoreConfig.Default().Weights
+            .Where(kv => kv.Value != 0)
+            .Select(kv => kv.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Rules declared by some discovered pair. Deliberately says nothing about whether the pair
@@ -440,59 +401,10 @@ public class GateOneFixtureTests
         return covered;
     }
 
-    // ---------------- Scoring ----------------
-
-    private static readonly SemaphoreSlim ScoreLock = new(1, 1);
-    private static ScoreReport? _cachedReport;
-
     /// <summary>
-    /// Scores the sample solution once for the whole class. Every test here asks the same question
-    /// of the same immutable solution, and scoring it is the expensive part — five tests each
-    /// re-running seven analysis passes would dominate the suite's runtime for no added signal.
+    /// The variant's score, measured rather than reconstructed: the file is compiled as a solution
+    /// of its own, so the report's total is the file's total and no filter stands between them.
     /// </summary>
-    private async Task<ScoreReport> ScoreAsync()
-    {
-        if (_cachedReport is not null) return _cachedReport;
-        await ScoreLock.WaitAsync();
-        try
-        {
-            if (_cachedReport is null)
-            {
-                var cfg = SurfaceScoreConfig.Default();
-                var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-                _cachedReport = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
-            }
-            return _cachedReport;
-        }
-        finally
-        {
-            ScoreLock.Release();
-        }
-    }
-
-    /// <summary>
-    /// Total points attributed to declarations in one file. Attribution is by declaring file rather
-    /// than by type name so a fixture can add supporting types — the parameter object, the nested
-    /// DTO — and have their cost counted against the fix that introduced them. That is the whole
-    /// point: the cheapest fix's new types are where the surface it "removed" went.
-    /// </summary>
-    private static int PointsIn(ScoreReport report, string relativeFile)
-        => report.Groups.Values
-            .SelectMany(g => g.Entries)
-            .Where(e => SameFile(e.File, relativeFile))
-            .Sum(e => e.Points);
-
-    /// <summary>
-    /// Points one rule charges against declarations in one file. Same attribution as
-    /// <see cref="PointsIn"/>, narrowed to a rule, so the gate can ask the two separate questions:
-    /// did the declared rule get cheaper, and did the total stay put.
-    /// </summary>
-    private static int PointsForRule(ScoreReport report, string relativeFile, string rule)
-        => report.Groups.Values
-            .SelectMany(g => g.Entries)
-            .Where(e => e.Rule.Equals(rule, StringComparison.OrdinalIgnoreCase) && SameFile(e.File, relativeFile))
-            .Sum(e => e.Points);
-
-    private static bool SameFile(string entryFile, string relativeFile)
-        => entryFile.Replace('\\', '/').EndsWith(relativeFile, StringComparison.OrdinalIgnoreCase);
+    private static Task<ScoreReport> ScoreAsync(string fixtureFile)
+        => IsolatedVariantScorer.ScoreAsync(fixtureFile, GateAssembly, SampleSolutionDirectory());
 }
