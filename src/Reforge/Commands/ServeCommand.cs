@@ -48,8 +48,10 @@ public static class ServeCommand
             listener.Start();
             var actualPort = ((IPEndPoint)listener.LocalEndpoint).Port;
 
-            // Write port file
-            await File.WriteAllTextAsync(portFile, actualPort.ToString(), cancellationToken);
+            // Write port file. The contents carry the protocol version as well as the port — see
+            // ServerClient: it is the only place a client and server built from different commits
+            // can discover the mismatch before committing to a wire format neither can parse.
+            await File.WriteAllTextAsync(portFile, ServerClient.FormatPortFile(actualPort), cancellationToken);
 
             Console.Error.WriteLine($"Reforge server listening on port {actualPort}");
             Console.Error.WriteLine($"Port file: {portFile}");
@@ -198,108 +200,169 @@ public static class ServeCommand
 
     private static async Task HandleClientAsync(TcpClient client, CancellationTokenSource shutdownCts)
     {
-        var ct = shutdownCts.Token;
-        try
+        using (client)
         {
-            using (client)
+            StreamWriter? writer = null;
+            try
             {
                 var stream = client.GetStream();
                 using var reader = new StreamReader(stream);
-                using var writer = new StreamWriter(stream) { AutoFlush = true };
+                writer = new StreamWriter(stream) { AutoFlush = true };
 
-                // Read command line (single line)
-                var commandLine = await reader.ReadLineAsync(ct);
-                if (string.IsNullOrWhiteSpace(commandLine))
+                var result = await RunRequestAsync(reader, shutdownCts);
+                await WriteResultAsync(writer, result);
+            }
+            catch (Exception ex)
+            {
+                // Answer the client even when handling failed. Staying silent here left the client
+                // reading an empty response, which it could only interpret as "ran, printed
+                // nothing" — a crash indistinguishable from a clean run with no findings.
+                Console.Error.WriteLine($"Client error: {ex.Message}");
+                if (writer is not null)
                 {
-                    await writer.WriteLineAsync("error: empty command");
-                    return;
-                }
-
-                // Shutdown sentinel from the `stop` command — ack, then trip the
-                // cancellation that unwinds the accept loop and runs cleanup.
-                if (commandLine.Trim() == "__shutdown__")
-                {
-                    await writer.WriteLineAsync("ok: shutting down");
-                    shutdownCts.Cancel();
-                    return;
-                }
-
-                // Capture stdout during command execution
-                var originalOut = Console.Out;
-                var originalErr = Console.Error;
-                var sw = new StringWriter();
-                Console.SetOut(sw);
-                Console.SetError(TextWriter.Null); // suppress workspace diagnostics for relayed commands
-
-                try
-                {
-                    // Split command line into args
-                    var args = SplitCommandLine(commandLine);
-
-                    // Build the same root command setup
-                    var solutionOption = new Option<string?>("--solution")
+                    try
                     {
-                        Recursive = true
-                    };
-                    var formatOption = new Option<OutputFormat>("--format")
+                        await WriteResultAsync(writer,
+                            new RequestResult(1, $"error: {ex.Message}{Environment.NewLine}", ""));
+                    }
+                    catch
                     {
-                        DefaultValueFactory = _ => OutputFormat.Compact,
-                        Recursive = true
-                    };
-
-                    var limitOption = new Option<int?>("--limit")
-                    {
-                        Description = "Maximum number of results to return",
-                        Recursive = true
-                    };
-
-                    var rootCommand = new System.CommandLine.RootCommand("Reforge")
-                    {
-                        solutionOption,
-                        formatOption,
-                        limitOption
-                    };
-
-                    rootCommand.Add(ReferencesCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(CallersCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(ImplementationsCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(MembersCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(DependenciesCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(InjectedCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(InheritorsCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(CallChainCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(UsagesCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(ParametersCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(DbSetUsageCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(OwnershipViolationsCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(ServiceMapCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(HealthCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(AuditAuthCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(AuditCacheCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(AuditImmutableCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(AuditEfCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(AuditSurfaceCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(AuditDownstreamCommand.Create(solutionOption, formatOption, limitOption));
-                    rootCommand.Add(SkillCommand.Create());
-
-                    var parseResult = rootCommand.Parse(args);
-                    await parseResult.InvokeAsync();
+                        // The socket is already gone — the stderr line above is the only record
+                        // left, and failing here would take down the accept loop with it.
+                    }
                 }
-                finally
-                {
-                    Console.SetOut(originalOut);
-                    Console.SetError(originalErr);
-                }
-
-                // Send captured output back
-                await writer.WriteAsync(sw.ToString());
+            }
+            finally
+            {
+                writer?.Dispose();
             }
         }
-        catch (Exception ex)
+    }
+
+    /// <summary>One request's outcome: the command's exit code and each output stream, kept apart.</summary>
+    internal readonly record struct RequestResult(int ExitCode, string Stderr, string Stdout);
+
+    /// <summary>
+    /// Reads one request and runs it. Separated from the socket handling so the caller can always
+    /// produce a response, including when this throws.
+    /// </summary>
+    internal static async Task<RequestResult> RunRequestAsync(
+        StreamReader reader, CancellationTokenSource shutdownCts)
+    {
+        var first = await reader.ReadLineAsync(shutdownCts.Token);
+        if (string.IsNullOrWhiteSpace(first))
+            return new RequestResult(1, $"error: empty command{Environment.NewLine}", "");
+
+        // Shutdown sentinel from the `stop` command — ack, then trip the cancellation that
+        // unwinds the accept loop and runs cleanup. Deliberately a bare line rather than a framed
+        // request, so `stop` from any build can always shut a server down.
+        if (first.Trim() == ServerClient.ShutdownRequest)
         {
-            Console.Error.WriteLine($"Client error: {ex.Message}");
+            shutdownCts.Cancel();
+            return new RequestResult(0, "", $"ok: shutting down{Environment.NewLine}");
+        }
+
+        if (first.Trim() != ServerClient.RequestHeader)
+            return new RequestResult(1,
+                $"error: unrecognized request framing; this server speaks protocol v{ServerClient.ProtocolVersion}.{Environment.NewLine}", "");
+
+        // The client's working directory, so a relative --config/--baseline/--append resolves
+        // against the caller's directory rather than wherever `reforge serve` happened to start.
+        var clientWorkingDirectory = await reader.ReadLineAsync(shutdownCts.Token);
+        var commandLine = await reader.ReadLineAsync(shutdownCts.Token);
+        if (string.IsNullOrWhiteSpace(commandLine))
+            return new RequestResult(1, $"error: empty command{Environment.NewLine}", "");
+
+        var args = SplitCommandLine(commandLine);
+
+        // Refuse anything the registry says this host does not serve, naming the command. The
+        // client filters the same way, so reaching here means a version-skewed client or a
+        // hand-written socket — either way the caller gets an error and a non-zero code rather
+        // than the root help text and exit 0.
+        var requested = CommandRegistry.FindCommandToken(args);
+        if (requested is null || !CommandRegistry.IsRelayEligible(requested))
+        {
+            var name = requested ?? (args.Length == 0 ? "" : args[0]);
+            return new RequestResult(1,
+                $"error: '{name}' is not a command the reforge server can run.{Environment.NewLine}", "");
+        }
+
+        // Capture both streams. stderr used to go to TextWriter.Null, which threw away the only
+        // actionable message some commands produce — `section-shape --section <unknown>` reports
+        // the bad filter on stderr and then prints a legitimate-looking empty result on stdout.
+        var originalOut = Console.Out;
+        var originalErr = Console.Error;
+        var capturedOut = new StringWriter();
+        var capturedErr = new StringWriter();
+        Console.SetOut(capturedOut);
+        Console.SetError(capturedErr);
+
+        // Adopting the client's directory is safe because the accept loop is sequential (see the
+        // comment there — Roslyn is not thread-safe for mutation), so no other request observes it.
+        var serverWorkingDirectory = Directory.GetCurrentDirectory();
+        TrySetCurrentDirectory(clientWorkingDirectory);
+
+        try
+        {
+            var solutionOption = new Option<string?>("--solution")
+            {
+                Recursive = true
+            };
+            var formatOption = new Option<OutputFormat>("--format")
+            {
+                DefaultValueFactory = _ => OutputFormat.Compact,
+                Recursive = true
+            };
+            var limitOption = new Option<int?>("--limit")
+            {
+                Description = "Maximum number of results to return",
+                Recursive = true
+            };
+
+            var rootCommand = new System.CommandLine.RootCommand("Reforge")
+            {
+                solutionOption,
+                formatOption,
+                limitOption
+            };
+
+            // The same list the cold path builds from, minus the commands that cannot run in this
+            // process. Before this shared registry the server carried its own copy, last updated
+            // 2026-04-13, and every command added after that date resolved to help text and exit 0.
+            foreach (var command in CommandRegistry.CreateAll(
+                         new CommandOptions(solutionOption, formatOption, limitOption),
+                         relayEligibleOnly: true))
+                rootCommand.Add(command);
+
+            var exitCode = await rootCommand.Parse(args).InvokeAsync();
+            return new RequestResult(exitCode, capturedErr.ToString(), capturedOut.ToString());
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+            Console.SetError(originalErr);
+            TrySetCurrentDirectory(serverWorkingDirectory);
         }
     }
+
+    /// <summary>
+    /// Best-effort <c>chdir</c>. A client may send a directory this process cannot enter (deleted,
+    /// or on a machine-local path a container does not share); that is not worth failing the whole
+    /// request over, since only relative path arguments depend on it.
+    /// </summary>
+    private static void TrySetCurrentDirectory(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory)) return;
+        try { Directory.SetCurrentDirectory(directory); } catch { /* keep the current directory */ }
+    }
+
+    /// <summary>
+    /// Writes the framed response. The framing — exit code plus a length-prefixed stderr section —
+    /// is what lets the client tell a failed command from a successful one and keep the two streams
+    /// apart; see <see cref="ServerClient.FormatResponse"/> for why it is length-prefixed.
+    /// </summary>
+    private static async Task WriteResultAsync(StreamWriter writer, RequestResult result)
+        => await writer.WriteAsync(ServerClient.FormatResponse(result.ExitCode, result.Stderr, result.Stdout));
 
     /// <summary>
     /// Basic command line splitting that handles quoted strings.

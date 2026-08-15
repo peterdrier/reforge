@@ -30,7 +30,7 @@
     lists into one factory makes the class of bug unrepresentable rather than fixing four names.
   risk: low
   effort: S
-  status: open
+  status: done   # v0.26.0 — CommandRegistry; relay eligibility is a registry property
 
 - id: S004
   title: Cover the hot path — round-trip tests for every relay-eligible command
@@ -46,9 +46,16 @@
     lets S001's single registry serve both hosts correctly rather than just identically; note
     ServeCommand currently registers `skill`, which can never reach it. Land in the same PR as
     S001 as its regression test — the fix without the ratchet just resets the clock.
+    PARTIAL as of v0.26.0. Relay eligibility is now a registry property, and CommandRegistryTests
+    pins that both hosts build from it, that the four previously-missed commands are served, that
+    `skill` is not, and that an ineligible/unknown/empty command is refused with a non-zero exit —
+    the dispatch decision is tested directly via ServeCommand.RunRequestAsync, no socket involved.
+    STILL OPEN: a live round-trip over TCP against a running `serve`. That needs a server process
+    and a real workspace, and it is the only part that would catch a regression in the socket
+    framing itself rather than in the routing table.
   risk: low
   effort: S
-  status: open
+  status: partial
 
 - id: S002
   title: One write vocabulary, three explicitly-scoped consumers

@@ -4,59 +4,211 @@ namespace Reforge;
 
 /// <summary>
 /// Checks for a running reforge server and relays commands to it.
+///
+/// <para><b>The wire format is versioned, and the version lives in the port file.</b> Without that,
+/// a client and a server built from different commits talk to each other and get subtly wrong
+/// answers: a pre-v1 server does not know the commands this client relays to it, so it replies
+/// with help text; a pre-v1 client does not know this server's framing, so it prints the frame as
+/// though it were output. Neither can detect the other in-band, because the thing they disagree
+/// about <i>is</i> the format. So the handshake happens out of band, in <c>.reforge-port</c>,
+/// before a byte is sent.</para>
+///
+/// <para>Both directions degrade to the cold path — slower, always correct:</para>
+/// <list type="bullet">
+///   <item>A pre-v1 client cannot parse a v1 port file (<see cref="FormatPortFile"/> puts the
+///     protocol on a second line, so its <c>int.TryParse</c> over the whole file fails) and skips
+///     the relay.</item>
+///   <item>A v1 client reading a pre-v1 port file finds no protocol marker, says so on stderr, and
+///     skips the relay.</item>
+/// </list>
 /// </summary>
 public static class ServerClient
 {
+    /// <summary>Wire-format version this build speaks. Bump whenever the framing below changes.</summary>
+    public const int ProtocolVersion = 1;
+
+    internal const string RequestHeader = "__reforge_req_v1__";
+    internal const string ResponseHeader = "__reforge_res_v1__";
+
+    /// <summary>Single-line request the <c>stop</c> command sends. Understood by every version.</summary>
+    internal const string ShutdownRequest = "__shutdown__";
+
+    /// <summary>A reachable server: its port, and the protocol version it advertises (0 = pre-v1).</summary>
+    public sealed record ServerEndpoint(int Port, int Protocol);
+
     /// <summary>
-    /// Attempts to relay the given args to a running reforge server.
-    /// Returns true if relayed successfully, false if no server found.
+    /// Attempts to relay the given args to a running reforge server. Returns the command's exit
+    /// code when the server ran it, or <c>null</c> when the caller should fall back to a cold
+    /// start — no server, or one too old to talk to.
     /// </summary>
-    public static async Task<bool> TryRelayAsync(string[] args)
+    /// <remarks>
+    /// A completed round-trip is not treated as success on its own. The distinction that matters
+    /// to a scripting agent is "the server ran this and it failed" (an exit code) versus "there is
+    /// no usable server" (<c>null</c>); collapsing both into a bool is what let a server that
+    /// could not dispatch a command look identical to one that could.
+    /// </remarks>
+    public static async Task<int?> TryRelayAsync(string[] args)
     {
-        var port = FindServerPort(args);
-        if (port is null)
-            return false;
+        var endpoint = FindServerEndpoint(args);
+        if (endpoint is null)
+            return null;
+
+        // An EXACT match, not a minimum. Older is the case that motivated the gate — relaying to a
+        // server whose command table predates the commands being sent is how the silent-success
+        // bug survives an upgrade. But newer is no safer: the version exists to mark a framing
+        // change, so a v2 server's replies are by definition something this build cannot read, and
+        // dispatching first would mean discovering that after the command may already have run.
+        // Unknown means don't dispatch, in both directions.
+        if (endpoint.Protocol != ProtocolVersion)
+        {
+            var direction = endpoint.Protocol < ProtocolVersion ? "an older" : "a newer";
+            Console.Error.WriteLine(
+                $"reforge: a hot server is running but speaks {direction} protocol " +
+                $"(server v{endpoint.Protocol}, client v{ProtocolVersion}); using the cold path. " +
+                "Run `reforge stop`, then restart `reforge serve` with a matching build, to use it.");
+            return null;
+        }
+
+        // Once any request byte is on the wire the server may have executed the command, so a
+        // later failure must NOT fall back to the cold path — `snapshot --append` would write its
+        // CSV row twice. Set before the write, not after: a partial write is still a possible
+        // dispatch, and erring toward "report the failure" beats erring toward "do it again".
+        bool dispatched = false;
 
         try
         {
             using var client = new TcpClient();
-            await client.ConnectAsync(System.Net.IPAddress.Loopback, port.Value);
+            await client.ConnectAsync(System.Net.IPAddress.Loopback, endpoint.Port);
 
             var stream = client.GetStream();
             using var writer = new StreamWriter(stream) { AutoFlush = true };
             using var reader = new StreamReader(stream);
 
-            // Send command as single line
-            var commandLine = string.Join(" ", args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
-            await writer.WriteLineAsync(commandLine);
+            dispatched = true;
+            await writer.WriteAsync(FormatRequest(Directory.GetCurrentDirectory(), BuildCommandLine(args)));
 
-            // Shut down the write side so server knows we're done
+            // Shut down the write side so the server knows we're done
             client.Client.Shutdown(SocketShutdown.Send);
 
-            // Read and print response
             var response = await reader.ReadToEndAsync();
-            Console.Write(response);
+            var parsed = ParseResponse(response);
+            if (parsed is null)
+            {
+                Console.Error.WriteLine(
+                    "reforge: the hot server sent a response this client cannot read. Not re-running on " +
+                    "the cold path — the server may already have executed the command.");
+                return 1;
+            }
 
-            return true;
+            var (exitCode, stderrText, stdoutText) = parsed.Value;
+            if (stderrText.Length > 0)
+                Console.Error.Write(stderrText);
+            Console.Write(stdoutText);
+            return exitCode;
         }
-        catch
+        catch (Exception ex)
         {
-            // Server unreachable — fall back to cold start
-            return false;
+            if (!dispatched)
+                return null; // nothing was sent — the cold path is safe, and is the better answer
+
+            Console.Error.WriteLine(
+                $"reforge: the relay failed after the command was sent ({ex.Message}). Not re-running on " +
+                "the cold path — the server may already have executed it.");
+            return 1;
         }
     }
 
+    /// <summary>Joins args into the single request line, quoting any that contain a space.</summary>
+    internal static string BuildCommandLine(string[] args)
+        => string.Join(" ", args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
+
+    // ---------------- Wire format ----------------
+
     /// <summary>
-    /// Resolves the port of a running server by reading the .reforge-port file.
+    /// Request framing. The client's working directory travels with the request because the server
+    /// runs in whatever directory it was started from: without it a relative <c>--config</c>,
+    /// <c>--baseline</c> or <c>snapshot --append</c> path silently resolves against the server's
+    /// directory rather than the caller's. Each field is a whole line, so a path containing spaces
+    /// needs no quoting rule.
     /// </summary>
-    public static int? FindServerPort(string[] args)
+    internal static string FormatRequest(string workingDirectory, string commandLine)
+        => $"{RequestHeader}\n{workingDirectory}\n{commandLine}\n";
+
+    /// <summary>
+    /// Response framing: a header line carrying the exit code and the length of the stderr
+    /// section, then stderr, then stdout. Length-prefixed rather than delimited, so no command
+    /// output can forge a section boundary and stdout survives character for character — it is
+    /// JSON that a script parses, and a stray newline is a bug.
+    /// </summary>
+    internal static string FormatResponse(int exitCode, string stderr, string stdout)
+        => $"{ResponseHeader} {exitCode} {stderr.Length}\n{stderr}{stdout}";
+
+    /// <summary>Splits a framed response. Null when it isn't one (a pre-v1 server, or a truncated read).</summary>
+    internal static (int ExitCode, string Stderr, string Stdout)? ParseResponse(string response)
+    {
+        if (!response.StartsWith(ResponseHeader, StringComparison.Ordinal)) return null;
+
+        int newline = response.IndexOf('\n');
+        if (newline < 0) return null;
+
+        var header = response[..newline].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (header.Length != 3) return null;
+        if (!int.TryParse(header[1], out var exitCode)) return null;
+        if (!int.TryParse(header[2], out var stderrLength) || stderrLength < 0) return null;
+
+        var body = response[(newline + 1)..];
+        if (stderrLength > body.Length) return null;
+
+        return (exitCode, body[..stderrLength], body[stderrLength..]);
+    }
+
+    // ---------------- Port file ----------------
+
+    /// <summary>
+    /// Port-file contents for a server of this build. The protocol marker sits on a <b>second
+    /// line</b> deliberately: a pre-v1 client parses the whole file with <c>int.TryParse</c>, so
+    /// the extra line makes it find no server and take the cold path, instead of relaying into a
+    /// framing it cannot read.
+    /// </summary>
+    public static string FormatPortFile(int port) => $"{port}\nprotocol={ProtocolVersion}\n";
+
+    /// <summary>
+    /// Reads a port file. Protocol is 0 when no marker is present — the shape a pre-v1 server
+    /// writes. Null when there is no port to be found at all.
+    /// </summary>
+    internal static ServerEndpoint? ParsePortFile(string content)
+    {
+        var lines = content.Split('\n');
+        if (lines.Length == 0) return null;
+        if (!int.TryParse(lines[0].Trim(), out var port)) return null;
+
+        int protocol = 0;
+        const string marker = "protocol=";
+        for (int i = 1; i < lines.Length; i++)
+        {
+            var line = lines[i].Trim();
+            if (line.StartsWith(marker, StringComparison.Ordinal)
+                && int.TryParse(line.AsSpan(marker.Length), out var version))
+                protocol = version;
+        }
+
+        return new ServerEndpoint(port, protocol);
+    }
+
+    /// <summary>Resolves the running server's port and protocol from the .reforge-port file.</summary>
+    public static ServerEndpoint? FindServerEndpoint(string[] args)
     {
         var portFile = FindPortFile(args);
-        if (portFile is null)
-            return null;
+        if (portFile is null) return null;
 
-        var content = File.ReadAllText(portFile).Trim();
-        return int.TryParse(content, out var port) ? port : null;
+        try
+        {
+            return ParsePortFile(File.ReadAllText(portFile));
+        }
+        catch
+        {
+            return null; // unreadable port file — treat as no server
+        }
     }
 
     /// <summary>
