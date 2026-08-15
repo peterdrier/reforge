@@ -45,9 +45,15 @@ than being surprised by it.
 
 **Hot mode.** The contract holds there because of v0.26.0, which is what makes these two commands
 run on the server at all and what carries the exit code and stderr back through the response frame.
-A server left running from an older build cannot silently swallow the refusal either: it advertises
-no protocol version in its port file, so the client declines to relay, says so on stderr, and takes
-the cold path — correct, just not fast until `reforge stop && reforge serve` picks up the new build.
+
+**Restart your server after upgrading to this version:** `reforge stop && reforge serve`. A `serve`
+process left running from v0.26.0 advertises the same protocol version this build does — the wire
+format did not change, only the command's behavior did — so the client cannot tell them apart and
+relays into the old code, which scores the degraded build and exits 0 exactly as it always did. The
+gate applies to cold runs regardless; it is only relayed runs that reach the stale process. (A
+server older than v0.26.0 was never affected: it advertises no protocol version at all, so the
+client already declines to relay to it.) v0.28.0 removes the need to remember this by putting the
+build's identity in the port file and refusing to relay to any other build.
 
 ## v0.26.0 - one command registry (fixes the hot-mode silent failure)
 
