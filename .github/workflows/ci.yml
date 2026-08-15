@@ -1,0 +1,91 @@
+name: CI
+
+# Nothing built or tested this repo automatically before now. S001 — four of the tool's commands
+# silently printing help and exiting 0 under hot mode — shipped and survived four months partly
+# because no gate would have caught it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to a PR makes the previous run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Restore/build/test are separate steps so a failure names which one broke, rather than
+      # surfacing as one opaque red step.
+      - name: Restore
+        run: dotnet restore Reforge.slnx
+
+      - name: Build
+        run: dotnet build Reforge.slnx --configuration Release --no-restore
+
+      # The test project is targeted directly rather than through the solution: it is the only test
+      # project, and `--no-build` then depends on exactly the build above.
+      - name: Test
+        run: >
+          dotnet test test/Reforge.Tests/Reforge.Tests.csproj
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory artifacts/test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: artifacts/test-results
+          if-no-files-found: warn
+
+  smoke:
+    name: CLI smoke
+    runs-on: ubuntu-latest
+    needs: build-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build src/Reforge/Reforge.csproj --configuration Release
+
+      # Unit tests cover the analysis; nothing covers the process actually starting. Both checks
+      # below are deliberately workspace-free so they stay fast and deterministic.
+      - name: Help exits zero
+        run: dotnet run --project src/Reforge --configuration Release --no-build -- --help
+
+      # The failure mode this whole gate exists for: a command the CLI cannot dispatch must report
+      # a non-zero exit. Silent success is the worst outcome for an agent-facing tool, which cannot
+      # see a help screen and infer that something went wrong.
+      - name: Unknown command exits non-zero
+        shell: bash
+        run: |
+          if dotnet run --project src/Reforge --configuration Release --no-build -- no-such-command; then
+            echo "::error::'no-such-command' exited 0; an undispatchable command must fail loudly."
+            exit 1
+          fi
+          echo "Unknown command correctly exited non-zero."
