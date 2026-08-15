@@ -59,6 +59,10 @@ public static class SurfaceScoreCommand
             Description = "Cap on the number of individual compile errors listed when the workspace compile is degraded (default 25). 0 = unlimited. Only the listed detail is capped — the error/unresolved counts are always exact.",
             DefaultValueFactory = _ => 25
         };
+        var allowDegradedOption = new Option<bool>("--allow-degraded")
+        {
+            Description = "Score even when the solution did not compile cleanly. Without this, a degraded build prints no score and exits 2, because a partial score reads as authoritative and has been quoted from broken trees before. With it, the score is printed, the result is marked degraded, and the exit code is 0."
+        };
 
         var command = new Command("surface-score",
             "Score a solution's durable surface, dependency use, and internal shape (config-driven). Supports Compact, Markdown, and JSON output.")
@@ -70,7 +74,8 @@ public static class SurfaceScoreCommand
             topSymbolsOption,
             listGroupsOption,
             baselineOption,
-            maxBuildDiagnosticsOption
+            maxBuildDiagnosticsOption,
+            allowDegradedOption
         };
 
         command.SetAction(async (parseResult, ct) =>
@@ -85,6 +90,7 @@ public static class SurfaceScoreCommand
             var listGroups = parseResult.GetValue(listGroupsOption);
             var baselinePath = parseResult.GetValue(baselineOption);
             var maxBuildDiagnostics = parseResult.GetValue(maxBuildDiagnosticsOption);
+            var allowDegraded = parseResult.GetValue(allowDegradedOption);
             var format = parseResult.GetValue(formatOption);
 
             // --all is an alias for --top 0 (no cap). int.MaxValue is the sentinel for "show
@@ -101,14 +107,28 @@ public static class SurfaceScoreCommand
                 var report = await engine.ScoreAsync(solution, ct, maxBuildDiagnostics);
                 report.ConfigPath = loadedFrom;
 
-                // Build-health: when the analyzed solution did not compile cleanly, the
-                // score is partial. Surface it in every format (diagnostics array -> compact
-                // & markdown render it) and shout to stderr (never stdout, which may be JSON).
+                // Build-health: when the analyzed solution did not compile cleanly the score is
+                // partial, so by default nothing is printed and the command exits 2. The
+                // diagnostics entry is still added first, so the --allow-degraded output carries
+                // the same marker in every format that it always did.
                 if (report.BuildHealth.Degraded)
                 {
                     var buildMsg = BuildInspector.DescribeDegraded(report.BuildHealth);
                     report.Diagnostics.Add(new ScoreDiagnostic("warning", "degraded-build", buildMsg));
-                    Console.Error.WriteLine($"WARNING: {buildMsg}");
+
+                    if (!allowDegraded)
+                    {
+                        // Return before any stdout write, including --list-groups: a section list
+                        // read off a broken compilation is as misleading as a score, and one
+                        // contract is easier to rely on than a per-flag exception.
+                        sw.Stop();
+                        Telemetry.Log("surface-score",
+                            $"refused=degraded-build errors={report.BuildHealth.CompilationErrorCount} unresolved={report.BuildHealth.UnresolvedReferenceCount}",
+                            0, sw.ElapsedMilliseconds);
+                        return DegradedBuildGate.Refuse(report.BuildHealth, "surface-score", Console.Error);
+                    }
+
+                    DegradedBuildGate.Warn(report.BuildHealth, "surface-score", Console.Error);
                 }
 
                 BaselineComparison? baseline = null;
@@ -175,6 +195,8 @@ public static class SurfaceScoreCommand
                 Telemetry.Log("surface-score",
                     $"groups={report.Groups.Count} types={report.TypesAnalyzed} filter={(groupFilter ?? "(all)")} cfg={(loadedFrom is null ? "default" : Path.GetFileName(loadedFrom))}",
                     report.Total, sw.ElapsedMilliseconds);
+
+                return 0;
             }
         });
 

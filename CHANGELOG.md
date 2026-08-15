@@ -2,6 +2,62 @@
 
 What changed and why. Newest first.
 
+## v0.27.0 - refuse to score a degraded build (BREAKING behavior change)
+
+Reforge already knew when the solution had not compiled — `BuildInspector` counts error
+diagnostics and retains them with file and line — and then scored anyway: a warning to stderr, an
+entry in the JSON `diagnostics` array, **exit 0**, and a full score on stdout that reads as
+authoritative. An agent running `surface-score --format json > out.json` never sees stderr and has
+no reason to read one entry inside a twenty-key document.
+
+That has put wrong numbers in a CHANGELOG, a design spec and a PR body. What made them convincing
+is that two runs against the same broken tree **agree with each other**: during v0.25.0's A/B, a
+tree carrying 3,723 compilation errors and 2,024 unresolved references matched the clean run on
+`typesAnalyzed` and `internalComplexityTotal` while reporting `canonicalReadDtoReturn` at -81
+against the clean tree's -162. Corpus agreement is not evidence of soundness. `build.degraded` is
+the only reliable check and nothing forced anyone to make it.
+
+- **`surface-score` now prints nothing and exits 2 when the build is degraded.** Suppressing stdout
+  is the part that does the work — a number that is never printed cannot be pasted into a
+  changelog. Exit **2**, not 1, so "the tree was broken" is machine-distinguishable from "the tool
+  failed".
+- **`--allow-degraded` is a real opt-out and exits 0.** A flag that still fails is a flag people
+  route around with `|| true`, which suppresses genuine failures too. With it the score is printed,
+  the `degraded-build` diagnostic is present in every format exactly as before, and the exit code
+  is 0.
+- **stderr names the counts and the individual errors** — `CSxxxx  <path>:<line>  <message>
+  (<project>)`, the same shape Compact and Markdown already use — followed by a pointer to
+  `--allow-degraded`. Capped by `--max-build-diagnostics` (default 25); the counts are never capped.
+  The diagnosis names the command you actually ran; the shared build description used to open with
+  "Surface-score is PARTIAL" regardless, which read as a bug in the tool when you had run
+  `section-shape`. The string embedded in `surface-score`'s JSON `diagnostics` array is unchanged.
+- **`section-shape` is covered by the same contract** and gains `--allow-degraded` and
+  `--max-build-diagnostics`. It never inspected build health at all, though its anchors and
+  `missing*` findings come off the same semantic model and break the same way. It inspects *before*
+  running the section analysis, so a broken tree skips that work rather than computing output
+  nobody will print.
+- **`--list-groups` is refused too.** A section list read off a broken compilation misleads the
+  same way a score does, and one contract is easier to rely on than a per-flag exception.
+- Both commands are the first in the tool to return an exit code from their action rather than
+  always yielding 0.
+- Clean builds are unaffected: same output, byte for byte, and exit 0.
+
+**Consumer impact.** Humans' `pr-surface-report.py` parses this JSON and will now see exit 2 with
+empty stdout when the tree is broken. That is the point, but it needs a matching update rather
+than being surprised by it.
+
+**Hot mode.** The contract holds there because of v0.26.0, which is what makes these two commands
+run on the server at all and what carries the exit code and stderr back through the response frame.
+
+**Restart your server after upgrading to this version:** `reforge stop && reforge serve`. A `serve`
+process left running from v0.26.0 advertises the same protocol version this build does — the wire
+format did not change, only the command's behavior did — so the client cannot tell them apart and
+relays into the old code, which scores the degraded build and exits 0 exactly as it always did. The
+gate applies to cold runs regardless; it is only relayed runs that reach the stale process. (A
+server older than v0.26.0 was never affected: it advertises no protocol version at all, so the
+client already declines to relay to it.) v0.28.0 removes the need to remember this by putting the
+build's identity in the port file and refusing to relay to any other build.
+
 ## v0.26.0 - one command registry (fixes the hot-mode silent failure)
 
 With a hot server running, `reforge surface-score`, `snapshot`, `cycles` and `section-shape`

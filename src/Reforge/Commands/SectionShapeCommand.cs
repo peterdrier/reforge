@@ -32,12 +32,23 @@ public static class SectionShapeCommand
         {
             Description = "Restrict output to a single section by name (the assembly name, common solution prefix stripped)."
         };
+        var maxBuildDiagnosticsOption = new Option<int>("--max-build-diagnostics")
+        {
+            Description = "Cap on the number of individual compile errors listed when the workspace compile is degraded (default 25). 0 = unlimited. Only the listed detail is capped — the error/unresolved counts are always exact.",
+            DefaultValueFactory = _ => 25
+        };
+        var allowDegradedOption = new Option<bool>("--allow-degraded")
+        {
+            Description = "Render the shape even when the solution did not compile cleanly. Without this, a degraded build prints nothing and exits 2 — the anchors and missing* findings are read off the same semantic model a score is, and are wrong in the same way. With it, the shape is printed and the exit code is 0."
+        };
 
         var command = new Command("section-shape",
             "Render each section's architectural shape (interfaces, DTO anchors, cross-section use, missing surfaces, visible debt, advisories). Supports Compact, Markdown, and JSON.")
         {
             configOption,
-            sectionOption
+            sectionOption,
+            maxBuildDiagnosticsOption,
+            allowDegradedOption
         };
 
         command.SetAction(async (parseResult, ct) =>
@@ -46,6 +57,8 @@ public static class SectionShapeCommand
             var solutionPath = parseResult.GetValue(solutionOption);
             var configPath = parseResult.GetValue(configOption);
             var sectionFilter = parseResult.GetValue(sectionOption);
+            var maxBuildDiagnostics = parseResult.GetValue(maxBuildDiagnosticsOption);
+            var allowDegraded = parseResult.GetValue(allowDegradedOption);
             var format = parseResult.GetValue(formatOption);
 
             var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
@@ -53,6 +66,26 @@ public static class SectionShapeCommand
             {
                 var dir = LocationHelper.GetSolutionDirectory(solution);
                 var config = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out var loadedFrom);
+
+                // This command never checked build health, though its anchors and missing* findings
+                // come off the same semantic model a score does and break the same way. Inspected
+                // BEFORE the analysis rather than after: the compilations it forces are the bulk of
+                // the cost either way (Roslyn caches them), so checking first means a broken tree
+                // skips the section analysis entirely instead of computing output nobody may print.
+                var buildHealth = await BuildInspector.InspectAsync(solution, maxBuildDiagnostics, ct);
+                if (buildHealth.Degraded)
+                {
+                    if (!allowDegraded)
+                    {
+                        sw.Stop();
+                        Telemetry.Log("section-shape",
+                            $"refused=degraded-build errors={buildHealth.CompilationErrorCount} unresolved={buildHealth.UnresolvedReferenceCount}",
+                            0, sw.ElapsedMilliseconds);
+                        return DegradedBuildGate.Refuse(buildHealth, "section-shape", Console.Error);
+                    }
+
+                    DegradedBuildGate.Warn(buildHealth, "section-shape", Console.Error);
+                }
 
                 // This command resolves the primary/settings anchors, which the removed
                 // canonicalReadDtos list used to feed. Anchors and missing-surface output can move
@@ -81,6 +114,8 @@ public static class SectionShapeCommand
                 Telemetry.Log("section-shape",
                     $"sections={sections.Count} cfg={(loadedFrom is null ? "default" : Path.GetFileName(loadedFrom))}",
                     sections.Count, sw.ElapsedMilliseconds);
+
+                return 0;
             }
         });
 

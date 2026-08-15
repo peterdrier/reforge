@@ -194,11 +194,19 @@ public static class BuildInspector
     }
 
     /// <summary>Human/agent-facing one-line description of a degraded build. Pure; no I/O.</summary>
-    public static string DescribeDegraded(BuildHealth h)
+    /// <param name="subject">
+    /// What the caller was asked to produce, named as the user named it. More than one command
+    /// analyzes off this semantic model now, and a message that says "Surface-score is PARTIAL" to
+    /// someone who ran <c>section-shape</c> reads as a bug in the tool rather than a fact about
+    /// their build — especially followed, as it is, by a line that names the right command.
+    /// <para>Defaults to <c>Surface-score</c> so the string embedded in <c>surface-score</c>'s JSON
+    /// <c>diagnostics</c> array is unchanged; consumers match on it.</para>
+    /// </param>
+    public static string DescribeDegraded(BuildHealth h, string subject = "Surface-score")
     {
         var counts = $"{h.CompilationErrorCount} compile error(s), {h.UnresolvedReferenceCount} unresolved reference(s)";
         return h.AppearsUnbuilt
-            ? $"Solution appears unbuilt ({counts}). Surface-score is PARTIAL: cross-section/DI/entity rules under-count. Run `dotnet build` first, then re-run."
-            : $"Solution did not compile cleanly ({counts}). Surface-score is PARTIAL: cross-section/DI/entity rules may under-count.";
+            ? $"Solution appears unbuilt ({counts}). {subject} is PARTIAL: cross-section/DI/entity rules under-count. Run `dotnet build` first, then re-run."
+            : $"Solution did not compile cleanly ({counts}). {subject} is PARTIAL: cross-section/DI/entity rules may under-count.";
     }
 }
