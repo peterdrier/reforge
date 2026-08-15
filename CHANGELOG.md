@@ -2,6 +2,40 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Gate 1 is executable
+
+No product change — no version bump, same as the CI change that preceded it. What changed is a
+policy that was previously a promise.
+
+The scoring spec says every scored rule must clear an anti-gaming gate: a `Before` that fires the
+rule, a `CheapestFix` that is the laziest edit stopping it firing, and the requirement that **the
+score not improve between them**. A rule whose cheapest fix lowers the score is worse than no rule,
+because it spends an agent's effort and then reports the result as progress. Until now that was a
+review promise, which is why `longMethod` — a rule the spec is now retiring — shipped despite
+failing it.
+
+`test/SampleSolution/SampleSolution.Gate/` carries the fixtures, one pair per label, discovered from
+disk rather than listed in the test. The rules a pair targets are declared in a `// gate1:` comment
+in the Before file, and the harness checks each named rule actually fires there, so a fixture that
+gates nothing fails as a broken fixture rather than passing on two zeros.
+
+Three pairs so far, covering four rules:
+
+- **`methodParameterOverflow`** — cheapest fix is the parameter object. Six values still cross the
+  boundary; `parameterBagInput` and `optionsBag` charge for what the signature stopped declaring.
+- **`tupleReturn`** — cheapest fix is a named result type. Better code, but not free: a published
+  DTO is more durable surface than a tuple, since renaming a tuple element breaks nobody.
+- **`dtoScalarProperty` + `publicDtoType`** — cheapest fix pushes five of six properties into a
+  nested DTO. The parent's scalar count drops; the same six values are still published, one level
+  deeper, plus a second public type.
+
+The remaining 38 rules are accounted for explicitly: 7 are exempt with a stated reason (one credit,
+three section-level entries with no declaring file to attribute to, three the spec retires), and 31
+are listed as not-yet-covered. A scored rule in none of the three buckets fails the build — so the
+next rule added without a fixture is caught at the point where the fixture could still have been
+written first. The lists are also checked in reverse, so an entry that no longer describes a real
+uncovered rule fails too.
+
 ## v0.28.1 - split the scoring engine by pass
 
 No behavior change. `SurfaceScoreEngine.cs` was 1,569 lines and the highest-churn file in the repo,

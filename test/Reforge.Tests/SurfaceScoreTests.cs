@@ -124,7 +124,7 @@ public class SurfaceScoreTests
 
         // One section per non-test assembly, ".Contracts" folded into its parent.
         Assert.Equal(
-            new[] { "Camp", "Core", "Dorm", "Lodge", "Reporting", "Services", "Tent", "Web" },
+            new[] { "Camp", "Core", "Dorm", "Gate", "Lodge", "Reporting", "Services", "Tent", "Web" },
             report.ConfiguredSections.ToArray());
         Assert.All(report.Groups.Keys, k => Assert.Contains(k, report.ConfiguredSections));
     }
