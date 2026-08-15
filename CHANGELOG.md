@@ -2,6 +2,41 @@
 
 What changed and why. Newest first.
 
+## v0.28.1 - split the scoring engine by pass
+
+No behavior change. `SurfaceScoreEngine.cs` was 1,569 lines and the highest-churn file in the repo,
+and every scoring item still on the roadmap adds a pass to it. Splitting after those land means
+splitting a 2,500-line file instead.
+
+The class is now `partial`, one file per pass, each named for what it charges for:
+
+| File | What it scores |
+|---|---|
+| `SurfaceScoreEngine.cs` | the order the passes run in, and the accumulator they all write through |
+| `ScoreReport.cs` | the report shapes every consumer reads |
+| `.DurableSurface.cs` | pass 1 — what an assembly exports |
+| `.DependencyUse.cs` | pass 2 — what a class reaches for through its constructor |
+| `.SignatureShape.cs` | pass 3 — parameter overflow, bools, tuple returns, options bags |
+| `.ReturnTypes.cs` | pass 4 — canonical read-DTO credit, cross-section entity leak |
+| `.WriteCapableUse.cs` | pass 5 — write-capable interface used read-only |
+| `.CrossCutting.cs` | duplicate DbSet owners, DI registrations, one-implementation interfaces |
+| `.ImplementationShape.cs` | pass 6 — cognitive complexity, size, dispatcher/flags smells |
+| `.SectionArchitecture.cs` | section rules, conservation anchors, helper candidates |
+| `.BoundaryInputs.cs` | pass 7 — parameter/command objects on the boundary |
+
+Every line moved verbatim; the split was done by extracting line ranges and verifying that the
+multiset of lines across the new files differs from the original only by the added file headers.
+No rule, weight, or threshold was touched, so scores are byte-identical to v0.28.0.
+
+Deliberately **not** done: an `IScoreRule` abstraction. The passes do not have a common shape — some
+walk classified types, some walk the whole solution's syntax trees, one consumes a pre-computed
+section architecture — and inventing an interface they all fit would cost more than the file split
+buys. This is a file split, nothing more.
+
+One user-visible consequence, from v0.28.0's build-identity gate: the version change means a hot
+server left running on v0.28.0 is no longer a dispatch target for a v0.28.1 client. It prints one
+line and takes the cold path, as designed.
+
 ## v0.28.0 - the relay carries arguments, not a command line (protocol v2)
 
 Two ways a hot server could answer differently from a cold run, both silent, both found by review
