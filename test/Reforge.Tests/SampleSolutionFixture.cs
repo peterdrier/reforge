@@ -38,7 +38,7 @@ public class SampleSolutionFixture : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private static string FindRepoRoot(string start)
+    internal static string FindRepoRoot(string start)
     {
         var dir = new DirectoryInfo(start);
         while (dir != null)
