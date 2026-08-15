@@ -159,13 +159,19 @@ public class CommandRegistryTests
     }
 
     /// <summary>
-    /// A root option's VALUE is not a command, even when it reads like one. Matching it would send
-    /// `reforge --solution references skill` to a server that does not register `skill` — so the
-    /// hot path would fail an invocation the cold path runs fine, which is a behavioral difference
-    /// between the two hosts and exactly what this PR exists to remove.
+    /// A root option's VALUE is not a command, even when it reads like one — the scan has to step
+    /// over it and keep looking. In `reforge --solution references skill` the command is `skill`;
+    /// matching the option's value instead would call the invocation relay-eligible and send it to
+    /// a server that does not register `skill`, so the hot path would fail something the cold path
+    /// runs fine.
+    ///
+    /// <para>Note this reports the command it finds whether or not that command is relayable —
+    /// eligibility is <see cref="CommandRegistry.IsRelayEligible(string[])"/>'s question, asked of
+    /// this answer. The last case returns null because the option consumed the only remaining
+    /// argument, so there is no command token at all.</para>
     /// </summary>
     [Theory]
-    [InlineData(new[] { "--solution", "references", "skill" }, null)]
+    [InlineData(new[] { "--solution", "references", "skill" }, "skill")]
     [InlineData(new[] { "--solution", "references", "callers", "Foo" }, "callers")]
     [InlineData(new[] { "--format", "cycles", "members", "Foo" }, "members")]
     [InlineData(new[] { "--limit", "snapshot" }, null)]
