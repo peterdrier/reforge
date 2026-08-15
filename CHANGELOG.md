@@ -2,6 +2,49 @@
 
 What changed and why. Newest first.
 
+## v0.26.0 - one command registry (fixes the hot-mode silent failure)
+
+With a hot server running, `reforge surface-score`, `snapshot`, `cycles` and `section-shape`
+printed the root help text and **exited 0**. Four of the tool's commands — including the #3 and #4
+most-used, 1,331 recorded runs between them — silently did nothing whenever the fast path they
+exist to use was available. An agent reads exit 0 with empty output as "ran fine, no findings".
+
+The cause was four hand-maintained lists of the command surface that disagreed: `Program` listed
+29, `ServeCommand` 21, the agent-facing skill doc 24, the README 14. `ServeCommand`'s copy was last
+updated 2026-04-13, so every command added after that date was registered on the cold path and
+nowhere else. Nothing failed loudly because `TryRelayAsync` reported success for any completed
+socket round-trip and the server redirects stderr to `TextWriter.Null`.
+
+- **New `CommandRegistry` is the single list.** `Program` (cold) and `ServeCommand` (hot) both
+  build their root command from it, so a command cannot exist on one host and not the other.
+  Adding a command is one entry plus one factory arm; a spec with no factory throws by name at
+  startup on both hosts rather than going missing at runtime.
+- **Relay eligibility is a registry property**, not a string list in `Program`. The five plumbing
+  commands are ineligible for stated reasons (`serve` would nest a server, `stop` would kill the
+  one in use, `install` and `request` write outside the repo, `skill` prints a static document),
+  and the server no longer registers them. Note `skill` *was* registered server-side and could
+  never be reached, the same drift in the other direction.
+- **The relay protocol carries an exit code.** The server prefixes its response with a
+  `__reforge_exit__:<code>` status line; `TryRelayAsync` returns `int?` — the command's exit code,
+  or `null` when no server is reachable and the caller should cold-start. "The server ran this and
+  it failed" and "there is no server" were previously the same `false`.
+- **An unknown command is no longer relayed.** It reaches the cold path so `System.CommandLine` can
+  report an unrecognized command with a non-zero exit. Previously any first argument was forwarded,
+  and a typo came back as help text and exit 0.
+- **The server answers even when handling throws.** A failure used to leave the client reading an
+  empty response, indistinguishable from a clean run with no output; it now returns exit 1 and the
+  message.
+- A response with no status line — from a server binary older than this release, which happens
+  whenever a long-running server outlives the client build that started it — is passed through
+  unchanged and reported as success. That is the pre-0.26 behavior, not a new failure.
+- Tests: `CommandRegistryTests` pins that every spec resolves to a factory whose command name
+  matches, that the two hosts differ by exactly the five plumbing commands, that the four
+  previously-missed commands are served, that `skill` is not, and that ineligible/unknown/empty
+  commands are refused with a non-zero exit. `ServerProtocolTests` pins the exit-code channel
+  including byte-exact payload passthrough and the pre-sentinel fallback.
+
+Scoring output and every command's behavior on the cold path are unchanged.
+
 ## v0.25.0 - derive canonical read DTOs from the exported Contracts surface (BREAKING config change)
 
 v0.23.0 deleted the section-*membership* config because assembly boundaries already state it.

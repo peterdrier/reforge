@@ -8,14 +8,28 @@ namespace Reforge;
 public static class ServerClient
 {
     /// <summary>
-    /// Attempts to relay the given args to a running reforge server.
-    /// Returns true if relayed successfully, false if no server found.
+    /// Prefix of the status line the server sends ahead of a command's captured output, carrying
+    /// that command's exit code. Without it the client could only report "the socket round-trip
+    /// completed", which is what let a command the server could not dispatch look like success.
     /// </summary>
-    public static async Task<bool> TryRelayAsync(string[] args)
+    public const string ExitCodeSentinel = "__reforge_exit__:";
+
+    /// <summary>
+    /// Attempts to relay the given args to a running reforge server. Returns the command's exit
+    /// code when the server ran it, or <c>null</c> when no server is reachable and the caller
+    /// should fall back to a cold start.
+    /// </summary>
+    /// <remarks>
+    /// A completed round-trip is no longer treated as success on its own. The distinction that
+    /// matters to a scripting agent is "the server ran this and it failed" (an exit code) versus
+    /// "there is no server" (<c>null</c>) — collapsing both into <c>true</c>/<c>false</c> is what
+    /// made a server that could not dispatch a command indistinguishable from one that could.
+    /// </remarks>
+    public static async Task<int?> TryRelayAsync(string[] args)
     {
         var port = FindServerPort(args);
         if (port is null)
-            return false;
+            return null;
 
         try
         {
@@ -33,17 +47,39 @@ public static class ServerClient
             // Shut down the write side so server knows we're done
             client.Client.Shutdown(SocketShutdown.Send);
 
-            // Read and print response
             var response = await reader.ReadToEndAsync();
-            Console.Write(response);
-
-            return true;
+            var (exitCode, payload) = ParseResponse(response);
+            Console.Write(payload);
+            return exitCode;
         }
         catch
         {
             // Server unreachable — fall back to cold start
-            return false;
+            return null;
         }
+    }
+
+    /// <summary>
+    /// Splits a server response into its exit code and the command's output.
+    /// </summary>
+    /// <remarks>
+    /// A response with no sentinel comes from a server binary older than the sentinel — a real
+    /// case, since a server can outlive the client build that started it. It is passed through
+    /// unchanged and reported as success: exactly the pre-sentinel behavior, rather than a
+    /// spurious failure against a long-running older server.
+    /// </remarks>
+    internal static (int ExitCode, string Payload) ParseResponse(string response)
+    {
+        if (!response.StartsWith(ExitCodeSentinel, StringComparison.Ordinal))
+            return (0, response);
+
+        // Slice rather than ReadLine so the payload keeps its exact bytes, including whether its
+        // final line is newline-terminated.
+        int newline = response.IndexOf('\n');
+        var codeText = (newline < 0 ? response[ExitCodeSentinel.Length..] : response[ExitCodeSentinel.Length..newline]).Trim();
+        var payload = newline < 0 ? "" : response[(newline + 1)..];
+
+        return (int.TryParse(codeText, out var exitCode) ? exitCode : 0, payload);
     }
 
     /// <summary>

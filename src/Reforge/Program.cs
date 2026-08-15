@@ -1,13 +1,20 @@
 using System.CommandLine;
 using Reforge;
-using Reforge.Commands;
 
 // Try relaying to a hot server FIRST — before MSBuildLocator or any Roslyn types load.
 // ServerClient is pure TCP, no Roslyn dependency. This skips the expensive startup path.
-if (args.Length > 0 && args[0] is not "serve" and not "stop" and not "skill" and not "install" and not "request" and not "--list" and not "--help" and not "-h")
+//
+// Only a relay-eligible command is forwarded. An unknown name is deliberately NOT relayed: it has
+// to reach the cold path so System.CommandLine can report an unrecognized command with a non-zero
+// exit, rather than the server answering with help text and exit 0. CommandRegistry.Specs holds
+// only strings and bools precisely so this check loads neither System.CommandLine nor Roslyn.
+if (args.Length > 0 && CommandRegistry.IsRelayEligible(args[0]))
 {
-    if (await ServerClient.TryRelayAsync(args))
-        return 0;
+    // null means no server is reachable — fall through to the cold path. Any other value is the
+    // exit code of the command the server actually ran, propagated rather than flattened to 0.
+    var relayedExitCode = await ServerClient.TryRelayAsync(args);
+    if (relayedExitCode is not null)
+        return relayedExitCode.Value;
 }
 
 // Cold path: register MSBuild BEFORE any Roslyn types are loaded.
@@ -44,48 +51,11 @@ static async Task<int> RunAsync(string[] args)
         limitOption
     };
 
-    // Phase 1 — Semantic Query commands
-    rootCommand.Add(ReferencesCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(CallersCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(ImplementationsCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(MembersCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(DependenciesCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(InjectedCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(InheritorsCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(CallChainCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(UsagesCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(ParametersCommand.Create(solutionOption, formatOption, limitOption));
-
-    // Service ownership analysis
-    rootCommand.Add(DbSetUsageCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(OwnershipViolationsCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(ServiceMapCommand.Create(solutionOption, formatOption, limitOption));
-
-    // Code health analysis
-    rootCommand.Add(HealthCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(SnapshotCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(CyclesCommand.Create(solutionOption, formatOption, limitOption));
-
-    // Audit commands
-    rootCommand.Add(AuditAuthCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(AuditCacheCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(AuditImmutableCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(AuditEfCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(AuditSurfaceCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(AuditDownstreamCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(SurfaceScoreCommand.Create(solutionOption, formatOption, limitOption));
-    rootCommand.Add(SectionShapeCommand.Create(solutionOption, formatOption, limitOption));
-
-    // Help & setup
-    rootCommand.Add(SkillCommand.Create());
-    rootCommand.Add(InstallCommand.Create());
-    rootCommand.Add(RequestCommand.Create());
-
-    // Server
-    rootCommand.Add(ServeCommand.Create(solutionOption));
-    rootCommand.Add(StopCommand.Create(solutionOption));
-
-    // Phase 2 — Mechanical Transform commands (future)
+    // One list, shared with the hot server (ServeCommand). The cold path registers every command;
+    // the server registers only the relay-eligible ones. Phase 2 — Mechanical Transform commands
+    // will be added to CommandRegistry, not here.
+    foreach (var command in CommandRegistry.CreateAll(new CommandOptions(solutionOption, formatOption, limitOption)))
+        rootCommand.Add(command);
 
     var parseResult = rootCommand.Parse(args);
     return await parseResult.InvokeAsync();
