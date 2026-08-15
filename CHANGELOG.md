@@ -2,6 +2,40 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Gate 1 measures each variant instead of reconstructing it
+
+No product change. Test infrastructure, closing #26.
+
+The Gate 1 harness scored the sample solution once and reconstructed each fixture variant's total by
+filtering the report to that variant's file. That is exact for rules which charge a declaration for
+what the declaration says, and wrong for every rule which charges a *section* for its shape — the
+`missing*` rules were recorded with no file at all and vanished from the comparison, while
+`readSurfaceProjectionMethod` and `crossSectionWriteSurface` carried a real file and so looked like
+ordinary per-declaration points despite being a function of which fixtures happened to coexist. A
+fixture declaring a conventionally-named `…Info` type could become the section's primary DTO and
+start charging projection points against *other* fixtures' files. Three findings, one mistake: a
+variant's score was being derived from a shared compilation rather than measured.
+
+Each variant is now compiled as a solution of its own (`IsolatedVariantScorer`, an `AdhocWorkspace`
+over the fixture file plus the host's reference set), and the report's total *is* the variant's
+score. Nothing to filter, nothing to attribute, no way for one fixture to move another's number.
+Section identity is unchanged — a lone assembly named `SampleSolution.Gate` still folds to section
+`Gate` — so config policy resolves exactly as it did and isolation changes only what the harness can
+see, not what the engine decides.
+
+Three consequences:
+
+- The two guards that made the old failure modes loud are **deleted**. They were scaffolding around
+  a defect; the defect is gone.
+- The five section-coupled rules exempted as ungateable move back to not-yet-covered. Their
+  exemption said "needs the isolated-variant harness", and that reason is now false. A variant
+  compiled alone is a section, so these measure correctly — they are merely unwritten, which is a
+  different claim. Buckets: 2 covered, 4 exempt, 36 pending.
+- A variant that does not compile is now a **test failure** rather than a fixture scoring near zero
+  and passing the gate by being empty. The shared harness could not tell those apart, because it
+  never compiled a variant on its own. This also enforces the self-containment rule that was
+  previously left to authoring discipline.
+
 ## Unreleased - Gate 1 is executable
 
 No product change — no version bump, same as the CI change that preceded it. What changed is a

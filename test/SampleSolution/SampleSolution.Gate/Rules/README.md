@@ -6,8 +6,7 @@ Every scored rule must come with a pair here before it ships:
 - `<label>.CheapestFix.cs` — the laziest edit that stops it firing, as an LLM would perform it.
 - `<label>.GoodFix.cs` — optional; a genuine fix, which *may* score better.
 
-`GateOneFixtureTests` scores the sample solution once and attributes points by declaring file, then
-asserts two things about each pair:
+`GateOneFixtureTests` compiles **each variant on its own** and asserts two things about each pair:
 
 1. **The declared rule charges strictly less in the cheapest fix.** This is what makes the fixture a
    fix. An agent edits code because a number went down; if the rule charges what it charged before,
@@ -18,36 +17,27 @@ asserts two things about each pair:
 
 Point 1 is why a fix that only *relocates* surface is not a cheapest fix. Splitting a six-property
 DTO into a parent and a nested child drops the parent's property count, but `dtoScalarProperty`
-charges per property across the file and still charges six — the number an agent watches never
+charges per property across the variant and still charges six — the number an agent watches never
 moved, so that edit belongs in a `GoodFix` discussion, not here.
 
-The rules a pair targets are declared in a `// gate1:` comment on the Before file. They are named
-explicitly rather than inferred from what fires, because almost every fixture incidentally trips
-`applicationServiceMethod`, and inferring coverage from that would mark rules as gated that nobody
-designed a cheapest fix for. The test checks each named rule actually fires in the Before file, so
-a stale name fails rather than silently narrowing the gate.
+## One variant, one solution
 
-## What this harness can and cannot measure
+Each variant is scored as a solution containing only itself (`IsolatedVariantScorer`), so the
+report's total *is* that variant's score. Nothing is filtered, nothing is attributed, and no
+fixture can move another fixture's number.
 
-Every variant is scored *in the same compilation* — the solution is scored once and each variant's
-total is reconstructed by filtering the report to its file. That is exact for **per-declaration**
-rules and wrong for anything else, so:
+This matters more than it sounds. The harness originally scored the whole sample solution once and
+reconstructed each variant's total by filtering to its file, which was exact for rules that charge a
+declaration and quietly wrong for every rule that charges a *section* for its shape — see
+[#26](https://github.com/peterdrier/reforge/issues/26) for the three separate ways that went wrong.
+Isolation removes the class of bug rather than guarding against instances of it, and it makes
+section-shaped fixtures possible for the first time: a variant compiled alone **is** a section.
 
-- **Fixtures must be self-contained.** No type declared in one fixture file may be referenced by
-  another. Rules like `oneImplementationInterface` and `duplicateDbSetOwner` depend on what the
-  *rest* of the solution declares, so two fixtures sharing an interface would silently move each
-  other's score. Type names are prefixed `Gate…` per pair to keep this obvious.
-- **Section-coupled rules cannot be gated here**, whether or not they carry a file. The `missing*`
-  rules are recorded against the section with an empty file and vanish from the comparison; a
-  fixture declaring a repository would make the section repo-backed and switch them on for every
-  pair at once. `readSurfaceProjectionMethod` and `crossSectionWriteSurface` are the subtler case —
-  they *do* carry a file, so they look like ordinary per-declaration points, but a fixture whose
-  type name gets adopted as the section's primary DTO causes them to be charged against *other*
-  fixtures' files. `NoGateFixture_ScoresThroughSectionState` fails on either shape, so the gate
-  breaks loudly rather than measuring a number that isn't the variant's.
+Two consequences for writing fixtures:
 
-Both are the same underlying defect: the variant's score is reconstructed from a shared
-compilation instead of measured in isolation. The fix is [#26](https://github.com/peterdrier/reforge/issues/26).
-
-Fixtures must use BCL types only — the sample solution declares no `PackageReference` anywhere, and
-`SampleSolutionInvariantsTests` enforces it.
+- **A fixture must compile on its own.** `EveryVariant_CompilesOnItsOwn` enforces it. A type
+  borrowed from another fixture file is not there, so each file carries everything it needs. Type
+  names are prefixed `Gate…` per pair to keep collisions obvious.
+- **Fixtures must use BCL types only** — variants compile against the test host's reference set, and
+  the sample solution declares no `PackageReference` anywhere (`SampleSolutionInvariantsTests`
+  enforces the latter).
