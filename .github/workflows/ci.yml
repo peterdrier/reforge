@@ -39,6 +39,12 @@ jobs:
       - name: Build
         run: dotnet build Reforge.slnx --configuration Release --no-restore
 
+      # test/SampleSolution is deliberately NOT restored or built. It declares no PackageReference
+      # (SampleSolutionInvariantsTests enforces that), so MSBuildWorkspace opens it with zero
+      # compilation errors from a pristine checkout — and running the suite that way is what proves
+      # it. Building it here would restore away any package reference added later, keeping CI green
+      # while the invariant silently broke.
+      #
       # The test project is targeted directly rather than through the solution: it is the only test
       # project, and `--no-build` then depends on exactly the build above.
       - name: Test
