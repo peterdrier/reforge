@@ -42,18 +42,24 @@ suspected to lower the total as well, which would make the gate red. Both are un
 suspected-red gate is not something to ship on a hunch, so both rules moved to not-yet-covered.
 
 The harness scores the solution once and reconstructs each variant's total by filtering to its file,
-which is exact for per-declaration rules and blind to anything section-level: those are recorded
-against the section with an empty file, so the filter drops them, and they are shared by every pair
-in the section rather than belonging to one. A fixture that declared a repository would make the
-section repo-backed, turn on the `missing*` rules, and silently move every other pair's number.
-That now fails as a broken harness rather than a passing gate. Fixtures must also be self-contained
-for the same reason — `oneImplementationInterface` and friends depend on what the rest of the
-solution declares. Gating rules of that shape needs each variant scored in its own solution, which
-is the same harness the `missing*` exemptions are already waiting on.
+which is exact for per-declaration rules and wrong for section-coupled ones. Two shapes, both now
+caught: the `missing*` rules are recorded against the section with an empty file and vanish from the
+comparison, so a fixture declaring a repository would make the section repo-backed and switch them
+on for every pair at once; `readSurfaceProjectionMethod` and `crossSectionWriteSurface` do carry a
+file and so look like ordinary per-declaration points, but a fixture whose type name gets adopted as
+the section's primary DTO causes them to be charged against *other* fixtures' files. Either way a
+pair's score stops being a property of that pair. That now fails as a broken harness rather than
+passing as a gate. Fixtures must also be self-contained — `oneImplementationInterface` and
+`duplicateDbSetOwner` depend on what the rest of the solution declares — which is documented rather
+than checked, because detecting it needs the compilation and not the report.
 
-The other 40 rules are accounted for explicitly: 7 are exempt with a stated reason (one credit,
-three section-level entries with no declaring file to attribute to, three the spec retires), and 33
-are listed as not-yet-covered. A scored rule in none of the three buckets fails the build — so the
+All of it is one defect: the variant's score is reconstructed from a shared compilation instead of
+measured in isolation. Fixing that is #26, and it is what the five section-coupled exemptions point
+at.
+
+The other 40 rules are accounted for explicitly: 9 are exempt with a stated reason (one credit, five
+section-coupled and so ungateable by this harness, three the spec retires), and 31 are listed as
+not-yet-covered. A scored rule in none of the three buckets fails the build — so the
 next rule added without a fixture is caught at the point where the fixture could still have been
 written first. Bucket membership is checked in both directions and for overlap, so an entry that no
 longer describes something true fails too — an exemption carries a reason, and a stale reason goes

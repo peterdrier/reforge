@@ -51,13 +51,17 @@ public class GateOneFixtureTests
             ["canonicalReadDtoReturn"] =
                 "credit, not a penalty — a cheapest-fix pair does not typecheck as a concept",
 
-            // These fire against a section, not a declaration: AddEntryByName is called with an
-            // empty file, so there is no declaring file to attribute the points to and the
-            // before/after harness below cannot see them. Gating them needs a section-shaped
-            // fixture harness, which is worth building and is not this PR.
-            ["missingReadSurface"] = "section-level entry with no declaring file; needs a section-shaped harness",
-            ["missingWriteSurface"] = "section-level entry with no declaring file; needs a section-shaped harness",
-            ["missingPrimaryInfoDto"] = "section-level entry with no declaring file; needs a section-shaped harness",
+            // Everything ScoreSectionArchitecture emits. These fire on what the *section* looks
+            // like — which types happen to coexist in it — not on the declaration they land on, so
+            // this harness cannot gate them however they are attributed. The first three are
+            // recorded with an empty file and vanish from the comparison entirely; the last two
+            // carry a real file and are worse, because they look like ordinary per-declaration
+            // points while actually being a function of the other fixtures in the section.
+            ["missingReadSurface"] = "section-coupled; needs the isolated-variant harness",
+            ["missingWriteSurface"] = "section-coupled; needs the isolated-variant harness",
+            ["missingPrimaryInfoDto"] = "section-coupled; needs the isolated-variant harness",
+            ["readSurfaceProjectionMethod"] = "section-coupled; needs the isolated-variant harness",
+            ["crossSectionWriteSurface"] = "section-coupled; needs the isolated-variant harness",
 
             // The spec retires or re-bases all three as part of the internal-axis rework (issue
             // #19). Writing fixtures for a rule that is being deleted spends the effort twice.
@@ -103,8 +107,6 @@ public class GateOneFixtureTests
         "crossSectionFullService",
         "crossSectionRepository",
         "writeCapableInterfaceUsedReadOnly",
-        "crossSectionWriteSurface",
-        "readSurfaceProjectionMethod",
         "booleanParameter",
         "optionsBag",
         "dashboardAdminPageName",
@@ -235,42 +237,69 @@ public class GateOneFixtureTests
     }
 
     /// <summary>
+    /// Every rule <c>ScoreSectionArchitecture</c> emits. These fire on the shape of the
+    /// <i>section</i> — which types coexist in it — rather than on the declaration the points land
+    /// against, so a fixture's score stops being a property of the fixture. Kept as a list because
+    /// it is a closed set owned by one file; when that file learns a new rule, this list is the
+    /// thing to update, and <see cref="EveryRule_BelongsToExactlyOneBucket_AndEveryEntryStillDescribesSomethingTrue"/>
+    /// will notice if a name here stops being a real rule.
+    /// </summary>
+    private static readonly IReadOnlySet<string> SectionCoupled = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "missingReadSurface",
+        "missingWriteSurface",
+        "missingPrimaryInfoDto",
+        "readSurfaceProjectionMethod",
+        "crossSectionWriteSurface",
+    };
+
+    /// <summary>
     /// The harness reconstructs each variant's score by filtering one shared report to one file.
-    /// That is exact for per-declaration rules and blind to everything else, and the blindness is
-    /// silent: a section-level penalty is recorded against the section with an <b>empty</b> file
-    /// (<c>ScoreSectionArchitecture</c>), so the filter discards it and the comparison reports a
-    /// number that is not the variant's score.
+    /// That is exact for per-declaration rules and wrong for section-coupled ones, in two different
+    /// ways, and both are silent.
     ///
-    /// <para>Worse, a section-level penalty is shared. A fixture that declares a repository makes
-    /// the whole Gate section repo-backed, which turns on the <c>missing*</c> rules for every pair
-    /// in it at once — so one fixture would silently move another's total, in a direction neither
-    /// author intended.</para>
+    /// <para>The <c>missing*</c> rules are recorded against the section with an <b>empty</b> file,
+    /// so the filter discards them: a fixture that declares a repository makes the whole section
+    /// repo-backed, turns those rules on for every pair at once, and none of it appears in any
+    /// pair's total.</para>
     ///
-    /// <para>The real fix is to score each variant in its own solution, which is the same
-    /// section-shaped harness the <c>missing*</c> exemptions are waiting on. Until that exists,
-    /// this fails the moment a fixture puts the Gate section into a state the file comparison
-    /// cannot see, rather than letting the gate quietly measure the wrong thing.</para>
+    /// <para>The other two are the harder case, because they <b>do</b> carry a file and so look
+    /// like ordinary per-declaration points. A fixture declaring a conventionally-named
+    /// <c>…Info</c> type can become the section's primary DTO in <c>SectionShapeAnalyzer</c>, after
+    /// which <c>readSurfaceProjectionMethod</c> is charged against <i>other</i> fixtures' files.
+    /// The filter attributes those correctly and reads them wrongly: the number moves because of a
+    /// file the pair's author never saw.</para>
+    ///
+    /// <para>The real fix is to score each variant in its own solution — see issue #26. Until then
+    /// this fails the moment a Gate fixture scores through section state, so the gate breaks rather
+    /// than quietly measuring something that is not the variant's score.</para>
     /// </summary>
     [Fact]
-    public async Task NoGateFixture_ScoresBelowTheFileComparison()
+    public async Task NoGateFixture_ScoresThroughSectionState()
     {
         var report = await ScoreAsync();
-
-        var hidden = report.Groups
+        var gateEntries = report.Groups
             .Where(g => g.Key.Equals("Gate", StringComparison.OrdinalIgnoreCase))
             .SelectMany(g => g.Value.Entries)
-            .Where(e => string.IsNullOrWhiteSpace(e.File) && e.Points != 0)
-            .Select(e => $"{e.Rule} ({e.Points:+#;-#;0}): {e.Detail ?? e.Symbol}")
+            .Where(e => e.Points != 0)
+            .ToList();
+
+        var problems = gateEntries
+            .Where(e => string.IsNullOrWhiteSpace(e.File) || SectionCoupled.Contains(e.Rule))
+            .Select(e => $"  {e.Rule} ({e.Points:+#;-#;0}) on "
+                + (string.IsNullOrWhiteSpace(e.File) ? "(no file)" : e.File)
+                + $" — {e.Detail ?? e.Symbol}")
             .OrderBy(s => s, StringComparer.Ordinal)
             .ToList();
 
-        Assert.True(hidden.Count == 0,
-            "The Gate section scores points that are not attributed to any file, so the "
-            + "before/after comparison cannot see them and every pair in the section shares them:"
-            + Environment.NewLine + string.Join(Environment.NewLine, hidden) + Environment.NewLine
-            + "A fixture changed section-level state — most likely by declaring a repository, which "
-            + "makes the section repo-backed and turns on the missing* rules. Gating a rule of that "
-            + "shape needs each variant scored in its own solution; this harness cannot do it.");
+        Assert.True(problems.Count == 0,
+            "The Gate section scores points that depend on which fixtures coexist in it, so a "
+            + "pair's before/after comparison is no longer a property of that pair:"
+            + Environment.NewLine + string.Join(Environment.NewLine, problems) + Environment.NewLine
+            + "Most likely a fixture declared a repository (making the section repo-backed) or a "
+            + "conventionally-named type that SectionShapeAnalyzer adopted as the section's primary "
+            + "DTO. Rules of this shape need each variant scored in its own solution (#26); this "
+            + "harness cannot gate them, and the fixture that triggered this belongs elsewhere.");
     }
 
     // ---------------- The ratchet ----------------

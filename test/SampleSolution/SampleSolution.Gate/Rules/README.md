@@ -37,13 +37,17 @@ rules and wrong for anything else, so:
   another. Rules like `oneImplementationInterface` and `duplicateDbSetOwner` depend on what the
   *rest* of the solution declares, so two fixtures sharing an interface would silently move each
   other's score. Type names are prefixed `Gate…` per pair to keep this obvious.
-- **Section-level rules cannot be gated here.** `ScoreSectionArchitecture` records them against the
-  section with an empty file, which the filter discards, and they are shared by every pair in the
-  section rather than belonging to one. `NoGateFixture_ScoresBelowTheFileComparison` fails if a
-  fixture puts the section into such a state — most likely by declaring a repository, which makes
-  the section repo-backed and turns on the `missing*` rules — so the gate breaks loudly instead of
-  measuring the wrong number. Gating those rules needs each variant scored in its own solution;
-  that harness is the same one the `missing*` exemptions in `GateOneFixtureTests` are waiting on.
+- **Section-coupled rules cannot be gated here**, whether or not they carry a file. The `missing*`
+  rules are recorded against the section with an empty file and vanish from the comparison; a
+  fixture declaring a repository would make the section repo-backed and switch them on for every
+  pair at once. `readSurfaceProjectionMethod` and `crossSectionWriteSurface` are the subtler case —
+  they *do* carry a file, so they look like ordinary per-declaration points, but a fixture whose
+  type name gets adopted as the section's primary DTO causes them to be charged against *other*
+  fixtures' files. `NoGateFixture_ScoresThroughSectionState` fails on either shape, so the gate
+  breaks loudly rather than measuring a number that isn't the variant's.
+
+Both are the same underlying defect: the variant's score is reconstructed from a shared
+compilation instead of measured in isolation. The fix is [#26](https://github.com/peterdrier/reforge/issues/26).
 
 Fixtures must use BCL types only — the sample solution declares no `PackageReference` anywhere, and
 `SampleSolutionInvariantsTests` enforces it.
