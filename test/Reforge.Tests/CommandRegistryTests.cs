@@ -121,11 +121,55 @@ public class CommandRegistryTests
     public void IsRelayEligible_IsCaseSensitive() =>
         Assert.False(CommandRegistry.IsRelayEligible("References"));
 
+    // ---------------- Relay eligibility across a full argument list ----------------
+
+    /// <summary>
+    /// The root's --solution/--format/--limit are recursive, so they parse ahead of the subcommand
+    /// too. Deciding on args[0] would push every such invocation onto the cold path while a server
+    /// sat idle.
+    /// </summary>
+    [Theory]
+    [InlineData(new[] { "references", "Foo" }, "references")]
+    [InlineData(new[] { "--format", "json", "cycles" }, "cycles")]
+    [InlineData(new[] { "--solution", "app.slnx", "references", "Foo" }, "references")]
+    [InlineData(new[] { "--limit", "5", "--format", "json", "surface-score" }, "surface-score")]
+    public void FindCommandToken_LocatesTheCommandAfterGlobalOptions(string[] args, string expected)
+    {
+        Assert.Equal(expected, CommandRegistry.FindCommandToken(args));
+        Assert.True(CommandRegistry.IsRelayEligible(args));
+    }
+
+    [Fact]
+    public void FindCommandToken_IgnoresOptionsAndReturnsNullWhenNoCommandIsNamed()
+    {
+        Assert.Null(CommandRegistry.FindCommandToken(["--help"]));
+        Assert.Null(CommandRegistry.FindCommandToken(["--solution", "app.slnx"]));
+        Assert.Null(CommandRegistry.FindCommandToken([]));
+        Assert.False(CommandRegistry.IsRelayEligible(["--solution", "app.slnx"]));
+    }
+
+    /// <summary>
+    /// A symbol argument that happens to share a command's name must not steal the decision from
+    /// the real command, which is why the scan runs left to right.
+    /// </summary>
+    [Fact]
+    public void FindCommandToken_TakesTheFirstMatch_SoAnArgumentNamedLikeACommandCannotWin()
+    {
+        Assert.Equal("references", CommandRegistry.FindCommandToken(["references", "snapshot"]));
+    }
+
+    [Fact]
+    public void IsRelayEligible_ForArgsNamingAPlumbingCommand_IsFalse()
+    {
+        Assert.False(CommandRegistry.IsRelayEligible(["--solution", "app.slnx", "install"]));
+    }
+
     // ---------------- Server dispatch (no workspace involved) ----------------
 
-    private static async Task<(int ExitCode, string Output)> DispatchAsync(string commandLine)
+    private static async Task<ServeCommand.RequestResult> DispatchAsync(string commandLine)
     {
-        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(commandLine + "\n"));
+        var request = ServerClient.FormatRequest(Directory.GetCurrentDirectory(), commandLine);
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(request));
         using var reader = new StreamReader(stream);
         using var cts = new CancellationTokenSource();
         return await ServeCommand.RunRequestAsync(reader, cts);
@@ -134,42 +178,67 @@ public class CommandRegistryTests
     [Fact]
     public async Task Server_RefusesAnIneligibleCommand_WithNonZeroExit()
     {
-        var (exitCode, output) = await DispatchAsync("skill");
+        var result = await DispatchAsync("skill");
 
-        Assert.NotEqual(0, exitCode);
-        Assert.Contains("skill", output, StringComparison.Ordinal);
-        Assert.Contains("not a command the reforge server can run", output, StringComparison.Ordinal);
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("skill", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("not a command the reforge server can run", result.Stderr, StringComparison.Ordinal);
+        // Nothing that could be mistaken for a result.
+        Assert.Equal("", result.Stdout);
     }
 
     [Fact]
     public async Task Server_RefusesAnUnknownCommand_WithNonZeroExit()
     {
-        var (exitCode, output) = await DispatchAsync("no-such-command --solution x.slnx");
+        var result = await DispatchAsync("no-such-command --solution x.slnx");
 
-        Assert.NotEqual(0, exitCode);
-        Assert.Contains("no-such-command", output, StringComparison.Ordinal);
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("no-such-command", result.Stderr, StringComparison.Ordinal);
+        Assert.Equal("", result.Stdout);
     }
 
     [Fact]
     public async Task Server_RefusesAnEmptyCommand_WithNonZeroExit()
     {
-        var (exitCode, output) = await DispatchAsync("");
+        var result = await DispatchAsync("");
 
-        Assert.NotEqual(0, exitCode);
-        Assert.Contains("empty command", output, StringComparison.Ordinal);
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("empty command", result.Stderr, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A pre-v1 client sends a bare command line with no framing. It must be refused rather than
+    /// misparsed — its first line would otherwise be read as the working directory.
+    /// </summary>
     [Fact]
-    public async Task Server_ShutdownSentinel_AcksAndCancels()
+    public async Task Server_RefusesAnUnframedRequest_WithNonZeroExit()
+    {
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes("references Foo\n"));
+        using var reader = new StreamReader(stream);
+        using var cts = new CancellationTokenSource();
+
+        var result = await ServeCommand.RunRequestAsync(reader, cts);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("framing", result.Stderr, StringComparison.Ordinal);
+        Assert.Equal("", result.Stdout);
+    }
+
+    /// <summary>
+    /// Shutdown stays a bare line on purpose: `reforge stop` has to work against a server of any
+    /// version, or the advertised fix for a version mismatch would itself need a matching build.
+    /// </summary>
+    [Fact]
+    public async Task Server_ShutdownSentinel_AcksAndCancels_WithoutFraming()
     {
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes("__shutdown__\n"));
         using var reader = new StreamReader(stream);
         using var cts = new CancellationTokenSource();
 
-        var (exitCode, output) = await ServeCommand.RunRequestAsync(reader, cts);
+        var result = await ServeCommand.RunRequestAsync(reader, cts);
 
-        Assert.Equal(0, exitCode);
-        Assert.Contains("shutting down", output, StringComparison.Ordinal);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("shutting down", result.Stdout, StringComparison.Ordinal);
         Assert.True(cts.IsCancellationRequested);
     }
 }

@@ -8,7 +8,10 @@ using Reforge;
 // to reach the cold path so System.CommandLine can report an unrecognized command with a non-zero
 // exit, rather than the server answering with help text and exit 0. CommandRegistry.Specs holds
 // only strings and bools precisely so this check loads neither System.CommandLine nor Roslyn.
-if (args.Length > 0 && CommandRegistry.IsRelayEligible(args[0]))
+//
+// The whole argument list is inspected, not args[0]: the root's --solution/--format/--limit are
+// recursive, so `reforge --format json cycles` is valid and its first argument is an option.
+if (args.Length > 0 && CommandRegistry.IsRelayEligible(args))
 {
     // null means no server is reachable — fall through to the cold path. Any other value is the
     // exit code of the command the server actually ran, propagated rather than flattened to 0.

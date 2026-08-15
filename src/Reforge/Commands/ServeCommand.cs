@@ -48,8 +48,10 @@ public static class ServeCommand
             listener.Start();
             var actualPort = ((IPEndPoint)listener.LocalEndpoint).Port;
 
-            // Write port file
-            await File.WriteAllTextAsync(portFile, actualPort.ToString(), cancellationToken);
+            // Write port file. The contents carry the protocol version as well as the port — see
+            // ServerClient: it is the only place a client and server built from different commits
+            // can discover the mismatch before committing to a wire format neither can parse.
+            await File.WriteAllTextAsync(portFile, ServerClient.FormatPortFile(actualPort), cancellationToken);
 
             Console.Error.WriteLine($"Reforge server listening on port {actualPort}");
             Console.Error.WriteLine($"Port file: {portFile}");
@@ -207,8 +209,8 @@ public static class ServeCommand
                 using var reader = new StreamReader(stream);
                 writer = new StreamWriter(stream) { AutoFlush = true };
 
-                var (exitCode, output) = await RunRequestAsync(reader, shutdownCts);
-                await WriteResultAsync(writer, exitCode, output);
+                var result = await RunRequestAsync(reader, shutdownCts);
+                await WriteResultAsync(writer, result);
             }
             catch (Exception ex)
             {
@@ -220,7 +222,8 @@ public static class ServeCommand
                 {
                     try
                     {
-                        await WriteResultAsync(writer, 1, $"error: {ex.Message}{Environment.NewLine}");
+                        await WriteResultAsync(writer,
+                            new RequestResult(1, $"error: {ex.Message}{Environment.NewLine}", ""));
                     }
                     catch
                     {
@@ -236,25 +239,39 @@ public static class ServeCommand
         }
     }
 
+    /// <summary>One request's outcome: the command's exit code and each output stream, kept apart.</summary>
+    internal readonly record struct RequestResult(int ExitCode, string Stderr, string Stdout);
+
     /// <summary>
-    /// Reads one request and runs it, returning the exit code and whatever the command wrote to
-    /// stdout. Separated from the socket handling so the caller can always produce a response,
-    /// including when this throws.
+    /// Reads one request and runs it. Separated from the socket handling so the caller can always
+    /// produce a response, including when this throws.
     /// </summary>
-    internal static async Task<(int ExitCode, string Output)> RunRequestAsync(
+    internal static async Task<RequestResult> RunRequestAsync(
         StreamReader reader, CancellationTokenSource shutdownCts)
     {
-        var commandLine = await reader.ReadLineAsync(shutdownCts.Token);
-        if (string.IsNullOrWhiteSpace(commandLine))
-            return (1, $"error: empty command{Environment.NewLine}");
+        var first = await reader.ReadLineAsync(shutdownCts.Token);
+        if (string.IsNullOrWhiteSpace(first))
+            return new RequestResult(1, $"error: empty command{Environment.NewLine}", "");
 
-        // Shutdown sentinel from the `stop` command — ack, then trip the
-        // cancellation that unwinds the accept loop and runs cleanup.
-        if (commandLine.Trim() == "__shutdown__")
+        // Shutdown sentinel from the `stop` command — ack, then trip the cancellation that
+        // unwinds the accept loop and runs cleanup. Deliberately a bare line rather than a framed
+        // request, so `stop` from any build can always shut a server down.
+        if (first.Trim() == ServerClient.ShutdownRequest)
         {
             shutdownCts.Cancel();
-            return (0, $"ok: shutting down{Environment.NewLine}");
+            return new RequestResult(0, "", $"ok: shutting down{Environment.NewLine}");
         }
+
+        if (first.Trim() != ServerClient.RequestHeader)
+            return new RequestResult(1,
+                $"error: unrecognized request framing; this server speaks protocol v{ServerClient.ProtocolVersion}.{Environment.NewLine}", "");
+
+        // The client's working directory, so a relative --config/--baseline/--append resolves
+        // against the caller's directory rather than wherever `reforge serve` happened to start.
+        var clientWorkingDirectory = await reader.ReadLineAsync(shutdownCts.Token);
+        var commandLine = await reader.ReadLineAsync(shutdownCts.Token);
+        if (string.IsNullOrWhiteSpace(commandLine))
+            return new RequestResult(1, $"error: empty command{Environment.NewLine}", "");
 
         var args = SplitCommandLine(commandLine);
 
@@ -262,18 +279,28 @@ public static class ServeCommand
         // client filters the same way, so reaching here means a version-skewed client or a
         // hand-written socket — either way the caller gets an error and a non-zero code rather
         // than the root help text and exit 0.
-        if (args.Length == 0 || !CommandRegistry.IsRelayEligible(args[0]))
+        var requested = CommandRegistry.FindCommandToken(args);
+        if (requested is null || !CommandRegistry.IsRelayEligible(requested))
         {
-            var name = args.Length == 0 ? "" : args[0];
-            return (1, $"error: '{name}' is not a command the reforge server can run.{Environment.NewLine}");
+            var name = requested ?? (args.Length == 0 ? "" : args[0]);
+            return new RequestResult(1,
+                $"error: '{name}' is not a command the reforge server can run.{Environment.NewLine}", "");
         }
 
-        // Capture stdout during command execution
+        // Capture both streams. stderr used to go to TextWriter.Null, which threw away the only
+        // actionable message some commands produce — `section-shape --section <unknown>` reports
+        // the bad filter on stderr and then prints a legitimate-looking empty result on stdout.
         var originalOut = Console.Out;
         var originalErr = Console.Error;
-        var captured = new StringWriter();
-        Console.SetOut(captured);
-        Console.SetError(TextWriter.Null); // suppress workspace diagnostics for relayed commands
+        var capturedOut = new StringWriter();
+        var capturedErr = new StringWriter();
+        Console.SetOut(capturedOut);
+        Console.SetError(capturedErr);
+
+        // Adopting the client's directory is safe because the accept loop is sequential (see the
+        // comment there — Roslyn is not thread-safe for mutation), so no other request observes it.
+        var serverWorkingDirectory = Directory.GetCurrentDirectory();
+        TrySetCurrentDirectory(clientWorkingDirectory);
 
         try
         {
@@ -308,25 +335,34 @@ public static class ServeCommand
                 rootCommand.Add(command);
 
             var exitCode = await rootCommand.Parse(args).InvokeAsync();
-            return (exitCode, captured.ToString());
+            return new RequestResult(exitCode, capturedErr.ToString(), capturedOut.ToString());
         }
         finally
         {
             Console.SetOut(originalOut);
             Console.SetError(originalErr);
+            TrySetCurrentDirectory(serverWorkingDirectory);
         }
     }
 
     /// <summary>
-    /// Writes the exit-code status line followed by the command's output. The status line is what
-    /// lets the client distinguish a failed command from a successful one — see
-    /// <see cref="ServerClient.ExitCodeSentinel"/>.
+    /// Best-effort <c>chdir</c>. A client may send a directory this process cannot enter (deleted,
+    /// or on a machine-local path a container does not share); that is not worth failing the whole
+    /// request over, since only relative path arguments depend on it.
     /// </summary>
-    private static async Task WriteResultAsync(StreamWriter writer, int exitCode, string output)
+    private static void TrySetCurrentDirectory(string? directory)
     {
-        await writer.WriteAsync($"{ServerClient.ExitCodeSentinel}{exitCode}\n");
-        await writer.WriteAsync(output);
+        if (string.IsNullOrWhiteSpace(directory)) return;
+        try { Directory.SetCurrentDirectory(directory); } catch { /* keep the current directory */ }
     }
+
+    /// <summary>
+    /// Writes the framed response. The framing — exit code plus a length-prefixed stderr section —
+    /// is what lets the client tell a failed command from a successful one and keep the two streams
+    /// apart; see <see cref="ServerClient.FormatResponse"/> for why it is length-prefixed.
+    /// </summary>
+    private static async Task WriteResultAsync(StreamWriter writer, RequestResult result)
+        => await writer.WriteAsync(ServerClient.FormatResponse(result.ExitCode, result.Stderr, result.Stdout));
 
     /// <summary>
     /// Basic command line splitting that handles quoted strings.

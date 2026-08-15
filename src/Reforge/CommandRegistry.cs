@@ -116,6 +116,46 @@ public static class CommandRegistry
     }
 
     /// <summary>
+    /// Whether a full argument list names a relay-eligible command — i.e. the same question as the
+    /// single-argument overload, asked of <see cref="FindCommandToken"/>'s answer rather than of
+    /// <c>args[0]</c>.
+    /// </summary>
+    /// <remarks>
+    /// The root's <c>--solution</c>, <c>--format</c> and <c>--limit</c> are <c>Recursive</c>, so
+    /// they parse before the subcommand too: <c>reforge --format json cycles</c> is a valid
+    /// invocation whose first argument is an option. Testing <c>args[0]</c> would send every such
+    /// call down the cold path while a server sits idle.
+    /// </remarks>
+    public static bool IsRelayEligible(string[] args)
+    {
+        var command = FindCommandToken(args);
+        return command is not null && IsRelayEligible(command);
+    }
+
+    /// <summary>
+    /// The first argument that names a registered command, or null if none does.
+    /// </summary>
+    /// <remarks>
+    /// A scan rather than a parse, because this runs before <c>System.CommandLine</c> is loaded
+    /// (see the class remarks). Option <i>values</i> are not skipped — their arities aren't known
+    /// here — so a value that happens to equal a command name is matched instead. That is
+    /// deliberately harmless: this only decides <i>whether to relay</i>, never what to run. The
+    /// full argument list is forwarded verbatim and the server parses it properly, so the worst
+    /// case is a correct answer computed on the wrong side of the socket.
+    /// </remarks>
+    public static string? FindCommandToken(string[] args)
+    {
+        foreach (var arg in args)
+        {
+            if (arg.Length == 0 || arg[0] == '-') continue;
+            foreach (var spec in Specs)
+                if (string.Equals(spec.Name, arg, StringComparison.Ordinal))
+                    return arg;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Builds the commands a host should register. <paramref name="relayEligibleOnly"/> is set by
     /// the server, which must not offer the five commands the client never relays to it.
     /// </summary>
