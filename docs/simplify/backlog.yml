@@ -207,9 +207,18 @@
     the next S008 from accumulating, and nothing would have caught S001. A workflow running
     dotnet build + dotnet test + jb inspectcode with a curated severity gate is what keeps this
     backlog from needing a third pass. Land after S001/S004 so the gate starts green.
+    PARTIAL. .github/workflows/ci.yml builds, tests, and smoke-runs the CLI on every PR and every
+    push to main. The smoke job pins the S001 failure mode at the process level: an undispatchable
+    command must exit non-zero.
+    STILL OPEN: the `jb inspectcode` dead-code scan. Deliberately not included rather than added
+    unverified — as-is.md measured 962 issues at SUGGESTION+, 591 of them one style rule, so the
+    severity threshold has to be curated against a real local run first. A gate that is red or
+    noisy from day one teaches people to ignore CI, which costs more than the scan gains. Add it
+    once someone has run it locally and picked the level. Same for .editorconfig /
+    Directory.Build.props / analyzers, which this item also implies and which are untouched.
   risk: low
   effort: M
-  status: open
+  status: partial
 
 - id: S010
   title: Generate the skill doc and README command table from the registry
