@@ -19,22 +19,35 @@ disk rather than listed in the test. The rules a pair targets are declared in a 
 in the Before file, and the harness checks each named rule actually fires there, so a fixture that
 gates nothing fails as a broken fixture rather than passing on two zeros.
 
-Three pairs so far, covering four rules:
+The gate asserts two things per pair, not one. First, the declared rule must charge **strictly less**
+in the cheapest fix — that is what makes the fixture a fix at all, since an agent edits code because
+a number went down. Then, and only then, does "the total did not drop" mean anything. With the total
+comparison alone, an unchanged copy of the Before file passes and the rule is recorded as gated
+forever.
+
+Two pairs so far:
 
 - **`methodParameterOverflow`** — cheapest fix is the parameter object. Six values still cross the
   boundary; `parameterBagInput` and `optionsBag` charge for what the signature stopped declaring.
 - **`tupleReturn`** — cheapest fix is a named result type. Better code, but not free: a published
   DTO is more durable surface than a tuple, since renaming a tuple element breaks nobody.
-- **`dtoScalarProperty` + `publicDtoType`** — cheapest fix pushes five of six properties into a
-  nested DTO. The parent's scalar count drops; the same six values are still published, one level
-  deeper, plus a second public type.
 
-The remaining 38 rules are accounted for explicitly: 7 are exempt with a stated reason (one credit,
-three section-level entries with no declaring file to attribute to, three the spec retires), and 31
+A third pair, for `dtoScalarProperty` and `publicDtoType`, was written and then withdrawn — the
+first assertion above is what caught it. Pushing five of six properties into a nested DTO drops the
+*parent type's* property count, but points are attributed by declaring file, so `dtoScalarProperty`
+still charges six and the number an agent watches never moved. It was a relocation dressed as a fix.
+Two edits that would genuinely reduce the charge — collapsing the scalars into one collection
+property, or hoisting them to an unclassified base class, which `GetMembers()` does not see — are
+suspected to lower the total as well, which would make the gate red. Both are unverified, and a
+suspected-red gate is not something to ship on a hunch, so both rules moved to not-yet-covered.
+
+The other 40 rules are accounted for explicitly: 7 are exempt with a stated reason (one credit,
+three section-level entries with no declaring file to attribute to, three the spec retires), and 33
 are listed as not-yet-covered. A scored rule in none of the three buckets fails the build — so the
 next rule added without a fixture is caught at the point where the fixture could still have been
-written first. The lists are also checked in reverse, so an entry that no longer describes a real
-uncovered rule fails too.
+written first. Bucket membership is checked in both directions and for overlap, so an entry that no
+longer describes something true fails too — an exemption carries a reason, and a stale reason goes
+on excusing every future rule of the same shape.
 
 ## v0.28.1 - split the scoring engine by pass
 

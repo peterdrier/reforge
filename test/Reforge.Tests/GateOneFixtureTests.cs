@@ -10,6 +10,12 @@ namespace Reforge.Tests;
 /// improving anything, which is worse than not having the rule: it spends the agent's effort and
 /// reports progress for it.</para>
 ///
+/// <para>That is two claims, and both are asserted. The cheapest fix must <b>look like a fix</b> —
+/// the declared rule has to charge strictly less in it than in the Before, or an agent would never
+/// have made the edit and the fixture is demonstrating nothing. Only then does "the total did not
+/// drop" mean anything: without the first half, an unchanged copy of the Before file passes the
+/// gate and the rule is recorded as covered forever.</para>
+///
 /// <para>The spec makes the point that <c>longMethod</c> would have failed this gate on the day it
 /// was written. This file is the executable version of that check, so the next rule to fail it
 /// fails in CI instead of after a year of shipping.</para>
@@ -68,8 +74,16 @@ public class GateOneFixtureTests
     /// </summary>
     private static readonly IReadOnlySet<string> NotYetCovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
+        // Withdrawn rather than never written: the nesting dodge that looked like a cheapest fix
+        // moves scalars between types without reducing dtoScalarProperty's own charge, so it is not
+        // a fix an agent would make. Two dodges that would reduce it — collapsing the scalars into
+        // one collection property, or hoisting them to an unclassified base class that
+        // GetMembers() does not see — are unverified, and a suspected-red gate is not something to
+        // ship on a hunch. See CHANGELOG for the reasoning.
+        "dtoScalarProperty",
         "dtoCollectionProperty",
         "dtoNestedProperty",
+        "publicDtoType",
         "applicationServiceMethod",
         "readServiceInterfaceMethod",
         "fullServiceInterfaceMethod",
@@ -119,6 +133,52 @@ public class GateOneFixtureTests
                 failures.Add(
                     $"{pair.Label}: cheapest fix scores {cheapest}, down from {before}. "
                     + $"Rule(s) {string.Join(", ", pair.Rules)} can be satisfied without improving the design.");
+        }
+
+        Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
+    }
+
+    /// <summary>
+    /// The other half of the gate. <see cref="CheapestFix_NeverLowersTheScore"/> compares totals,
+    /// and a total comparison alone cannot tell a cheapest fix from a file that was never fixed:
+    /// an unchanged copy of the Before scores identically and passes, and so does an incomplete fix
+    /// that still fires the rule but happens to carry enough incidental penalties. Either way
+    /// <see cref="CoveredRules"/> goes on counting the rule as gated.
+    ///
+    /// <para>So the declared rule must charge strictly less in the CheapestFix. That is the
+    /// definition of the thing being modelled — the cheapest fix is what an agent does when a rule
+    /// fires at it, and an agent does not ship an edit that leaves the rule charging what it did
+    /// before. The number the agent is watching has to go down; the gate's job is to prove the
+    /// total does not follow it down.</para>
+    ///
+    /// <para>Strictly-less rather than zero, because rules count as well as trip. A predicate rule
+    /// like <c>tupleReturn</c> does go to zero, but <c>dtoScalarProperty</c> charges per property
+    /// and a fix that removes two of six is a real reduction that "absent from the CheapestFix"
+    /// would reject as impossible.</para>
+    /// </summary>
+    [Fact]
+    public async Task EveryDeclaredRule_ChargesLessInItsCheapestFix()
+    {
+        var report = await ScoreAsync();
+
+        var failures = new List<string>();
+        foreach (var pair in DiscoverPairs())
+        {
+            foreach (var rule in pair.Rules)
+            {
+                int before = PointsForRule(report, pair.BeforeFile, rule);
+                int cheapest = PointsForRule(report, pair.CheapestFixFile, rule);
+                if (cheapest < before) continue;
+
+                failures.Add(
+                    $"{pair.Label}: '{rule}' charges {cheapest} in the cheapest fix, "
+                    + $"not less than the {before} it charges in the Before. "
+                    + (cheapest == before
+                        ? "The fix does not move the number the agent is optimizing, so no agent would make it — "
+                        : "The fix makes the rule charge more, so no agent would make it — ")
+                    + "the pair proves nothing about whether the rule is gameable. Write a cheapest fix that "
+                    + "reduces this rule, or withdraw the pair and list the rule as not-yet-covered.");
+            }
         }
 
         Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
@@ -352,6 +412,17 @@ public class GateOneFixtureTests
         => report.Groups.Values
             .SelectMany(g => g.Entries)
             .Where(e => SameFile(e.File, relativeFile))
+            .Sum(e => e.Points);
+
+    /// <summary>
+    /// Points one rule charges against declarations in one file. Same attribution as
+    /// <see cref="PointsIn"/>, narrowed to a rule, so the gate can ask the two separate questions:
+    /// did the declared rule get cheaper, and did the total stay put.
+    /// </summary>
+    private static int PointsForRule(ScoreReport report, string relativeFile, string rule)
+        => report.Groups.Values
+            .SelectMany(g => g.Entries)
+            .Where(e => e.Rule.Equals(rule, StringComparison.OrdinalIgnoreCase) && SameFile(e.File, relativeFile))
             .Sum(e => e.Points);
 
     private static bool SameFile(string entryFile, string relativeFile)
