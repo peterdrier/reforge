@@ -27,5 +27,23 @@ explicitly rather than inferred from what fires, because almost every fixture in
 designed a cheapest fix for. The test checks each named rule actually fires in the Before file, so
 a stale name fails rather than silently narrowing the gate.
 
+## What this harness can and cannot measure
+
+Every variant is scored *in the same compilation* — the solution is scored once and each variant's
+total is reconstructed by filtering the report to its file. That is exact for **per-declaration**
+rules and wrong for anything else, so:
+
+- **Fixtures must be self-contained.** No type declared in one fixture file may be referenced by
+  another. Rules like `oneImplementationInterface` and `duplicateDbSetOwner` depend on what the
+  *rest* of the solution declares, so two fixtures sharing an interface would silently move each
+  other's score. Type names are prefixed `Gate…` per pair to keep this obvious.
+- **Section-level rules cannot be gated here.** `ScoreSectionArchitecture` records them against the
+  section with an empty file, which the filter discards, and they are shared by every pair in the
+  section rather than belonging to one. `NoGateFixture_ScoresBelowTheFileComparison` fails if a
+  fixture puts the section into such a state — most likely by declaring a repository, which makes
+  the section repo-backed and turns on the `missing*` rules — so the gate breaks loudly instead of
+  measuring the wrong number. Gating those rules needs each variant scored in its own solution;
+  that harness is the same one the `missing*` exemptions in `GateOneFixtureTests` are waiting on.
+
 Fixtures must use BCL types only — the sample solution declares no `PackageReference` anywhere, and
 `SampleSolutionInvariantsTests` enforces it.

@@ -41,6 +41,16 @@ property, or hoisting them to an unclassified base class, which `GetMembers()` d
 suspected to lower the total as well, which would make the gate red. Both are unverified, and a
 suspected-red gate is not something to ship on a hunch, so both rules moved to not-yet-covered.
 
+The harness scores the solution once and reconstructs each variant's total by filtering to its file,
+which is exact for per-declaration rules and blind to anything section-level: those are recorded
+against the section with an empty file, so the filter drops them, and they are shared by every pair
+in the section rather than belonging to one. A fixture that declared a repository would make the
+section repo-backed, turn on the `missing*` rules, and silently move every other pair's number.
+That now fails as a broken harness rather than a passing gate. Fixtures must also be self-contained
+for the same reason — `oneImplementationInterface` and friends depend on what the rest of the
+solution declares. Gating rules of that shape needs each variant scored in its own solution, which
+is the same harness the `missing*` exemptions are already waiting on.
+
 The other 40 rules are accounted for explicitly: 7 are exempt with a stated reason (one credit,
 three section-level entries with no declaring file to attribute to, three the spec retires), and 33
 are listed as not-yet-covered. A scored rule in none of the three buckets fails the build — so the

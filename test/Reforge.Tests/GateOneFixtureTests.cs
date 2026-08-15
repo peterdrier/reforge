@@ -234,6 +234,45 @@ public class GateOneFixtureTests
         Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
     }
 
+    /// <summary>
+    /// The harness reconstructs each variant's score by filtering one shared report to one file.
+    /// That is exact for per-declaration rules and blind to everything else, and the blindness is
+    /// silent: a section-level penalty is recorded against the section with an <b>empty</b> file
+    /// (<c>ScoreSectionArchitecture</c>), so the filter discards it and the comparison reports a
+    /// number that is not the variant's score.
+    ///
+    /// <para>Worse, a section-level penalty is shared. A fixture that declares a repository makes
+    /// the whole Gate section repo-backed, which turns on the <c>missing*</c> rules for every pair
+    /// in it at once — so one fixture would silently move another's total, in a direction neither
+    /// author intended.</para>
+    ///
+    /// <para>The real fix is to score each variant in its own solution, which is the same
+    /// section-shaped harness the <c>missing*</c> exemptions are waiting on. Until that exists,
+    /// this fails the moment a fixture puts the Gate section into a state the file comparison
+    /// cannot see, rather than letting the gate quietly measure the wrong thing.</para>
+    /// </summary>
+    [Fact]
+    public async Task NoGateFixture_ScoresBelowTheFileComparison()
+    {
+        var report = await ScoreAsync();
+
+        var hidden = report.Groups
+            .Where(g => g.Key.Equals("Gate", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(g => g.Value.Entries)
+            .Where(e => string.IsNullOrWhiteSpace(e.File) && e.Points != 0)
+            .Select(e => $"{e.Rule} ({e.Points:+#;-#;0}): {e.Detail ?? e.Symbol}")
+            .OrderBy(s => s, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.True(hidden.Count == 0,
+            "The Gate section scores points that are not attributed to any file, so the "
+            + "before/after comparison cannot see them and every pair in the section shares them:"
+            + Environment.NewLine + string.Join(Environment.NewLine, hidden) + Environment.NewLine
+            + "A fixture changed section-level state — most likely by declaring a repository, which "
+            + "makes the section repo-backed and turns on the missing* rules. Gating a rule of that "
+            + "shape needs each variant scored in its own solution; this harness cannot do it.");
+    }
+
     // ---------------- The ratchet ----------------
 
     [Fact]
