@@ -355,9 +355,15 @@ public class SurfaceScoreTests
         Assert.All(inAssembly, e => Assert.Equal(ScoreOrigin.Main, e.Origin));
         Assert.All(inAssembly, e => Assert.False(e.Multiplied));
 
-        // Exactly 2x, not "some larger number" — the one assertion that pins the factor.
-        var dtoType = Assert.Single(published, e => e.Rule == "publicDtoType");
-        Assert.Equal(2 * SurfaceScoreConfig.Default().Weight("publicDtoType"), dtoType.Points);
+        // Exactly 2x, not "some larger number" — the assertions that pin the factor. Two rules,
+        // because a single one could pass on a coincidence between weight and multiplier.
+        var defaults = SurfaceScoreConfig.Default();
+        var dtoType = Assert.Single(published, e => e.Rule == "publicDtoType" && e.Symbol == "CampInfo");
+        Assert.Equal(2 * defaults.Weight("publicDtoType"), dtoType.Points);
+
+        var readMethod = Assert.Single(published,
+            e => e.Rule == "readServiceInterfaceMethod" && e.Symbol == "GetByIdAsync");
+        Assert.Equal(2 * defaults.Weight("readServiceInterfaceMethod"), readMethod.Points);
     }
 
     [Fact]
