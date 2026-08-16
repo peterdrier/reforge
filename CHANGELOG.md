@@ -2,6 +2,41 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Gate 1 tranche 4: the two cross-section dependency rules
+
+Pairs for `crossSectionReadInterface` and `crossSectionFullService`, the first fixtures to use the
+satellite-section mechanism. Backlog 22 → 20. Both fail, and for unrelated reasons.
+
+**`crossSectionFullService` (8 → 0): the rule only reads constructor parameters.** The cheapest fix
+moves the injection point from a constructor parameter to a settable property. Same dependency, same
+assembly reference, same call, same boundary crossed — and the design is worse, because a
+constructor parameter is a compile-time statement that the object cannot exist without the
+dependency and a settable property is a null reference at whatever moment someone forgot.
+
+`ScoreDependencyUse` iterates `c.Type.Constructors` and nothing else, so property injection, setter
+injection, service location and a method parameter are all free of *every* rule in the
+dependency-use family. `crossSectionFullService` is just the cheapest rule to demonstrate it with —
+`crossSectionRepository` pays five times better for the identical edit.
+
+**`crossSectionReadInterface` (2 → 0): duplication is free.** The cheapest fix stops injecting Camp's
+read interface and copies the one calculation into the consumer. Nothing charges for a private
+method, and nothing anywhere charges for the fact that the same logic already exists one assembly
+over.
+
+This is the awkward shape: the rule is directionally right and gameable anyway. Reaching for another
+section's *read* API is the good version of a cross-section dependency — narrow, published, through
+the owner — which is why it is priced at 2, the cheapest charge in the config. An agent clearing
+charges in weight order arrives here last and pays nothing to delete the most defensible dependency
+in the codebase. Raising the weight makes it worse: the more the dependency costs, the more the
+duplicate pays.
+
+**Not fixtured, with reasons recorded in the backlog list.** `crossSectionRepository` needs a
+`*Repository` in its satellite, and satellites compile into `SampleSolution.Gate` in the full
+solution — which would make Gate repo-backed and switch the `missing*` rules on across every other
+fixture's neighbourhood. That needs a harness change, not a fixture. `crossSectionWriteSurface`
+measured 0/47 on Humans; a fixture that fires it is easy to write and would say nothing about why it
+never fires in the field.
+
 ## Unreleased - Gate 1 tranche 3: all three dispatcher rules are gameable
 
 Before/CheapestFix pairs for `actionDispatcher`, `mutationModeParameter` and `flagsControlFlow`.

@@ -116,9 +116,21 @@ public class GateOneFixtureTests
         // writing would have fixed — a defect in the harness wearing a backlog entry's clothes.
         // A variant can now declare satellite sections (see IsolatedVariantScorer.SatellitesOf and
         // IsolatedVariantScorerTests), so what is left here is the writing.
-        "crossSectionReadInterface",
-        "crossSectionFullService",
+        //
+        // crossSectionReadInterface and crossSectionFullService have pairs now. The two below do
+        // not, for reasons specific to each:
+        //
+        // crossSectionRepository needs a *Repository in the satellite, and inside the FULL sample
+        // solution every satellite file compiles into SampleSolution.Gate — which would make Gate
+        // repo-backed and switch the missing* rules on for every other Gate 1 fixture's
+        // neighbourhood. That is why the harness's own probe uses a service. Fixturing it needs the
+        // satellite to be excluded from the full-solution build first, which is a harness change.
         "crossSectionRepository",
+        // crossSectionWriteSurface needs its third condition — every observed call read-covered
+        // with no escape — to hold, and it measured 0/47 on Humans. Writing a fixture that fires it
+        // is easy and would say nothing about why it never fires in the field; the
+        // crossSectionWriteSurfaceUnverified advisories from a real corpus decide whether the rule
+        // needs a fixture or a repair.
         "crossSectionWriteSurface",
     };
 
