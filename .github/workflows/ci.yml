@@ -63,6 +63,36 @@ jobs:
           path: artifacts/test-results
           if-no-files-found: warn
 
+      # Dogfooding. CLAUDE.md makes scoring Reforge's own solution a standing goal and nothing
+      # enforced it, so the tool could stop opening its own workspace and no check would notice.
+      #
+      # This needs no assertion of its own: surface-score refuses a degraded workspace and exits 2
+      # unless --allow-degraded is passed, so "the step succeeded" already means MSBuildWorkspace
+      # opened Reforge.slnx, every project compiled, and the engine ran end to end over a real
+      # solution. That is a strictly stronger claim than the unit suite makes — the suite scores the
+      # sample solution, which is BCL-only by invariant and therefore never exercises package
+      # resolution or a project graph with real references.
+      #
+      # Reforge.slnx was restored and built above, so this scores a compiled tree rather than a
+      # cold one. The compact report goes to the log deliberately: it is the only place the tool's
+      # own numbers are visible without a local SDK, and it is what makes the score answerable to
+      # its own output rather than to argument.
+      #
+      # Invoked as `dotnet <dll>` rather than `dotnet run`. `dotnet run` exports MSBuild's own
+      # environment — MSBuildExtensionsPath, MSBuildSDKsPath and friends — into the child process,
+      # and MSBuildLocator then resolves against the *hosting* build rather than the installed SDK.
+      # The first attempt at this step hung there for fifteen minutes with no output. Running the
+      # built assembly directly is the same binary in a clean environment.
+      #
+      # timeout-minutes because that hang produced no signal at all: the step would have run to the
+      # job's six-hour ceiling. A tool whose whole promise is answering a question in one shot has
+      # no business taking minutes, so a bounded failure is the correct report.
+      - name: Score own solution
+        timeout-minutes: 5
+        run: >
+          dotnet src/Reforge/bin/Release/net10.0/Reforge.dll
+          surface-score --solution Reforge.slnx
+
   smoke:
     name: CLI smoke
     runs-on: ubuntu-latest
