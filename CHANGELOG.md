@@ -2,6 +2,29 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Fix: diRegistration never fired
+
+`diRegistration` has scored zero on every solution since it shipped. `ScoreDiRegistrationsAsync`
+looked the registered service up by `typeInfo.ToDisplayString()`, but the dictionary it queries is
+keyed by `SolutionClassifier.TypeKey` — `"{assembly}|{fully qualified name}"` — so the lookup could
+never match. Every other consumer of that dictionary already built the key correctly; this was the
+only one that did not.
+
+Found by measuring Humans (`d237f3cc0`, reforge 0.28.1), which contains **452 generic
+`AddScoped`/`AddSingleton`/`AddTransient` registrations, 341 of them interface-first**, and scored
+0 points for the rule. Reforge's own dogfood run scored 0 too, but with one section and no DI
+container that reads as normal — the bug needed a real corpus to be visible at all.
+
+The rule now has a Gate 1 pair, which is the part that keeps it fixed.
+`EveryDeclaredRule_ActuallyFiresInItsBeforeFixture` is exactly the assertion that catches "shipped
+rule, fires nowhere", and the reason it did not catch this one is that `diRegistration` sat in
+`NotYetCovered`. That list is therefore not just a gating backlog: every entry on it is a rule whose
+behaviour is unverified in both directions.
+
+The pair also records a second finding — `diRegistration` is **gameable**. Detection requires a
+`GenericNameSyntax` with a type argument, so rewriting `AddScoped<IFoo, Foo>()` as
+`AddScoped(typeof(IFoo), typeof(Foo))` registers the identical pair and charges nothing.
+
 ## Unreleased - Gate 1 tranche 2: the DTO rules, and a verdict that depends on an identifier
 
 No product change. Four more rules covered, taking the backlog from 32 to 28. All four are

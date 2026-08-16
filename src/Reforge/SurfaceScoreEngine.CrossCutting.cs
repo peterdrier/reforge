@@ -139,7 +139,12 @@ public sealed partial class SurfaceScoreEngine
                     var typeInfo = model.GetSymbolInfo(typeArg).Symbol as INamedTypeSymbol;
                     if (typeInfo is null) continue;
 
-                    if (!classifiedByDisplay.TryGetValue(typeInfo.ToDisplayString(), out var c)) continue;
+                    // Keyed by SolutionClassifier.TypeKey ("{assembly}|{fully qualified name}"), not
+                    // by the display string alone. This lookup used the bare display string, which
+                    // never matches, so the rule scored nothing on any solution — 452 registrations
+                    // in Humans, 0 points. Every other consumer of this dictionary already built the
+                    // key correctly; this was the one that did not.
+                    if (!classifiedByDisplay.TryGetValue(SolutionClassifier.TypeKey(typeInfo), out var c)) continue;
 
                     var loc = invocation.GetLocation();
                     var ls = loc.GetLineSpan();
