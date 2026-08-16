@@ -2,6 +2,40 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Gate 1 tranche 3: all three dispatcher rules are gameable
+
+Before/CheapestFix pairs for `actionDispatcher`, `mutationModeParameter` and `flagsControlFlow`.
+Backlog of uncovered rules: 25 → 22. **All three fail the gate**, and they are recorded as findings
+rather than tuned into passing.
+
+| Rule | Cheapest fix | Score | Backstop |
+|---|---|---|---|
+| `actionDispatcher` | inline the delegated arms | 62 → 36 | `mutationModeParameter`, at 25 vs 41 |
+| `mutationModeParameter` | enum selector → `string` | 35 → 10 | none |
+| `flagsControlFlow` | `[Flags]` → one bool per flag | 22 → 21 | 11 of 12 points |
+
+Three separate problems, not one:
+
+**`actionDispatcher` prices the two folds in the wrong order.** Its cheapest exit is not to un-fold
+the operations but to delete the three named private members and paste their bodies into the switch
+arms. The fold survives; what is destroyed is the part a reader could still see. The backstop does
+fire — `mutationModeParameter` picks the method up — but charges 25 where the structural rule
+charged 41. Between two methods hiding the same three operations behind one enum, the one that
+delegates to named members is the better of the two, and Reforge prices it 16 points worse. Fixing
+this means re-basing the two rules against each other, not raising either: while a structural
+dispatcher outprices an inline one, deleting the structure pays.
+
+**`mutationModeParameter` has no backstop for an untyped selector.** Replacing the enum with a
+`string` loses every property the enum carried — the legal set, misspelling rejection, exhaustive
+switch checking — and the score improves by 25 with nothing charging anything. The rule tests for
+`TypeKind.Enum`, which is precise about the shape it was written for and blind to the shape you get
+by taking the type away. The gap wants a rule for a mutation branching on a string parameter.
+
+**`flagsControlFlow` fails by one point, and that is not a weight bug.** A flags enum and three
+bools are the same design; neither is worth arguing for. The right amount for an agent to gain by
+moving between them is zero, and any weight that makes one strictly cheaper only picks which
+direction gets gamed. Recorded as directionless rather than mispriced.
+
 ## Unreleased - genericActionDispatcher folded into actionDispatcher
 
 `genericActionDispatcher` is gone as a rule. Its three distinguishing conditions are now surcharges

@@ -98,9 +98,6 @@ public class GateOneFixtureTests
         "inlineParameterObjectConstruction",
         "writeCapableInterfaceUsedReadOnly",
         "oneImplementationInterface",
-        "actionDispatcher",
-        "mutationModeParameter",
-        "flagsControlFlow",
 
         // Section-shape rules. These were exempt while the harness scored one shared solution: they
         // charge a section for its shape, and a filtered slice of a shared report either could not
