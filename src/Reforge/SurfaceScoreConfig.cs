@@ -26,6 +26,33 @@ public sealed class SurfaceScoreConfig
     public Dictionary<string, int> Weights { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// The classification keys that came from the config <i>file</i>, recorded before the defaults
+    /// are merged in. Not serialized — it describes where a value came from, not what it is.
+    /// </summary>
+    /// <remarks>
+    /// Needed because the merge is <c>TryAdd</c>: a user block <b>replaces</b> the default entry for
+    /// that key rather than extending it, so a block whose globs match nothing silently switches its
+    /// rules off — the defaults that would have matched are gone. Distinguishing declared from
+    /// defaulted is what lets <c>surface-score</c> warn about the former without warning about the
+    /// latter on every solution that ships no config at all.
+    /// </remarks>
+    [JsonIgnore]
+    public HashSet<string> DeclaredClassifications { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The classification tags the scoring rules actually read. This is exactly the default key set:
+    /// a tag is only ever consumed by name, and every consumer's name is one of these, so a declared
+    /// key outside this set is inert no matter what it matches.
+    /// </summary>
+    /// <remarks>
+    /// Typed as <see cref="IReadOnlySet{T}"/>, not <c>IReadOnlyCollection</c>: the set carries an
+    /// OrdinalIgnoreCase comparer, and only the set interface routes <c>Contains</c> through it.
+    /// A collection-typed member would bind to the LINQ extension and compare case-sensitively.
+    /// </remarks>
+    public static IReadOnlySet<string> KnownClassifications { get; } =
+        Default().Classifications.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Glob patterns matched against a dispatcher parameter's <i>type</i> name. These act
     /// only as a tie-breaker — the read/write decision is made behaviorally (does the
     /// method mutate?), so a shape type cannot be used to evade a penalty on a mutation by
@@ -78,7 +105,11 @@ public sealed class SurfaceScoreConfig
         loaded.Classifications = CaseInsensitive(loaded.Classifications);
         loaded.Weights = CaseInsensitive(loaded.Weights);
 
-        // Merge defaults for any classification/weight the user didn't override.
+        // Record authorship before the merge — afterwards the two are indistinguishable.
+        loaded.DeclaredClassifications = new HashSet<string>(loaded.Classifications.Keys, StringComparer.OrdinalIgnoreCase);
+
+        // Merge defaults for any classification/weight the user didn't override. TryAdd, so a
+        // declared key wins outright: the default patterns for that key are NOT also applied.
         var defaults = Default();
         foreach (var (k, v) in defaults.Classifications)
             loaded.Classifications.TryAdd(k, v);

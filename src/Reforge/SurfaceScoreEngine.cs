@@ -46,6 +46,35 @@ public sealed partial class SurfaceScoreEngine
                 $"Config section policy has no matching assembly and is ignored: {string.Join(", ", unknownSections)}. " +
                 $"Sections are assembly-derived; known sections are: {string.Join(", ", report.ConfiguredSections)}."));
 
+        // A classification the config file declares but that ends up on no type switches its rules
+        // off in silence, and the silence is worse than it looks: the merge is TryAdd, so declaring
+        // a key REPLACES the default patterns for it. A block pointing at a directory that was
+        // renamed away doesn't fall back — it classifies nothing, and every rule keyed to that tag
+        // reads zero. Zero is indistinguishable from "clean" in the output, which is how an entity
+        // block aimed at a project that no longer exists can sit in a config indefinitely.
+        // Only file-declared keys are reported: defaults legitimately match nothing on solutions
+        // that have no repositories or no controllers, and warning about those would be noise on
+        // every run.
+        var deadClassifications = DeadClassifications(classified);
+        if (deadClassifications.Count > 0)
+            report.Diagnostics.Add(new ScoreDiagnostic("warning", "dead-config-classification",
+                $"Config classifications match no type in this solution, so every rule keyed to them scores " +
+                $"zero: {string.Join(", ", deadClassifications)}. Declaring a classification REPLACES the " +
+                $"built-in patterns for that key rather than adding to them — check its " +
+                $"paths/namespaces/namePatterns against the solution's actual layout, or delete the block to " +
+                $"restore the defaults."));
+
+        // A key no rule reads is inert whatever it matches — the classification typo that the
+        // dead-classification check above cannot see, because the patterns may match plenty.
+        var unknownClassifications = _config.DeclaredClassifications
+            .Where(k => !SurfaceScoreConfig.KnownClassifications.Contains(k))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
+        if (unknownClassifications.Count > 0)
+            report.Diagnostics.Add(new ScoreDiagnostic("warning", "unknown-config-classification",
+                $"Config declares classifications no rule reads, so they are ignored: {string.Join(", ", unknownClassifications)}. " +
+                $"Readable classifications are: {string.Join(", ", SurfaceScoreConfig.KnownClassifications.OrderBy(k => k, StringComparer.Ordinal))}."));
+
         // canonicalReadDtos is derived from each section's exported contracts surface now. A config
         // still carrying the list would otherwise change meaning in silence — it used to grant the
         // canonicalReadDtoReturn credit and suppress methodReturnsEntityAcrossSection solution-wide.
@@ -115,6 +144,29 @@ public sealed partial class SurfaceScoreEngine
         report.BuildHealth = await BuildInspector.InspectAsync(solution, maxBuildDiagnostics, ct);
 
         return report;
+    }
+
+    /// <summary>
+    /// File-declared classifications that landed on no type. Read off the tags the classifier
+    /// actually assigned, not off pattern matching, so a block whose globs match only the wrong
+    /// kind — a <c>readServiceInterface</c> whose names hit classes, say — reports here too: the
+    /// classifier strips kind-inappropriate tags, and a stripped tag scores exactly like a tag that
+    /// never matched. Keys no rule reads are left out; they get their own diagnostic, and reporting
+    /// a typo twice helps nobody.
+    /// </summary>
+    private List<string> DeadClassifications(List<ClassifiedType> classified)
+    {
+        if (_config.DeclaredClassifications.Count == 0) return new List<string>();
+
+        var applied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in classified)
+            foreach (var tag in c.Tags)
+                applied.Add(tag);
+
+        return _config.DeclaredClassifications
+            .Where(k => SurfaceScoreConfig.KnownClassifications.Contains(k) && !applied.Contains(k))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
     }
 
     // ---------------- Shared accumulator ----------------

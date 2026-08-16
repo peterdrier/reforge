@@ -123,10 +123,16 @@ public static class SkillCommand
 
           // Classifications tag types. A type may receive multiple tags; precedence handled by
           // the engine (e.g. on interfaces, repository/read-service tags override fullService).
-          // Built-in classification names (override or extend, do not invent new ones unless
-          // you also add a matching weight key — unknown classification names are ignored):
+          // Built-in classification names — these are exactly the names the rules read:
           //   dto, readServiceInterface, fullServiceInterface, repositoryInterface,
-          //   repositoryImplementation, applicationService, controller, backgroundJob
+          //   repositoryImplementation, applicationService, controller, backgroundJob, entity
+          //
+          // Declaring one REPLACES the built-in patterns for that name; it does not add to them.
+          // So a block whose globs match nothing switches its rules off rather than falling back —
+          // list every pattern you want, including the built-in ones you still want kept. Both
+          // failure modes are reported rather than scored as zero: a declared classification that
+          // matches no type is `dead-config-classification`, and a name no rule reads (a typo, or
+          // an invented tag with no matching weight key) is `unknown-config-classification`.
           //
           // Each classification matches if ANY of its sub-criteria matches:
           //   namePatterns:   glob on the type's short name      (e.g. "I*ServiceRead", "*Dto")
