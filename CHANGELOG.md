@@ -2,6 +2,38 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Gate 1 tranche 2: the DTO rules, and a verdict that depends on an identifier
+
+No product change. Four more rules covered, taking the backlog from 32 to 28. All four are
+gameable, and three of them fail the same way.
+
+**`booleanParameter` got two pairs, because it has two answers.** The cheapest fix is the same edit
+either way — replace the bool with a two-value enum, which carries exactly the same choice at
+exactly the same call sites. Name the enum `NotifyMode` and bind it to a parameter called `mode`
+and `mutationModeParameter` charges 15 against the 3 saved: gated. Name it `NotificationPreference`
+and bind it to `notifySubscribers` and nothing recognises it: the total falls. The backstop rule
+matches enums by type suffix (`Action`, `Mode`, `Operation`, `Scope`, `Flags`, `Kind`) and by
+parameter name, so which side of the gate the refactor lands on is decided by an identifier the
+author picks *after* deciding to make the edit. One pair would have reported whichever half its
+author happened to write, so the convention is now: when a verdict depends on something the fixture
+author chooses, fixture both choices.
+
+**`publicDtoType`, `dtoCollectionProperty`, `dtoNestedProperty`: all gameable, and the first is the
+one that matters.** Classification is name-pattern-only, and it gates the *entire* durable-surface
+pass — so dropping four characters from `GateShipmentDto` does not cost 5 points, it removes the
+type from the score altogether along with every property charge on it. Every DTO rule shares one
+failure mode and it is spelled with an identifier. `LooksLikeDataCarrier` already computes the
+structural test (all public properties, no behaviour); it is applied after the name test rather
+than instead of it.
+
+The other two are the `dtoScalarProperty` finding again in different clothes: `List<string> Tags` →
+`string TagsCsv` trades a 2-point charge for a 1-point one, and a nested DTO property → a JSON
+string trades 3 for 1. In both, the same values cross the boundary with less type information, and
+the nested case prices the strictly larger promise ("some JSON") below the smaller one. With
+`dtoScalarProperty` from tranche 1, all four DTO rules now carry a finding — and they are not four
+findings. They are one rule counting declarations where it means to count what crosses the
+boundary.
+
 ## Unreleased - Gate 1 tranche 1, and somewhere to put a rule that fails
 
 No product change. Test infrastructure and findings.
