@@ -25,10 +25,10 @@ public sealed class CampSectionService : ICampSectionService
     public Task RenameAsync(Guid id, string name, CancellationToken ct = default) => Task.CompletedTask;
 }
 
-// Same shape as CampStayEntity over in SampleSolution.Camp.Contracts, but declared in the section's
-// own assembly with no Contracts/ folder above it — off the contracts surface, so it is NOT a
-// canonical read DTO and returning it earns no credit. The negative half of the derivation.
-public sealed class CampLegacyEntity
+// Same shape as CampStaySummary over in SampleSolution.Camp.Contracts, but declared in the
+// section's own assembly with no Contracts/ folder above it — off the contracts surface, so it is
+// NOT a canonical read DTO and returning it earns no credit. The negative half of the derivation.
+public sealed class CampLegacyStay
 {
     public Guid Id { get; set; }
     public int Nights { get; set; }

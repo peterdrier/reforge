@@ -16,7 +16,29 @@ public sealed record ScoreEntry(
     string Group,
     string File,
     int Line,
-    string? Detail);
+    string? Detail)
+{
+    /// <summary>
+    /// Which assembly of the section declared the scored symbol: <c>contracts</c> for a satellite
+    /// <c>&lt;Section&gt;.Contracts</c> assembly, <c>main</c> for everything else. Sections fold
+    /// their contracts assembly in (see <see cref="AssemblySections"/>) so both land in one group;
+    /// this keeps the origin the fold discards, because the two are not equally expensive.
+    /// </summary>
+    public string Origin { get; init; } = ScoreOrigin.Main;
+
+    /// <summary>
+    /// True when the contracts-assembly multiplier was applied to <see cref="Points"/>. Recorded
+    /// so a reader who sees a 10-point DTO property can tell a doubled 5 from a weight change.
+    /// </summary>
+    public bool Multiplied { get; init; }
+}
+
+/// <summary>Origins a <see cref="ScoreEntry"/> can carry. Strings, not an enum, to keep the JSON stable.</summary>
+public static class ScoreOrigin
+{
+    public const string Main = "main";
+    public const string Contracts = "contracts";
+}
 
 public sealed class GroupScore
 {
@@ -29,6 +51,16 @@ public sealed class GroupScore
     public int InternalComplexityTotal { get; set; }
     public Dictionary<string, int> ByRule { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<ScoreEntry> Entries { get; } = new();
+
+    /// <summary>Surface points declared in the section's own assembly.</summary>
+    public int MainSurfaceTotal { get; set; }
+
+    /// <summary>
+    /// Surface points declared in the section's satellite <c>&lt;Section&gt;.Contracts</c>
+    /// assembly, after the multiplier. Reported beside <see cref="MainSurfaceTotal"/> rather than
+    /// only summed into <see cref="SurfaceTotal"/>: a section can be small and publish a lot.
+    /// </summary>
+    public int ContractsSurfaceTotal { get; set; }
 }
 
 public sealed class ScoreReport

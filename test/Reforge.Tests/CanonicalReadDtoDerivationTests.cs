@@ -61,7 +61,7 @@ public class CanonicalReadDtoDerivationTests
 
         // Public, exported, a plain data carrier — but declared in SampleSolution.Camp with no
         // Contracts/ folder above it, so Camp has not published it.
-        Assert.DoesNotContain("CampLegacyEntity", Names(canonical, "Camp"));
+        Assert.DoesNotContain("CampLegacyStay", Names(canonical, "Camp"));
         // Same for the Camp section's cache entry type.
         Assert.DoesNotContain("CampCacheEntry", Names(canonical, "Camp"));
     }

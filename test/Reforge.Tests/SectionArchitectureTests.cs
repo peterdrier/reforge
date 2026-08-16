@@ -58,8 +58,11 @@ public class SectionArchitectureTests
 
         Assert.True(report.ByRule.TryGetValue("readSurfaceProjectionMethod", out var pts) && pts > 0);
         var camp = report.Groups["Camp"];
-        // two charged methods (predicate + projection) x weight 4 = 8
-        Assert.Equal(8, camp.ByRule["readSurfaceProjectionMethod"]);
+        // Two charged methods (predicate + projection) x weight 4 = 8, doubled to 16 because
+        // ICampServiceRead is declared in the satellite SampleSolution.Camp.Contracts assembly.
+        // The surcharge is for the shape a read interface publishes, so where it publishes from
+        // is exactly what the contracts multiplier prices.
+        Assert.Equal(16, camp.ByRule["readSurfaceProjectionMethod"]);
         // surcharge is on the surface axis, not internal complexity
         Assert.False(SurfaceScoreRuleGroups.IsInternalComplexity("readSurfaceProjectionMethod"));
     }
@@ -77,8 +80,9 @@ public class SectionArchitectureTests
         };
         var report = await Score(cfg);
 
-        // only the projection method remains charged -> 4
-        Assert.Equal(4, report.Groups["Camp"].ByRule["readSurfaceProjectionMethod"]);
+        // Only the projection method remains charged -> 4, doubled to 8 for the satellite
+        // contracts assembly that declares ICampServiceRead.
+        Assert.Equal(8, report.Groups["Camp"].ByRule["readSurfaceProjectionMethod"]);
     }
 
     // ---------------- Task 4: missing* rules (repo-backed gated) ----------------

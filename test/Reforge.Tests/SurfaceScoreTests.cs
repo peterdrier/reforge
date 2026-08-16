@@ -307,6 +307,93 @@ public class SurfaceScoreTests
             SurfaceScoreConfig.KnownClassifications.OrderBy(k => k, StringComparer.Ordinal));
     }
 
+    // ---------------- Contracts-assembly multiplier ----------------
+
+    [Fact]
+    public async Task ContractsAssembly_SurfaceCharges_AreDoubled()
+    {
+        // SampleSolution.Camp.Contracts is a satellite contracts assembly; SampleSolution.Camp is
+        // the section's own. Both fold into section "Camp", so the origin is the only thing that
+        // separates them — and a charge on a declaration in the satellite costs twice as much.
+        var report = await ScoreDefaultAsync();
+        var camp = report.Groups["Camp"];
+
+        // Positive surface charges only — the two exclusions are asserted separately below.
+        var contracts = camp.Entries
+            .Where(e => e.Origin == ScoreOrigin.Contracts && e.Points > 0
+                        && !SurfaceScoreRuleGroups.IsInternalComplexity(e.Rule))
+            .ToList();
+        Assert.NotEmpty(contracts);
+        Assert.All(contracts, e => Assert.True(e.Multiplied, $"{e.Rule} on {e.Symbol} was not scaled"));
+
+        // Every doubled charge is even, because it is 2x an integer weight. Weak on its own, but
+        // it fails loudly if the multiplier is ever applied to an already-scaled value.
+        Assert.All(contracts, e => Assert.Equal(0, e.Points % 2));
+
+        // The split is reported, not just folded into the surface total.
+        Assert.Equal(camp.SurfaceTotal, camp.MainSurfaceTotal + camp.ContractsSurfaceTotal);
+        Assert.True(camp.ContractsSurfaceTotal > 0);
+    }
+
+    [Fact]
+    public async Task ContractsMultiplier_ScalesOnlyTheSatelliteAssembly_NotAContractsFolder()
+    {
+        // The distinction the multiplier turns on, within one section. CampInfo is declared in
+        // SampleSolution.Camp.Contracts (satellite) and is scaled; ICampSectionService is declared
+        // in SampleSolution.Camp (the section's own assembly) and is not. Both fold into "Camp".
+        var report = await ScoreDefaultAsync();
+
+        // Partitioned by declaring file rather than by symbol name: most entries are keyed to a
+        // member, so the type that carries them is not what `Symbol` says.
+        var camp = report.Groups["Camp"].Entries.Where(e => !string.IsNullOrEmpty(e.File)).ToList();
+        var published = camp.Where(e => e.File.Contains("Camp.Contracts", StringComparison.Ordinal)).ToList();
+        var inAssembly = camp.Where(e => !e.File.Contains("Camp.Contracts", StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(published);
+        Assert.NotEmpty(inAssembly);
+
+        Assert.All(published, e => Assert.Equal(ScoreOrigin.Contracts, e.Origin));
+        Assert.All(inAssembly, e => Assert.Equal(ScoreOrigin.Main, e.Origin));
+        Assert.All(inAssembly, e => Assert.False(e.Multiplied));
+
+        // Exactly 2x, not "some larger number" — the assertions that pin the factor. Two rules,
+        // because a single one could pass on a coincidence between weight and multiplier.
+        var defaults = SurfaceScoreConfig.Default();
+        var dtoType = Assert.Single(published, e => e.Rule == "publicDtoType" && e.Symbol == "CampInfo");
+        Assert.Equal(2 * defaults.Weight("publicDtoType"), dtoType.Points);
+
+        var readMethod = Assert.Single(published,
+            e => e.Rule == "readServiceInterfaceMethod" && e.Symbol == "GetByIdAsync");
+        Assert.Equal(2 * defaults.Weight("readServiceInterfaceMethod"), readMethod.Points);
+    }
+
+    [Fact]
+    public async Task ContractsMultiplier_OfOne_LeavesEveryChargeAlone()
+    {
+        var scaled = await ScoreDefaultAsync();
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.ContractsAssemblyMultiplier = 1;
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var flat = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        Assert.DoesNotContain(AllEntries(flat), e => e.Multiplied);
+        Assert.True(flat.SurfaceTotal < scaled.SurfaceTotal,
+            "turning the multiplier off must lower the surface total, or nothing was being scaled");
+        // Origin is still recorded — it describes where the symbol lives, not whether it was scaled.
+        Assert.Contains(AllEntries(flat), e => e.Origin == ScoreOrigin.Contracts);
+    }
+
+    [Fact]
+    public async Task ContractsMultiplier_DoesNotScaleCreditsOrInternalComplexity()
+    {
+        var report = await ScoreDefaultAsync();
+
+        // Doubling a credit would make publishing pay, which inverts the rule's whole point.
+        Assert.All(AllEntries(report).Where(e => e.Points < 0), e => Assert.False(e.Multiplied));
+        // The internal axis is the counterweight to surface and has to keep one unit everywhere.
+        Assert.All(AllEntries(report).Where(e => SurfaceScoreRuleGroups.IsInternalComplexity(e.Rule)),
+            e => Assert.False(e.Multiplied));
+    }
+
     // ---------------- Rule glossary ----------------
 
     [Fact]
@@ -398,12 +485,12 @@ public class SurfaceScoreTests
     [Fact]
     public async Task CanonicalReadDto_NoCreditForDtosOffTheContractsSurface()
     {
-        // CampLegacyEntity is public and exported, but declared in SampleSolution.Camp with no
+        // CampLegacyStay is public and exported, but declared in SampleSolution.Camp with no
         // Contracts/ folder above it. Camp never published it, so returning it earns nothing.
         var report = await ScoreDefaultAsync();
 
         Assert.DoesNotContain(report.Groups["Reporting"].Entries, e => e.Rule == "canonicalReadDtoReturn"
-            && e.Detail?.Contains("CampLegacyEntity", StringComparison.Ordinal) == true);
+            && e.Detail?.Contains("CampLegacyStay", StringComparison.Ordinal) == true);
     }
 
     [Fact]

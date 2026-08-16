@@ -180,16 +180,51 @@ public sealed partial class SurfaceScoreEngine
         return (file, ls.StartLinePosition.Line + 1);
     }
 
-    private static void AddEntry(ScoreReport report, string groupName, string rule, int points,
+    private void AddEntry(ScoreReport report, string groupName, string rule, int points,
         ISymbol symbol, string file, int line, string? detail)
-        => AddEntryByName(report, groupName, rule, points, symbol.Name, file, line, detail);
+    {
+        var (scaled, multiplied) = ApplyContractsMultiplier(rule, points, symbol);
+        AddEntryByName(report, groupName, rule, scaled, symbol.Name, file, line, detail,
+            multiplied ? ScoreOrigin.Contracts : OriginOf(symbol), multiplied);
+    }
+
+    private static string OriginOf(ISymbol symbol) =>
+        symbol.ContainingAssembly?.Name is { } asm && AssemblySections.IsContractsAssembly(asm)
+            ? ScoreOrigin.Contracts
+            : ScoreOrigin.Main;
+
+    /// <summary>
+    /// Scales a surface charge on a declaration in a satellite <c>&lt;Section&gt;.Contracts</c>
+    /// assembly. The same type in a <c>Contracts/</c> folder inside the section's own assembly is
+    /// not scaled: reaching it means referencing the whole assembly, while a satellite assembly can
+    /// be referenced on its own — wider reach, and correspondingly harder to ever take back.
+    /// </summary>
+    /// <remarks>
+    /// Two deliberate exclusions. <b>Credits are never scaled</b> — doubling a negative would turn
+    /// the multiplier into a reward for publishing, which is the opposite of the intent. <b>The
+    /// internal-complexity axis is never scaled</b> — it is the counterweight to surface and has to
+    /// keep meaning "implementation this section carries", the same unit everywhere it is measured.
+    /// </remarks>
+    private (int Points, bool Multiplied) ApplyContractsMultiplier(string rule, int points, ISymbol symbol)
+    {
+        if (points <= 0) return (points, false);
+        if (SurfaceScoreRuleGroups.IsInternalComplexity(rule)) return (points, false);
+        if (OriginOf(symbol) != ScoreOrigin.Contracts) return (points, false);
+
+        // <= 1 is a no-op rather than an error, and 0 in particular must not silently delete the
+        // charge: a config typo should weaken the rule, never erase the surface it measures.
+        var multiplier = _config.ContractsAssemblyMultiplier;
+        if (multiplier <= 1) return (points, false);
+        return (points * multiplier, true);
+    }
 
     /// <summary>
     /// Section-level entries (missing surfaces, cross-section uses) aren't tied to a single
     /// declared symbol, so they carry an explicit name instead of an <see cref="ISymbol"/>.
     /// </summary>
     private static void AddEntryByName(ScoreReport report, string groupName, string rule, int points,
-        string symbolName, string file, int line, string? detail)
+        string symbolName, string file, int line, string? detail,
+        string origin = ScoreOrigin.Main, bool multiplied = false)
     {
         if (points == 0) return;
         if (!report.Groups.TryGetValue(groupName, out var g))
@@ -197,7 +232,11 @@ public sealed partial class SurfaceScoreEngine
             g = new GroupScore { Name = groupName };
             report.Groups[groupName] = g;
         }
-        var entry = new ScoreEntry(rule, points, symbolName, groupName, file, line, detail);
+        var entry = new ScoreEntry(rule, points, symbolName, groupName, file, line, detail)
+        {
+            Origin = origin,
+            Multiplied = multiplied
+        };
         g.Entries.Add(entry);
         g.Total += points;
         g.ByRule[rule] = g.ByRule.GetValueOrDefault(rule) + points;
@@ -215,6 +254,8 @@ public sealed partial class SurfaceScoreEngine
         {
             g.SurfaceTotal += points;
             report.SurfaceTotal += points;
+            if (origin == ScoreOrigin.Contracts) g.ContractsSurfaceTotal += points;
+            else g.MainSurfaceTotal += points;
         }
     }
 }

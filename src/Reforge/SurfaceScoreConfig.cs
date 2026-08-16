@@ -53,6 +53,21 @@ public sealed class SurfaceScoreConfig
         Default().Classifications.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Multiplies every surface charge on a declaration in a satellite
+    /// <c>&lt;Section&gt;.Contracts</c> assembly. Default 2. Set to 1 to price both contracts
+    /// shapes the same.
+    /// </summary>
+    /// <remarks>
+    /// The same type under a <c>Contracts/</c> folder inside the section's own assembly is charged
+    /// once. The difference is reach: reaching the folder means referencing the whole assembly,
+    /// while a satellite assembly can be referenced on its own, by anyone, without taking a
+    /// dependency on the implementation. That is the point of the shape and also what makes it the
+    /// most expensive surface to withdraw. Credits and the internal-complexity axis are never
+    /// scaled — see <c>SurfaceScoreEngine.ApplyContractsMultiplier</c>.
+    /// </remarks>
+    public int ContractsAssemblyMultiplier { get; set; } = 2;
+
+    /// <summary>
     /// Glob patterns matched against a dispatcher parameter's <i>type</i> name. These act
     /// only as a tie-breaker — the read/write decision is made behaviorally (does the
     /// method mutate?), so a shape type cannot be used to evade a penalty on a mutation by
