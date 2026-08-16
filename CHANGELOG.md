@@ -2,6 +2,40 @@
 
 What changed and why. Newest first.
 
+## Unreleased - A config classification that matches nothing now says so
+
+Two new warnings, `dead-config-classification` and `unknown-config-classification`, for the two
+ways a `classifications` block can be inert.
+
+The trap is the merge. `LoadOrDefault` merges defaults with `TryAdd`, so declaring a classification
+**replaces** the built-in patterns for that key rather than extending them. A block that matches
+nothing therefore does not fall back to the defaults — it switches its rules off. The rules keyed
+to that tag then score zero, and zero is indistinguishable from a clean solution.
+
+Found in Humans' config, which declares:
+
+```json
+"entity": { "paths": ["src/Humans.Domain/Entities/**"], "namespaces": ["Humans.Domain.Entities"] }
+```
+
+There is no `Humans.Domain` project — the solution is laid out as `src/Sections/Humans.<X>` plus
+`.Contracts` assemblies, with no `Entities/` directory under `src/` at all. So nothing is tagged
+`entity`, `methodReturnsEntityAcrossSection` cannot fire, and the report said nothing about it. The
+default `*Entity` / `**/Entities/**` / `**/Models/**` patterns that would otherwise have matched
+were replaced by the block, not merged with it.
+
+Only classifications declared **in the config file** are checked. Defaults are speculative by
+design — a solution with no controllers is not misconfigured — so warning about unmatched defaults
+would put noise in every run, including this tool's own dogfood run. `SurfaceScoreConfig` records
+which keys came from the file before the merge to tell the two apart.
+
+The second warning covers the case the first cannot see: a key no rule reads. A typo'd `dtos` block
+matches plenty of types and is still inert. The readable set is derived from the default key set
+rather than hand-listed, so it cannot drift, and a test pins that the two are identical.
+
+The `skill` command's config schema said classifications "override or extend" the built-ins. They
+do not extend. Corrected, along with the omission of `entity` from the name list.
+
 ## Unreleased - Fix: diRegistration never fired
 
 `diRegistration` has scored zero on every solution since it shipped. `ScoreDiRegistrationsAsync`

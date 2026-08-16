@@ -199,6 +199,114 @@ public class SurfaceScoreTests
         Assert.DoesNotContain(report.Diagnostics, d => d.Code == "unknown-config-section");
     }
 
+    // ---------------- Dead / unreadable config classifications ----------------
+
+    [Fact]
+    public async Task ScoreAsync_DeclaredClassificationMatchingNothing_IsReported()
+    {
+        // The failure this catches, seen in a real config: an `entity` block aimed at
+        // src/<Product>.Domain/Entities/** after the solution was reorganized into per-section
+        // assemblies. The block classifies nothing, methodReturnsEntityAcrossSection can never
+        // fire, and the score reads zero for that rule — identical to a solution with no problem.
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Classifications["entity"] = new ClassificationRule
+        {
+            Paths = new() { "src/NoSuchProject/Entities/**" },
+            Namespaces = new() { "NoSuchProject.Entities" }
+        };
+        cfg.DeclaredClassifications.Add("entity");
+
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        var diagnostic = Assert.Single(report.Diagnostics, d => d.Code == "dead-config-classification");
+        Assert.Contains("entity", diagnostic.Message);
+        // The message has to say the block REPLACED the defaults, because that is the part
+        // nobody guesses: deleting the block is a fix, and narrowing it is not.
+        Assert.Contains("REPLACES", diagnostic.Message);
+        // And the consequence the diagnostic exists to explain: the only rule keyed to the tag
+        // scores nothing, which on its own is indistinguishable from a clean solution.
+        Assert.False(report.ByRule.ContainsKey("methodReturnsEntityAcrossSection"));
+    }
+
+    [Fact]
+    public async Task ScoreAsync_DeclaredClassificationThatMatches_IsNotReported()
+    {
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Classifications["dto"] = new ClassificationRule { NamePatterns = new() { "*Info" } };
+        cfg.DeclaredClassifications.Add("dto");
+
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        Assert.DoesNotContain(report.Diagnostics, d => d.Code == "dead-config-classification");
+    }
+
+    [Fact]
+    public async Task ScoreAsync_DefaultsThatMatchNothing_AreNotReported()
+    {
+        // Defaults are speculative by design — a solution with no controllers is not misconfigured,
+        // and warning about every unmatched default would put noise in every run of every solution
+        // that ships no config at all (including this tool's own dogfood run).
+        var report = await ScoreDefaultAsync();
+
+        Assert.DoesNotContain(report.Diagnostics, d => d.Code == "dead-config-classification");
+    }
+
+    [Fact]
+    public async Task ScoreAsync_ClassificationKeyNoRuleReads_IsReportedSeparately()
+    {
+        // A typo'd key matches plenty and is still inert, so the dead-classification check cannot
+        // see it. Two different mistakes, two different fixes, two diagnostics.
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Classifications["dtos"] = new ClassificationRule { NamePatterns = new() { "*Info" } };
+        cfg.DeclaredClassifications.Add("dtos");
+
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        var diagnostic = Assert.Single(report.Diagnostics, d => d.Code == "unknown-config-classification");
+        Assert.Contains("dtos", diagnostic.Message);
+        Assert.Contains("controller", diagnostic.Message);  // the readable set is listed, so the fix is obvious
+        Assert.DoesNotContain(report.Diagnostics, d => d.Code == "dead-config-classification");
+    }
+
+    [Fact]
+    public void LoadOrDefault_RecordsWhichClassificationsCameFromTheFile()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-declared-classifications");
+        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        Directory.CreateDirectory(dir);
+        var configPath = Path.Combine(dir, "reforge.surface-score.json");
+        File.WriteAllText(configPath, """
+            {
+              "classifications": {
+                "entity": { "paths": ["src/NoSuchProject/Entities/**"] }
+              }
+            }
+            """);
+
+        var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
+
+        Assert.Equal(new[] { "entity" }, cfg.DeclaredClassifications);
+        // Merged defaults are not "declared" — otherwise every unmatched default would warn.
+        Assert.True(cfg.Classifications.ContainsKey("controller"));
+        Assert.DoesNotContain("controller", cfg.DeclaredClassifications);
+        // And the declared block REPLACED the default entity patterns rather than extending them.
+        // This is the whole reason the diagnostic is worth having.
+        Assert.Empty(cfg.Classifications["entity"].NamePatterns);
+    }
+
+    [Fact]
+    public void KnownClassifications_IsExactlyTheDefaultKeySet()
+    {
+        // The known set is derived from the defaults rather than hand-listed, so it cannot drift
+        // from them. This pins the other half: the defaults are also exactly what the rules read.
+        Assert.Equal(
+            SurfaceScoreConfig.Default().Classifications.Keys.OrderBy(k => k, StringComparer.Ordinal),
+            SurfaceScoreConfig.KnownClassifications.OrderBy(k => k, StringComparer.Ordinal));
+    }
+
     // ---------------- Rule glossary ----------------
 
     [Fact]
