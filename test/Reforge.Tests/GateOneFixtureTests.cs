@@ -75,9 +75,6 @@ public class GateOneFixtureTests
     /// </summary>
     private static readonly IReadOnlySet<string> NotYetCovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "dtoCollectionProperty",
-        "dtoNestedProperty",
-        "publicDtoType",
         "readServiceInterfaceMethod",
         "fullServiceInterfaceMethod",
         "repositoryInterfaceMethod",
@@ -92,7 +89,6 @@ public class GateOneFixtureTests
         "parameterBagInput",
         "inlineParameterObjectConstruction",
         "writeCapableInterfaceUsedReadOnly",
-        "booleanParameter",
         "oneImplementationInterface",
         "actionDispatcher",
         "genericActionDispatcher",
@@ -447,6 +443,12 @@ public class GateOneFixtureTests
     /// it back in <see cref="NotYetCovered"/> would lose the finding and invite someone to
     /// rediscover it. Which answer a pair got is <see cref="CheapestFix_NeverLowersTheScore"/>'s and
     /// <see cref="KnownGameableFixtures_StillLowerTheScore"/>'s to report, not this method's.
+    ///
+    /// <para>A rule may have more than one pair, and <c>booleanParameter</c> does: the same edit is
+    /// gated under one choice of identifier and gameable under another, so a single pair would have
+    /// reported whichever answer its author happened to write. Set semantics are right here —
+    /// coverage is per rule — but the verdict is per pair, which is why the two verdict tests read
+    /// pairs and this one reads rules.</para>
     /// </summary>
     private static HashSet<string> CoveredRules()
     {

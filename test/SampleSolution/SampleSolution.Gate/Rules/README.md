@@ -27,6 +27,12 @@ The alternative was a red build, and a red build is not a finding — it is a bl
 blocked branches get unblocked by tuning the fixture until it passes. That is the gate becoming the
 thing it exists to catch.
 
+A rule can have more than one pair. `booleanParameter` has two: the cheapest fix is the same edit
+in both (bool → two-value enum) and the verdict flips on what the enum is named, because the rule
+that would catch the replacement — `mutationModeParameter` — recognises enums by type suffix and
+parameter name. One pair would have reported whichever half its author wrote. When a rule's verdict
+turns out to depend on something the fixture author chooses, write both.
+
 The marker asserts something no test can check: that the cheapest fix is **degenerate** — it
 satisfies the rule while leaving the design no better, ideally worse. Some rules want surface
 *deleted*, and for those the honest cheapest fix is a genuine improvement whose score *should* fall;
