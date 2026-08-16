@@ -7,9 +7,12 @@
 //
 // It is worse at the call site, which is the part the rule was never measuring:
 // `UpdateProfile(id, GateProfileFields.Email)` becomes `UpdateProfile(id, false, true, false)`, and
-// getting the order wrong now compiles. Whether the gate holds depends entirely on whether the
-// backstops — booleanParameter per bool, methodParameterOverflow for the two extra parameters —
-// add up to more than the flags charge they replaced.
+// getting the order wrong now compiles.
+//
+// The backstops nearly cover it and fall one point short: booleanParameter three times (9) plus
+// methodParameterOverflow for the two extra parameters (2) is 11, against the 12 that
+// flagsControlFlow charged. See the Before file for why that gap should not be closed with a
+// weight.
 
 namespace SampleSolution.Gate.Rules;
 
