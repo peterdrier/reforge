@@ -124,7 +124,6 @@ public class GateOneFixtureTests
         "crossSectionFullService",
         "crossSectionRepository",
         "crossSectionWriteSurface",
-        "methodReturnsEntityAcrossSection",
     };
 
     // ---------------- The gate ----------------

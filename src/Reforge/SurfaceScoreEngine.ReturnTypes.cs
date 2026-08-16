@@ -2,31 +2,25 @@ using Microsoft.CodeAnalysis;
 
 namespace Reforge;
 
-// Pass 4 — return-type rules: canonical read-DTO credit and the cross-section entity leak.
-// Both inspect what a published method hands back, so they share one walk.
+// Pass 4 — the canonical read-DTO credit: what a published method hands back.
 public sealed partial class SurfaceScoreEngine
 {
     /// <summary>
-    /// Two rules share a single walk over public methods because both inspect the return type:
-    /// <list type="bullet">
-    ///   <item>canonicalReadDtoReturn — credit when the method returns a section's canonical
-    ///         read DTO (the project-blessed read API). Negative weight.</item>
-    ///   <item>methodReturnsEntityAcrossSection — penalty when the return type is classified
-    ///         as an entity (domain model) AND lives in a different section than the method's
-    ///         containing type. This is the "service boundary exists but leaks EF/domain entity
-    ///         anyway" smell.</item>
-    /// </list>
-    /// Canonical DTOs are explicitly exempt from the entity penalty even if their simple name
-    /// would match the entity classification — canonical DTOs are by definition the read API.
+    /// canonicalReadDtoReturn — credit when a published method returns a section's canonical read
+    /// DTO (the project-blessed read API). Negative weight, so it pulls the score down.
     /// </summary>
+    /// <remarks>
+    /// This pass used to carry a second rule, <c>methodReturnsEntityAcrossSection</c>, penalizing a
+    /// public method for returning another section's domain entity. Retired: it was specific to one
+    /// codebase's layout, and the constraint it approximated is better enforced by keeping entities
+    /// non-public than by pricing the leak after the fact. See the changelog.
+    /// </remarks>
     private void ScoreReturnTypeRules(
         List<ClassifiedType> classified,
-        Dictionary<string, ClassifiedType> typesByDisplay,
         ScoreReport report)
     {
         var canonicalWeight = _config.Weight("canonicalReadDtoReturn");
-        var entityWeight = _config.Weight("methodReturnsEntityAcrossSection");
-        if (canonicalWeight == 0 && entityWeight == 0) return;
+        if (canonicalWeight == 0) return;
 
         // The canonical read DTOs of every section, derived from what each section exports from
         // its contracts surface. The credit applies solution-wide — a Tickets method returning
@@ -37,10 +31,11 @@ public sealed partial class SurfaceScoreEngine
         foreach (var c in classified)
         {
             if (c.Type.TypeKind != TypeKind.Class) continue;
-            // Both rules judge what a published method hands back. An internal method hands it
-            // back only within the assembly, so neither the credit nor the leak penalty applies.
+            // The credit is for what a published method hands back. An internal method hands it
+            // back only within the assembly, so nothing is published and nothing is credited.
             if (!c.IsExported) continue;
-            // Controllers' return types are HTTP responses, not domain leaks.
+            // Controllers return HTTP responses; returning a read DTO from one is not adoption
+            // of the section's read API in the sense the credit rewards.
             if (c.Tags.Contains("controller")) continue;
 
             foreach (var member in c.Type.GetMembers())
@@ -60,24 +55,9 @@ public sealed partial class SurfaceScoreEngine
                 var loc = m.Locations.FirstOrDefault(l => l.IsInSource);
                 var (file, line) = LocateMember(loc, c);
 
-                // Canonical DTO credit takes precedence — exempt from the entity penalty. The
-                // exemption holds even when the credit is weighted to 0: a canonical DTO is the
-                // section's read API by definition, so returning one is never an entity leak.
                 if (canonical.Contains(named))
-                {
-                    if (canonicalWeight != 0)
-                        AddEntry(report, c.Group, "canonicalReadDtoReturn", canonicalWeight, m, file, line,
-                            $"{m.Name} -> {named.Name}");
-                    continue;
-                }
-
-                if (entityWeight == 0) continue;
-                if (!typesByDisplay.TryGetValue(SolutionClassifier.TypeKey(named), out var returnTypeInfo)) continue;
-                if (!returnTypeInfo.Tags.Contains("entity")) continue;
-                if (string.Equals(returnTypeInfo.Group, c.Group, StringComparison.OrdinalIgnoreCase)) continue;
-
-                AddEntry(report, c.Group, "methodReturnsEntityAcrossSection", entityWeight, m, file, line,
-                    $"{m.Name} -> {named.Name} (entity in '{returnTypeInfo.Group}')");
+                    AddEntry(report, c.Group, "canonicalReadDtoReturn", canonicalWeight, m, file, line,
+                        $"{m.Name} -> {named.Name}");
             }
         }
     }

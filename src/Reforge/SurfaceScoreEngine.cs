@@ -50,8 +50,8 @@ public sealed partial class SurfaceScoreEngine
         // off in silence, and the silence is worse than it looks: the merge is TryAdd, so declaring
         // a key REPLACES the default patterns for it. A block pointing at a directory that was
         // renamed away doesn't fall back — it classifies nothing, and every rule keyed to that tag
-        // reads zero. Zero is indistinguishable from "clean" in the output, which is how an entity
-        // block aimed at a project that no longer exists can sit in a config indefinitely.
+        // reads zero. Zero is indistinguishable from "clean" in the output, which is how a block
+        // aimed at a project that has since been renamed away sits in a config indefinitely.
         // Only file-declared keys are reported: defaults legitimately match nothing on solutions
         // that have no repositories or no controllers, and warning about those would be noise on
         // every run.
@@ -76,8 +76,8 @@ public sealed partial class SurfaceScoreEngine
                 $"Readable classifications are: {string.Join(", ", SurfaceScoreConfig.KnownClassifications.OrderBy(k => k, StringComparer.Ordinal))}."));
 
         // canonicalReadDtos is derived from each section's exported contracts surface now. A config
-        // still carrying the list would otherwise change meaning in silence — it used to grant the
-        // canonicalReadDtoReturn credit and suppress methodReturnsEntityAcrossSection solution-wide.
+        // still carrying the list would otherwise change meaning in silence — it used to decide
+        // which returns earned the canonicalReadDtoReturn credit.
         var removedField = _config.RemovedCanonicalReadDtosWarning();
         if (removedField is not null)
             report.Diagnostics.Add(new ScoreDiagnostic("warning", "removed-config-field", removedField));
@@ -111,8 +111,8 @@ public sealed partial class SurfaceScoreEngine
         // Pass 3 — internal shape
         await ScoreInternalShape(classified, report, ct);
 
-        // Pass 4 — return-type rules (canonical-DTO credit + entity-across-section penalty).
-        ScoreReturnTypeRules(classified, typesByDisplay, report);
+        // Pass 4 — canonical read-DTO credit.
+        ScoreReturnTypeRules(classified, report);
 
         // Pass 5 — write-capable interface used read-only. Needs the semantic model and
         // is the most expensive pass, so it runs last.

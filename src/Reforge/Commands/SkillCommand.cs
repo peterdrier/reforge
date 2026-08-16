@@ -125,7 +125,7 @@ public static class SkillCommand
           // the engine (e.g. on interfaces, repository/read-service tags override fullService).
           // Built-in classification names — these are exactly the names the rules read:
           //   dto, readServiceInterface, fullServiceInterface, repositoryInterface,
-          //   repositoryImplementation, applicationService, controller, backgroundJob, entity
+          //   repositoryImplementation, applicationService, controller, backgroundJob
           //
           // Declaring one REPLACES the built-in patterns for that name; it does not add to them.
           // So a block whose globs match nothing switches its rules off rather than falling back —
@@ -164,8 +164,7 @@ public static class SkillCommand
           //   repositoryImplementationMethod (10), newRepositoryInterface (15),
           //   newRepositoryImplementation (15), diRegistration (3), controllerAction (8),
           //   backgroundJob (12), duplicateDbSetOwner (20),
-          //   canonicalReadDtoReturn (-3, credit when a method returns a section's derived canonical read DTO),
-          //   methodReturnsEntityAcrossSection (15, method returns a domain entity from a different section)
+          //   canonicalReadDtoReturn (-3, credit when a method returns a section's derived canonical read DTO)
           //
           // Dependency use (constructor injection across sections):
           //   sameSectionReadService (0), crossSectionReadInterface (2),

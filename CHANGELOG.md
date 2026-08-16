@@ -2,6 +2,34 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Retired: methodReturnsEntityAcrossSection and the `entity` classification
+
+The rule charged 15 points when a public method returned a type classified as an entity that lived
+in another section — the "service boundary exists but leaks the domain model anyway" smell. It is
+gone, along with the `entity` classification that existed only to feed it and the weight key that
+priced it. `entity` had exactly one consumer, so the two retire as a unit.
+
+Two reasons, and the second is the one that decides it:
+
+1. **It scored zero on the corpus it was written for.** Humans' config pointed the `entity`
+   classification at `src/Humans.Domain/Entities/**`, a project that does not exist, so nothing was
+   ever tagged. (That misconfiguration is now reported — see the entry below — but a working
+   diagnostic only makes the rule's silence legible; it does not make the rule useful.)
+2. **It priced a constraint that belongs upstream of scoring.** The leak it charges for is
+   impossible when entities are not public, which is a thing a codebase can simply enforce, and
+   Humans does. A scoring rule that duplicates a hard block measures something that cannot happen.
+   The adjacent idea — "nothing under `Contracts/` may be an entity" — is a reasonable rule, but it
+   is an analyzer rule, not a score: it has a yes/no answer and wants to fail a build, not cost
+   points.
+
+`ScoreReturnTypeRules` now carries the canonical read-DTO credit alone and no longer needs the
+type index. The `CampStayEntity` / `CampLegacyEntity` sample pair stays — it is the fixture proving
+the canonical derivation reads *location and export*, never the name — but its comments no longer
+describe a penalty that does not exist. Gate 1 backlog: 27 → 26.
+
+A config still declaring an `entity` classification is now reported as
+`unknown-config-classification` rather than quietly doing nothing.
+
 ## Unreleased - A config classification that matches nothing now says so
 
 Two new warnings, `dead-config-classification` and `unknown-config-classification`, for the two
