@@ -99,7 +99,6 @@ public class GateOneFixtureTests
         "writeCapableInterfaceUsedReadOnly",
         "oneImplementationInterface",
         "actionDispatcher",
-        "genericActionDispatcher",
         "mutationModeParameter",
         "flagsControlFlow",
 

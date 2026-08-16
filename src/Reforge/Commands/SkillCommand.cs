@@ -170,7 +170,10 @@ public static class SkillCommand
           // section. (Set the weight to 0 to disable the rule.)
 
           // Weights — every value here overrides the built-in default. Setting a weight to 0
-          // disables that rule. Full list of rule keys (group: durable / dependency / shape):
+          // disables that rule. A key that is not a rule name is reported as
+          // `unknown-config-weight` rather than scored as zero — that is what a misspelling, or a
+          // rule that has since been retired, looks like from inside a config.
+          // Full list of rule keys (group: durable / dependency / shape):
           //
           // Durable surface:
           //   dtoScalarProperty (1), dtoCollectionProperty (2), dtoNestedProperty (3),

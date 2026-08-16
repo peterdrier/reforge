@@ -11,9 +11,9 @@
 // called with a name that means nothing for two of its three actions, and the compiler stopped
 // being able to tell.
 //
-// genericActionDispatcher and mutationModeParameter exist to charge for precisely that trade, so
-// the total rises. If they ever stop firing here, applicationServiceMethod becomes a rule that pays
-// an agent to hide a service behind a switch statement.
+// actionDispatcher and mutationModeParameter exist to charge for precisely that trade, so the total
+// rises. If they ever stop firing here, applicationServiceMethod becomes a rule that pays an agent
+// to hide a service behind a switch statement.
 
 namespace SampleSolution.Gate.Rules;
 

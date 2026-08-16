@@ -20,8 +20,8 @@ public enum WorkflowAction { Submit, Approve, Cancel }
 /// BAD generic dispatcher: three explicit commands collapsed behind one generic-verb method
 /// (Apply*) that dispatches on an enum and routes each arm to a distinct member. Declared on
 /// an interface, so the smell must be attributed to BOTH the interface and the implementation.
-/// Expected: genericActionDispatcher fires on ISignupWorkflowService.ApplyAsync and
-/// SignupWorkflowService.ApplyAsync.
+/// Every actionDispatcher surcharge applies (typed selector + generic verb), so this must score
+/// strictly higher than RouteService.RouteAsync below, which has the same arm count and neither.
 /// </summary>
 public interface ISignupWorkflowService
 {
@@ -45,7 +45,8 @@ public class SignupWorkflowService : ISignupWorkflowService
 
 /// <summary>
 /// A structural dispatcher whose name is NOT a generic verb. Still routes arms to distinct
-/// members, so it's the plain actionDispatcher (not genericActionDispatcher).
+/// members, so actionDispatcher fires — but without the generic-verb surcharge. The cheap end
+/// of the same rule that bills ISignupWorkflowService.ApplyAsync above.
 /// </summary>
 public class RouteService
 {
@@ -85,7 +86,7 @@ public class ThingService
 /// A real state-machine entry point: generic verb + action enum + a switch, BUT it validates
 /// the current state and uses transition vocabulary. The asymmetric rule must exempt it from
 /// ALL dispatcher/mode penalties (it may still draw ordinary complexity).
-/// Expected: no genericActionDispatcher / actionDispatcher / mutationModeParameter.
+/// Expected: no actionDispatcher / mutationModeParameter.
 /// </summary>
 public class WorkflowService
 {
@@ -211,7 +212,7 @@ public class ReportBuilder
 
 /// <summary>
 /// A mutation method whose control flow is driven by a [Flags] enum. Expected: flagsControlFlow
-/// fires; actionDispatcher / genericActionDispatcher do NOT (no delegation to distinct members),
+/// fires; actionDispatcher does NOT (no delegation to distinct members),
 /// and mutationModeParameter does NOT (flags are owned by flagsControlFlow).
 /// </summary>
 public class FlagUpdateService

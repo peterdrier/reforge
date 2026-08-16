@@ -53,6 +53,19 @@ public sealed class SurfaceScoreConfig
         Default().Classifications.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// The weight keys a rule actually reads — exactly the default key set, since <see cref="Weight"/>
+    /// is only ever called with a literal rule name and every one of those has a default.
+    /// </summary>
+    /// <remarks>
+    /// No declared-vs-defaulted bookkeeping is needed here, unlike classifications: the merge adds
+    /// every default key, so any key outside this set can only have come from the config file. It is
+    /// inert — a weight nothing reads — which is what retiring a rule leaves behind in a config that
+    /// tuned it. See <see cref="KnownClassifications"/> for why the type is <c>IReadOnlySet</c>.
+    /// </remarks>
+    public static IReadOnlySet<string> KnownWeights { get; } =
+        Default().Weights.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Multiplies every surface charge on a declaration in a satellite
     /// <c>&lt;Section&gt;.Contracts</c> assembly. Default 2. Set to 1 to price both contracts
     /// shapes the same.
@@ -269,7 +282,8 @@ public sealed class SurfaceScoreConfig
                 ["largeClass"] = 1,
                 ["cognitiveComplexity"] = 1,
                 ["actionDispatcher"] = 1,
-                ["genericActionDispatcher"] = 1,
+                // No genericActionDispatcher key: it was folded into actionDispatcher as three
+                // surcharges rather than kept as a rule gated on all of them at once.
                 ["mutationModeParameter"] = 1,
                 ["flagsControlFlow"] = 1
             }

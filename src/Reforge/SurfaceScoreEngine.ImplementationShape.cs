@@ -22,10 +22,9 @@ public sealed partial class SurfaceScoreEngine
         var largeW = _config.Weight("largeClass");
         var cogW = _config.Weight("cognitiveComplexity");
         var dispW = _config.Weight("actionDispatcher");
-        var gadW = _config.Weight("genericActionDispatcher");
         var mmpW = _config.Weight("mutationModeParameter");
         var flagsW = _config.Weight("flagsControlFlow");
-        if (longW == 0 && largeW == 0 && cogW == 0 && dispW == 0 && gadW == 0 && mmpW == 0 && flagsW == 0) return;
+        if (longW == 0 && largeW == 0 && cogW == 0 && dispW == 0 && mmpW == 0 && flagsW == 0) return;
 
         // For interface propagation: where does each classified type live, and what file.
         var groupByType = new Dictionary<string, (string Group, string File)>(StringComparer.Ordinal);
@@ -96,36 +95,36 @@ public sealed partial class SurfaceScoreEngine
                 bool genericVerb = ImplementationComplexity.IsGenericVerb(m.Name);
                 bool stateEngine = ImplementationComplexity.LooksLikeStateEngine(syntax);
                 bool structuralFired = false;
+                // [Flags] params are excluded throughout: flagsControlFlow owns that smell, and a
+                // flags argument is a set of independent toggles, not a selector between operations.
+                var modeParams = dispatchEnumParams.Where(p => !ImplementationComplexity.IsFlagsEnum(p.Type)).ToList();
 
-                if (d.Fires && !stateEngine)
+                if (d.Fires && !stateEngine && dispW != 0)
                 {
-                    if (genericVerb && dispatchEnumParams.Count > 0 && gadW != 0)
-                    {
-                        // genericActionDispatcher: named generic verb + action/mode enum + a body
-                        // that switches and delegates arms to distinct members. The strongest,
-                        // most-attributable dispatcher smell — also flagged on the interface method.
-                        bool appSvc = c.Tags.Contains("applicationService") || IsApplicationServiceType(c.Type);
-                        int basePts = 20 + 8 * Math.Max(0, d.ArmCount - 2) + (appSvc ? 10 : 0) + 10 /* mutation */;
-                        int pts = basePts * gadW;
-                        var detail = $"{m.Name} ({d.ArmCount}-arm generic dispatch on {EnumParamNames(dispatchEnumParams)}; arms route to distinct members)";
-                        AddEntry(report, c.Group, "genericActionDispatcher", pts, m, file, line, detail);
-                        PropagateDispatcherToInterfaces(report, c.Type, m, "genericActionDispatcher", pts, detail, groupByType);
-                        structuralFired = true;
-                    }
-                    else if (dispW != 0)
-                    {
-                        int basePts = 20 + 5 * (d.ArmCount - 2);
-                        AddEntry(report, c.Group, "actionDispatcher", basePts * dispW, m, file, line,
-                            $"{m.Name} ({d.ArmCount}-arm dispatch; arms route to distinct members)");
-                        structuralFired = true;
-                    }
+                    // actionDispatcher: a mutation whose body switches and routes arms to distinct
+                    // members. The three aggravating factors below used to be a separate rule
+                    // (genericActionDispatcher) that required all of them at once; as a conjunction
+                    // it measured zero on a 2,800-type corpus. They are surcharges now, so a
+                    // dispatcher is priced by how many of them it has rather than gated on all.
+                    bool typedSelector = modeParams.Count > 0;
+                    bool appSvc = c.Tags.Contains("applicationService") || IsApplicationServiceType(c.Type);
+                    int basePts = 20 + 5 * (d.ArmCount - 2)
+                        + (typedSelector ? 8 : 0)   // an action/mode enum: the fold is in the signature
+                        + (genericVerb ? 8 : 0)     // Apply/Handle/Process/…: the name hides which operation
+                        + (appSvc ? 10 : 0);        // on an application service: the fold is the app's API
+                    int pts = basePts * dispW;
+                    var selector = typedSelector ? $" on {EnumParamNames(modeParams)}" : "";
+                    var detail = $"{m.Name} ({d.ArmCount}-arm dispatch{selector}; arms route to distinct members)";
+                    AddEntry(report, c.Group, "actionDispatcher", pts, m, file, line, detail);
+                    // A structural dispatcher declared on an interface is a contractual smell, not
+                    // just an implementation one — bill the interface method too.
+                    PropagateDispatcherToInterfaces(report, c.Type, m, "actionDispatcher", pts, detail, groupByType);
+                    structuralFired = true;
                 }
 
                 // mutationModeParameter: a mutation carrying an action/mode enum selector that
                 // folds distinct operations behind one signature, even when the body is small and
-                // doesn't delegate (so it isn't caught structurally above). [Flags] params are
-                // excluded — flagsControlFlow already owns that smell. State engines are exempt.
-                var modeParams = dispatchEnumParams.Where(p => !ImplementationComplexity.IsFlagsEnum(p.Type)).ToList();
+                // doesn't delegate (so it isn't caught structurally above). State engines are exempt.
                 if (!structuralFired && !stateEngine && modeParams.Count > 0 && mmpW != 0)
                 {
                     int basePts = 10 + 5 * modeParams.Count + (genericVerb ? 10 : 0);

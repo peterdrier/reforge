@@ -271,6 +271,32 @@ public class SurfaceScoreTests
     }
 
     [Fact]
+    public async Task ScoreAsync_WeightForARetiredRule_IsReported()
+    {
+        // What retiring a rule leaves behind in a config that tuned it: a number that reads like
+        // policy and is scored by nothing. genericActionDispatcher is the real case — it was a rule
+        // until it was folded into actionDispatcher as surcharges.
+        var cfg = SurfaceScoreConfig.Default();
+        cfg.Weights["genericActionDispatcher"] = 3;
+
+        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        var diagnostic = Assert.Single(report.Diagnostics, d => d.Code == "unknown-config-weight");
+        Assert.Contains("genericActionDispatcher", diagnostic.Message);
+    }
+
+    [Fact]
+    public async Task ScoreAsync_DefaultWeights_AreNotReportedAsUnknown()
+    {
+        // Every default weight key must be a rule the engine reads, or the diagnostic above fires on
+        // a solution with no config at all. This is the assertion that keeps the two lists in step.
+        var report = await ScoreDefaultAsync();
+
+        Assert.DoesNotContain(report.Diagnostics, d => d.Code == "unknown-config-weight");
+    }
+
+    [Fact]
     public void LoadOrDefault_RecordsWhichClassificationsCameFromTheFile()
     {
         var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-declared-classifications");
@@ -573,26 +599,32 @@ public class SurfaceScoreTests
     // ---------------- Internal complexity: dispatcher / read-shape ----------------
 
     [Fact]
-    public async Task GenericActionDispatcher_FiresOnImplAndInterface()
+    public async Task ActionDispatcher_FiresOnImplAndInterface()
     {
         // SignupWorkflowService.ApplyAsync: generic verb + SignupAction enum + switch that
-        // delegates arms to distinct members. Must fire genericActionDispatcher AND be
-        // attributed to the interface method it implements.
+        // delegates arms to distinct members. A structural dispatcher declared on an interface is
+        // a contractual smell, so it must be attributed to the interface method as well.
         var report = await ScoreDefaultAsync();
-        var gad = AllEntries(report).Where(e => e.Rule == "genericActionDispatcher" && e.Symbol == "ApplyAsync").ToList();
-        Assert.True(gad.Count >= 2, $"expected genericActionDispatcher on both impl and interface ApplyAsync; got {gad.Count}");
-        // It must NOT also be double-counted as the plain actionDispatcher.
-        Assert.DoesNotContain(AllEntries(report), e => e.Rule == "actionDispatcher" && e.Symbol == "ApplyAsync");
+        var hits = AllEntries(report).Where(e => e.Rule == "actionDispatcher" && e.Symbol == "ApplyAsync").ToList();
+        Assert.True(hits.Count >= 2, $"expected actionDispatcher on both impl and interface ApplyAsync; got {hits.Count}");
+        // The rule that used to own this shape is gone, folded in as surcharges.
+        Assert.False(report.ByRule.ContainsKey("genericActionDispatcher"));
     }
 
     [Fact]
-    public async Task ActionDispatcher_FiresOnNonGenericStructuralDispatch()
+    public async Task ActionDispatcher_SurchargesTheGenericVerbAndTypedSelector()
     {
-        // RouteService.RouteAsync dispatches structurally but its name isn't a generic verb.
+        // Same arm count (3), same structural dispatch, both mutations. ApplyAsync earns the
+        // generic-verb surcharge; RouteAsync does not. Both carry an enum selector. So the two
+        // must differ by exactly the generic-verb surcharge — the assertion that keeps the
+        // surcharges graduated instead of collapsing back into a single flat price.
         var report = await ScoreDefaultAsync();
-        var entries = AllEntries(report).ToList();
-        Assert.Contains(entries, e => e.Rule == "actionDispatcher" && e.Symbol == "RouteAsync");
-        Assert.DoesNotContain(entries, e => e.Rule == "genericActionDispatcher" && e.Symbol == "RouteAsync");
+        var apply = AllEntries(report)
+            .Where(e => e.Rule == "actionDispatcher" && e.Symbol == "ApplyAsync")
+            .Max(e => e.Points);
+        var route = Assert.Single(AllEntries(report),
+            e => e.Rule == "actionDispatcher" && e.Symbol == "RouteAsync").Points;
+        Assert.True(apply > route, $"ApplyAsync ({apply}) must outprice RouteAsync ({route})");
     }
 
     [Fact]
@@ -602,7 +634,6 @@ public class SurfaceScoreTests
         var report = await ScoreDefaultAsync();
         var entries = AllEntries(report).ToList();
         Assert.Contains(entries, e => e.Rule == "mutationModeParameter" && e.Symbol == "CreateThingAsync");
-        Assert.DoesNotContain(entries, e => e.Rule == "genericActionDispatcher" && e.Symbol == "CreateThingAsync");
         Assert.DoesNotContain(entries, e => e.Rule == "actionDispatcher" && e.Symbol == "CreateThingAsync");
     }
 
@@ -613,7 +644,6 @@ public class SurfaceScoreTests
         // current state and uses transition vocabulary — a real state machine, exempt.
         var report = await ScoreDefaultAsync();
         var entries = AllEntries(report).Where(e => e.Symbol == "ApplyWorkflowTransitionAsync").ToList();
-        Assert.DoesNotContain(entries, e => e.Rule == "genericActionDispatcher");
         Assert.DoesNotContain(entries, e => e.Rule == "actionDispatcher");
         Assert.DoesNotContain(entries, e => e.Rule == "mutationModeParameter");
     }
@@ -777,10 +807,10 @@ public class SurfaceScoreTests
 
         var now = new ScoreReport { SurfaceTotal = 920, InternalComplexityTotal = 60, Total = 980 };
         now.ByRule["fullServiceInterfaceMethod"] = 120;
-        now.ByRule["genericActionDispatcher"] = 40;
+        now.ByRule["actionDispatcher"] = 40;
         var g = new GroupScore { Name = "Shifts", SurfaceTotal = 220, InternalComplexityTotal = 60 };
-        g.ByRule["genericActionDispatcher"] = 40;
-        g.Entries.Add(new ScoreEntry("genericActionDispatcher", 40, "ApplySignupActionAsync", "Shifts", "ShiftSignupService.cs", 42, "ApplySignupActionAsync (3-arm generic dispatch)"));
+        g.ByRule["actionDispatcher"] = 40;
+        g.Entries.Add(new ScoreEntry("actionDispatcher", 40, "ApplySignupActionAsync", "Shifts", "ShiftSignupService.cs", 42, "ApplySignupActionAsync (3-arm dispatch on action)"));
         now.Groups["Shifts"] = g;
 
         var cmp = SurfaceScoreBaseline.Compare(now, basePath);

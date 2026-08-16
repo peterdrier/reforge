@@ -21,7 +21,6 @@ public static class SurfaceScoreRuleGroups
         "largeClass",
         "cognitiveComplexity",
         "actionDispatcher",
-        "genericActionDispatcher",
         "mutationModeParameter",
         "flagsControlFlow"
     };

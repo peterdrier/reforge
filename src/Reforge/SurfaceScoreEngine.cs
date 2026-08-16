@@ -75,6 +75,18 @@ public sealed partial class SurfaceScoreEngine
                 $"Config declares classifications no rule reads, so they are ignored: {string.Join(", ", unknownClassifications)}. " +
                 $"Readable classifications are: {string.Join(", ", SurfaceScoreConfig.KnownClassifications.OrderBy(k => k, StringComparer.Ordinal))}."));
 
+        // The same trap on the weights table. This is what a retired rule leaves behind in a config
+        // that tuned it: a number that reads like policy and is scored by nothing.
+        var unknownWeights = _config.Weights.Keys
+            .Where(k => !SurfaceScoreConfig.KnownWeights.Contains(k))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
+        if (unknownWeights.Count > 0)
+            report.Diagnostics.Add(new ScoreDiagnostic("warning", "unknown-config-weight",
+                $"Config sets weights for rules that do not exist, so they do nothing: {string.Join(", ", unknownWeights)}. " +
+                $"Either the name is misspelled or the rule was retired — the rule glossary printed " +
+                $"with this report lists the names that exist."));
+
         // canonicalReadDtos is derived from each section's exported contracts surface now. A config
         // still carrying the list would otherwise change meaning in silence — it used to decide
         // which returns earned the canonicalReadDtoReturn credit.
