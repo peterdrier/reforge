@@ -324,7 +324,9 @@ public static class SurfaceScoreCommand
         foreach (var g in orderedGroups)
         {
             Console.WriteLine();
-            Console.WriteLine($"{g.Name} ({g.Total})");
+            Console.WriteLine(g.ContractsSurfaceTotal != 0
+                ? $"{g.Name} ({g.Total}; surface {g.MainSurfaceTotal} main + {g.ContractsSurfaceTotal} contracts)"
+                : $"{g.Name} ({g.Total})");
 
             foreach (var kv in g.ByRule.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
                 Console.WriteLine($"  {kv.Key,-40} {kv.Value,5}");
@@ -340,7 +342,8 @@ public static class SurfaceScoreCommand
             foreach (var e in topEntries)
             {
                 var detail = string.IsNullOrEmpty(e.Detail) ? e.Symbol : e.Detail;
-                Console.WriteLine($"  {e.Points,3} {e.Rule,-35} {detail}  ({e.File}:{e.Line})");
+                var mark = e.Multiplied ? " [contracts]" : "";
+                Console.WriteLine($"  {e.Points,3} {e.Rule,-35} {detail}{mark}  ({e.File}:{e.Line})");
             }
         }
 
@@ -470,6 +473,7 @@ public static class SurfaceScoreCommand
                 foreach (var e in topEntries)
                 {
                     var symbolDisplay = string.IsNullOrEmpty(e.Detail) ? $"`{e.Symbol}`" : $"`{e.Detail}`";
+                    if (e.Multiplied) symbolDisplay += " _(contracts)_";
                     sb.AppendLine($"| {e.Points} | `{e.Rule}` | {symbolDisplay} | `{e.File}:{e.Line}` |");
                 }
                 sb.AppendLine();
@@ -556,6 +560,8 @@ public static class SurfaceScoreCommand
             {
                 name = g.Name,
                 surfaceTotal = g.SurfaceTotal,
+                mainSurfaceTotal = g.MainSurfaceTotal,
+                contractsSurfaceTotal = g.ContractsSurfaceTotal,
                 internalComplexityTotal = g.InternalComplexityTotal,
                 total = g.Total,
                 byRule = g.ByRule
@@ -573,7 +579,9 @@ public static class SurfaceScoreCommand
                         symbol = e.Symbol,
                         file = e.File,
                         line = e.Line,
-                        detail = e.Detail
+                        detail = e.Detail,
+                        origin = e.Origin,
+                        multiplied = e.Multiplied
                     })
                     .ToArray()
             })

@@ -33,8 +33,8 @@ public sealed class CampDelegator
 public sealed class CampFeedReader
 {
     public Task<CampInfo> GetCampAsync(Guid id) => Task.FromResult(new CampInfo());          // canonical -> credit
-    public Task<CampStayEntity> GetStayAsync(Guid id) => Task.FromResult(new CampStayEntity()); // canonical despite the name -> credit
-    public Task<CampLegacyEntity> GetLegacyAsync(Guid id) => Task.FromResult(new CampLegacyEntity()); // off the contracts surface -> no credit
+    public Task<CampStaySummary> GetStayAsync(Guid id) => Task.FromResult(new CampStaySummary()); // canonical despite the name -> credit
+    public Task<CampLegacyStay> GetLegacyAsync(Guid id) => Task.FromResult(new CampLegacyStay()); // off the contracts surface -> no credit
 }
 
 // Orchestrator-only, no repository — must NOT trip any missing* rule.

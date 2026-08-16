@@ -86,6 +86,16 @@ public static class SkillCommand
         folder is not evidence on its own — an `internal` type declared there is not surface and is
         not included. A section with neither shape publishes no read API, and its score says so.
 
+        **A satellite contracts assembly costs double.** Every surface charge on a declaration in a
+        `<Section>.Contracts` assembly is multiplied by `contractsAssemblyMultiplier` (default 2).
+        The same type under a `Contracts/` folder inside the section's own assembly is charged once.
+        The difference is reach: the folder is only reachable by referencing the whole assembly,
+        while a satellite assembly can be referenced on its own — which is the point of the shape
+        and also what makes it the hardest surface to withdraw. Credits and the
+        internal-complexity axis are never scaled. Each entry carries `origin` (`main` /
+        `contracts`) and `multiplied`, and each group reports `mainSurfaceTotal` and
+        `contractsSurfaceTotal` beside `surfaceTotal`.
+
         The config file is optional, searched for upward from the solution directory, and carries
         policy only. With no file present the built-in name-pattern classifications and default
         weights still produce a full score.
@@ -94,6 +104,11 @@ public static class SkillCommand
 
         ```jsonc
         {
+          // Surface charges on declarations in a satellite <Section>.Contracts assembly are
+          // multiplied by this. Default 2; set to 1 to price both contracts shapes the same.
+          // Values <= 1 are treated as 1 — a typo weakens the rule, it never erases the surface.
+          "contractsAssemblyMultiplier": 2,
+
           // Per-section policy, keyed by the assembly-derived section name. These are the facts
           // the assembly graph can't state; membership is NOT among them.
           "sections": {

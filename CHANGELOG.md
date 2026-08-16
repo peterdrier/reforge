@@ -2,6 +2,50 @@
 
 What changed and why. Newest first.
 
+## Unreleased - A satellite contracts assembly costs double
+
+Every surface charge on a declaration in a `<Section>.Contracts` assembly is now multiplied by
+`contractsAssemblyMultiplier` (default **2**). The same type under a `Contracts/` folder inside the
+section's own assembly is charged once.
+
+The difference is reach. A `Contracts/` folder in `App.Shifts.dll` is only reachable by referencing
+`App.Shifts.dll` whole. `App.Shifts.Contracts.dll` can be referenced on its own, by anyone, with no
+dependency on the implementation — which is the point of the shape, and also what makes it the
+hardest surface a section can ever withdraw. Wider reach, higher price.
+
+`CanonicalReadDtoSet.IsOnContractsSurface` already told the two shapes apart internally and then
+collapsed them into one `bool`; the multiplier is the first thing to care about the difference.
+
+Two exclusions, both deliberate:
+
+- **Credits are never scaled.** Doubling a negative would make publishing pay, inverting the rule.
+- **The internal-complexity axis is never scaled.** It is the counterweight to surface and has to
+  keep one unit everywhere it is measured.
+
+A multiplier of `<= 1` is a no-op rather than an error. `0` in particular must not silently delete
+the charge: a config typo should weaken a rule, never erase the surface it measures.
+
+**Reporting.** `ScoreEntry` now carries `origin` (`main` / `contracts`) and `multiplied`, and
+`GroupScore` reports `mainSurfaceTotal` and `contractsSurfaceTotal` beside `surfaceTotal`. The
+origin is recorded even when the multiplier is off — it describes where the symbol lives, not
+whether it was scaled. Compact output marks scaled entries `[contracts]` and puts the split on the
+group header; Markdown marks them `_(contracts)_`; JSON carries both fields. Without that, a reader
+seeing a 10-point DTO property cannot tell a doubled 5 from a weight change.
+
+Sections still fold their contracts assembly in (`App.Shifts` and `App.Shifts.Contracts` are both
+section `Shifts`) — the fold is right for section *identity*, and the origin is what the fold used
+to discard. This is the first half of the per-origin table in #37; the tests column depends on #36.
+
+**Baselines taken before this change will show a jump** in any section with a satellite contracts
+assembly. That is the intended repricing, not a regression, but a conservation gate run across the
+boundary will report it as one.
+
+The `CampStayEntity` / `CampLegacyEntity` sample pair is renamed to `CampStaySummary` /
+`CampLegacyStay`. The `Entity` suffix was load-bearing only for the retired entity classification;
+with that gone the names implied a rule that no longer exists. The pair itself stays — it is the
+positive and negative case for the canonical derivation, one type on the contracts surface and one
+off it, which is also now the fixture for this multiplier.
+
 ## Unreleased - Retired: methodReturnsEntityAcrossSection and the `entity` classification
 
 The rule charged 15 points when a public method returned a type classified as an entity that lived
