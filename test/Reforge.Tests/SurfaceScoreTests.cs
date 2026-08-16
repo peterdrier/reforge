@@ -318,7 +318,11 @@ public class SurfaceScoreTests
         var report = await ScoreDefaultAsync();
         var camp = report.Groups["Camp"];
 
-        var contracts = camp.Entries.Where(e => e.Origin == ScoreOrigin.Contracts).ToList();
+        // Positive surface charges only — the two exclusions are asserted separately below.
+        var contracts = camp.Entries
+            .Where(e => e.Origin == ScoreOrigin.Contracts && e.Points > 0
+                        && !SurfaceScoreRuleGroups.IsInternalComplexity(e.Rule))
+            .ToList();
         Assert.NotEmpty(contracts);
         Assert.All(contracts, e => Assert.True(e.Multiplied, $"{e.Rule} on {e.Symbol} was not scaled"));
 
@@ -334,18 +338,26 @@ public class SurfaceScoreTests
     [Fact]
     public async Task ContractsMultiplier_ScalesOnlyTheSatelliteAssembly_NotAContractsFolder()
     {
-        // The distinction the multiplier turns on. CampStaySummary lives in the satellite assembly
-        // and is scaled; CampLegacyStay is the same shape in the section's own assembly and is not.
+        // The distinction the multiplier turns on, within one section. CampInfo is declared in
+        // SampleSolution.Camp.Contracts (satellite) and is scaled; ICampSectionService is declared
+        // in SampleSolution.Camp (the section's own assembly) and is not. Both fold into "Camp".
         var report = await ScoreDefaultAsync();
 
-        var summary = AllEntries(report).Where(e => e.Symbol == "CampStaySummary").ToList();
-        var legacy = AllEntries(report).Where(e => e.Symbol == "CampLegacyStay").ToList();
-        Assert.NotEmpty(summary);
-        Assert.NotEmpty(legacy);
+        // Partitioned by declaring file rather than by symbol name: most entries are keyed to a
+        // member, so the type that carries them is not what `Symbol` says.
+        var camp = report.Groups["Camp"].Entries.Where(e => !string.IsNullOrEmpty(e.File)).ToList();
+        var published = camp.Where(e => e.File.Contains("Camp.Contracts", StringComparison.Ordinal)).ToList();
+        var inAssembly = camp.Where(e => !e.File.Contains("Camp.Contracts", StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(published);
+        Assert.NotEmpty(inAssembly);
 
-        Assert.All(summary, e => Assert.Equal(ScoreOrigin.Contracts, e.Origin));
-        Assert.All(legacy, e => Assert.Equal(ScoreOrigin.Main, e.Origin));
-        Assert.All(legacy, e => Assert.False(e.Multiplied));
+        Assert.All(published, e => Assert.Equal(ScoreOrigin.Contracts, e.Origin));
+        Assert.All(inAssembly, e => Assert.Equal(ScoreOrigin.Main, e.Origin));
+        Assert.All(inAssembly, e => Assert.False(e.Multiplied));
+
+        // Exactly 2x, not "some larger number" — the one assertion that pins the factor.
+        var dtoType = Assert.Single(published, e => e.Rule == "publicDtoType");
+        Assert.Equal(2 * SurfaceScoreConfig.Default().Weight("publicDtoType"), dtoType.Points);
     }
 
     [Fact]
