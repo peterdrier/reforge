@@ -72,6 +72,15 @@ public class GateOneFixtureTests
     /// test can fail on a <b>new</b> rule while the retroactive backlog is worked through — an
     /// unlisted rule is a rule someone added without a fixture, and that is the case worth
     /// catching, since it is the only one where the fixture could still have been written first.
+    ///
+    /// <para>Everything on this list is also a rule nobody has asked to fire.
+    /// <see cref="EveryDeclaredRule_ActuallyFiresInItsBeforeFixture"/> only checks rules a pair
+    /// declares, so a rule that is broken outright looks exactly like a rule that is merely
+    /// unfixtured. <c>diRegistration</c> was the first one caught that way: it had been dead since
+    /// it shipped — the classification lookup used a bare display string against a dictionary keyed
+    /// on assembly-qualified names — and scored zero against 452 registrations in Humans without
+    /// anything going red. Each entry below is a rule whose behaviour is currently unverified in
+    /// both directions, not just ungated.</para>
     /// </summary>
     private static readonly IReadOnlySet<string> NotYetCovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -81,7 +90,6 @@ public class GateOneFixtureTests
         "repositoryImplementationMethod",
         "newRepositoryInterface",
         "newRepositoryImplementation",
-        "diRegistration",
         "controllerAction",
         "backgroundJob",
         "duplicateDbSetOwner",
