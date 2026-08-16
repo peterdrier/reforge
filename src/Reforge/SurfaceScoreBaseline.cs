@@ -499,7 +499,7 @@ public static class SurfaceScoreBaseline
             parts.Add(syms.Count > 0 ? $"{rule} +{delta} [{string.Join(", ", syms)}]" : $"{rule} +{delta}");
         }
 
-        var kind = increased.Any(x => x.Rule is "genericActionDispatcher" or "mutationModeParameter" or "actionDispatcher")
+        var kind = increased.Any(x => x.Rule is "mutationModeParameter" or "actionDispatcher")
             ? "generic-dispatcher-consolidation"
             : "complexity-traded-for-surface";
         return (kind, " Drivers: " + string.Join("; ", parts) + ".");

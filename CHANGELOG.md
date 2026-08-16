@@ -2,6 +2,51 @@
 
 What changed and why. Newest first.
 
+## Unreleased - genericActionDispatcher folded into actionDispatcher
+
+`genericActionDispatcher` is gone as a rule. Its three distinguishing conditions are now surcharges
+on `actionDispatcher`.
+
+It required four things at once: a body that switches and routes arms to distinct members, *and* a
+generic verb name (Apply/Handle/Process/Execute/Create/Save), *and* an action/mode enum parameter,
+*and* not looking like a state machine. On a 2,842-type corpus it fired **zero** times, while its
+two component smells fired 40 (`actionDispatcher`) and 330 (`mutationModeParameter`). A rule that
+never fires is not a strict rule, it is an absent one — and worse, it was the *expensive* rule, so
+the shape it was meant to price was being billed at the cheap rate the whole time.
+
+The fix is to stop gating on the conjunction. `actionDispatcher` fires on the structural condition
+alone, as before, and adds:
+
+| Surcharge | Why |
+|---|---|
+| +8 typed selector | an action/mode enum: the fold is visible in the signature |
+| +8 generic verb | the name tells you nothing about which operation runs |
+| +10 application service | the folded door is the application's own API |
+
+A dispatcher is now priced by how many of these it has instead of being free of all of them until it
+has every one. The plain 3-arm dispatcher that scored 25 still scores 25; the shape
+`genericActionDispatcher` was written for scores 51 — close to the 48 it would have charged, but now
+it can actually be reached.
+
+`actionDispatcher` also inherits the interface propagation that only `genericActionDispatcher` had.
+A structural dispatcher declared on an interface is a contractual smell, not merely an
+implementation one, and that was never specific to generic-verb names.
+
+[Flags] enum parameters are excluded from the typed-selector surcharge, consistently with
+`mutationModeParameter`: a flags argument is a set of independent toggles, not a selector between
+operations, and `flagsControlFlow` owns that smell.
+
+**Migration.** Delete any `genericActionDispatcher` weight from a config file — it is no longer a
+known key. Baselines that recorded it will show it drop to zero and `actionDispatcher` rise; on a
+corpus where it measured zero, only `actionDispatcher` moves, and only for dispatchers that earn a
+surcharge or are declared on an interface.
+
+**New diagnostic: `unknown-config-weight`.** A weight key that names no rule is now warned about
+instead of being silently ignored. This is the weights-table twin of `unknown-config-classification`
+and exists because retiring a rule is exactly what leaves an inert number behind in someone's
+config. A test asserts that no *default* weight key trips it, so the diagnostic can never start
+firing on a solution that ships no config.
+
 ## Unreleased - A satellite contracts assembly costs double
 
 Every surface charge on a declaration in a `<Section>.Contracts` assembly is now multiplied by
