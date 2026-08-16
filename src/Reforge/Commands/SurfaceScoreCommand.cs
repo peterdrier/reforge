@@ -210,7 +210,7 @@ public static class SurfaceScoreCommand
     /// <summary>
     /// Aggregates every score entry by symbol so an agent can see which refactoring targets
     /// carry combined value across multiple rules. A class hit by `writeCapableInterfaceUsedReadOnly`,
-    /// `methodReturnsEntityAcrossSection`, and `dashboardAdminPageName` is one fix worth ~33 points,
+    /// `crossSectionRepository`, and `dashboardAdminPageName` is one fix worth ~43 points,
     /// but those entries sit in three different per-rule buckets in the grouped view. This sums them.
     /// File/line snap to the first entry's location for the symbol (close enough to navigate;
     /// individual rule entries still carry their own precise locations).

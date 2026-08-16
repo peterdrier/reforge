@@ -27,7 +27,7 @@ public sealed class CampSectionService : ICampSectionService
 
 // Same shape as CampStayEntity over in SampleSolution.Camp.Contracts, but declared in the section's
 // own assembly with no Contracts/ folder above it — off the contracts surface, so it is NOT a
-// canonical read DTO and handing it to another section stays an entity leak.
+// canonical read DTO and returning it earns no credit. The negative half of the derivation.
 public sealed class CampLegacyEntity
 {
     public Guid Id { get; set; }

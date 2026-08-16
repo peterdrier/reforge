@@ -33,8 +33,8 @@ public sealed class CampDelegator
 public sealed class CampFeedReader
 {
     public Task<CampInfo> GetCampAsync(Guid id) => Task.FromResult(new CampInfo());          // canonical -> credit
-    public Task<CampStayEntity> GetStayAsync(Guid id) => Task.FromResult(new CampStayEntity()); // canonical AND entity-classified -> credit, no leak penalty
-    public Task<CampLegacyEntity> GetLegacyAsync(Guid id) => Task.FromResult(new CampLegacyEntity()); // off the contracts surface -> entity leak
+    public Task<CampStayEntity> GetStayAsync(Guid id) => Task.FromResult(new CampStayEntity()); // canonical despite the name -> credit
+    public Task<CampLegacyEntity> GetLegacyAsync(Guid id) => Task.FromResult(new CampLegacyEntity()); // off the contracts surface -> no credit
 }
 
 // Orchestrator-only, no repository — must NOT trip any missing* rule.

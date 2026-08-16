@@ -33,7 +33,6 @@ public static class SurfaceScoreRuleGlossary
         ["backgroundJob"] = "A background job, hosted service, or worker class.",
         ["duplicateDbSetOwner"] = "A class reads or writes a DbSet that is owned (per config) by a different section.",
         ["canonicalReadDtoReturn"] = "A method's return type is a section's canonical read DTO (credit; encourages adoption of the project-blessed read API).",
-        ["methodReturnsEntityAcrossSection"] = "A public method returns a type classified as an entity that lives in a different section than the method's owning type.",
         ["publicInputWithHiddenState"] = "A public boundary input/command/request type used as a public method parameter exposes most of its carried state through non-public accessors, so callers and decorators cannot inspect the data crossing the boundary.",
         ["parameterBagInput"] = "An input/command/request type with four or more data members, a direct-assignment constructor, and no behavior, used as the sole or near-sole parameter of a public method — a long method signature folded into an object without adding invariants or domain semantics.",
         ["inlineParameterObjectConstruction"] = "A public method call constructs an input/request/options object inline from a long argument list, moving the argument bundle from the method signature to the construction site.",

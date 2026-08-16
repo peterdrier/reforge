@@ -45,10 +45,10 @@ public sealed class CampSummary
     public string Name { get; set; } = "";
 }
 
-// Classified as an `entity` by the default rules (name matches "*Entity"), but exported from the
-// section's contracts assembly — so it IS Camp's published read API and returning it across a
-// section boundary must be credited, not charged as an entity leak. Its twin CampLegacyEntity
-// lives in SampleSolution.Camp, off the contracts surface, and stays chargeable.
+// Named like a domain type but exported from the section's contracts assembly, so it IS Camp's
+// published read API and returning it across a section boundary is credited. Its twin
+// CampLegacyEntity lives in SampleSolution.Camp, off the contracts surface, and earns nothing.
+// The pair exists to prove the derivation reads location and export, never the name.
 public sealed class CampStayEntity
 {
     public Guid Id { get; set; }

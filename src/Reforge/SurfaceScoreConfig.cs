@@ -189,17 +189,11 @@ public sealed class SurfaceScoreConfig
                 {
                     NamePatterns = new() { "*Job", "*Worker", "*BackgroundService" },
                     Inherits = new() { "BackgroundService", "IHostedService" }
-                },
-                // Used by methodReturnsEntityAcrossSection. A type is treated as an entity
-                // when its declaration file lives under a Models or Entities folder, or its
-                // namespace ends in .Models / .Domain.Entities — i.e. the project's domain layer.
-                // Override or extend in config to match the actual layout.
-                ["entity"] = new ClassificationRule
-                {
-                    NamePatterns = new() { "*Entity" },
-                    Paths = new() { "**/Models/**", "**/Domain/Entities/**", "**/Entities/**" },
-                    Namespaces = new() { }
                 }
+                // There is no `entity` classification. It existed for a single rule,
+                // methodReturnsEntityAcrossSection, and both were retired together — see the
+                // changelog. A config still declaring one is reported as
+                // `unknown-config-classification` rather than silently doing nothing.
             },
             Weights = new(StringComparer.OrdinalIgnoreCase)
             {
@@ -220,7 +214,6 @@ public sealed class SurfaceScoreConfig
                 ["backgroundJob"] = 12,
                 ["duplicateDbSetOwner"] = 20,
                 ["canonicalReadDtoReturn"] = -3,
-                ["methodReturnsEntityAcrossSection"] = 15,
 
                 // Boundary-input surface — a parameter-object refactor can dodge
                 // methodParameterOverflow by moving a long argument list into an input/command

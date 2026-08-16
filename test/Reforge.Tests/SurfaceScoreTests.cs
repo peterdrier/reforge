@@ -72,7 +72,7 @@ public class SurfaceScoreTests
             {
               "sections": { "camp": { "primaryInfoDto": "CampInfo" } },
               "weights": { "CROSSSECTIONFULLSERVICE": 7 },
-              "classifications": { "ENTITY": { "namePatterns": ["Zzz$"] } }
+              "classifications": { "CONTROLLER": { "namePatterns": ["Zzz$"] } }
             }
             """);
 
@@ -81,7 +81,7 @@ public class SurfaceScoreTests
         Assert.Equal("CampInfo", cfg.Policy("Camp").PrimaryInfoDto);
         Assert.Equal(7, cfg.Weight("crossSectionFullService"));
         // The case-variant override must REPLACE the default, not sit beside it as a second entry.
-        Assert.Single(cfg.Classifications, c => string.Equals(c.Key, "entity", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(cfg.Classifications, c => string.Equals(c.Key, "controller", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -204,29 +204,28 @@ public class SurfaceScoreTests
     [Fact]
     public async Task ScoreAsync_DeclaredClassificationMatchingNothing_IsReported()
     {
-        // The failure this catches, seen in a real config: an `entity` block aimed at
-        // src/<Product>.Domain/Entities/** after the solution was reorganized into per-section
-        // assemblies. The block classifies nothing, methodReturnsEntityAcrossSection can never
-        // fire, and the score reads zero for that rule — identical to a solution with no problem.
+        // The failure this catches, seen in a real config: a classification block aimed at a
+        // directory the solution was reorganized out of. The block classifies nothing, every rule
+        // keyed to the tag reads zero, and the score is identical to a solution with no problem.
         var cfg = SurfaceScoreConfig.Default();
-        cfg.Classifications["entity"] = new ClassificationRule
+        cfg.Classifications["controller"] = new ClassificationRule
         {
-            Paths = new() { "src/NoSuchProject/Entities/**" },
-            Namespaces = new() { "NoSuchProject.Entities" }
+            Paths = new() { "src/NoSuchProject/Controllers/**" },
+            Namespaces = new() { "NoSuchProject.Controllers" }
         };
-        cfg.DeclaredClassifications.Add("entity");
+        cfg.DeclaredClassifications.Add("controller");
 
         var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
         var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
 
         var diagnostic = Assert.Single(report.Diagnostics, d => d.Code == "dead-config-classification");
-        Assert.Contains("entity", diagnostic.Message);
+        Assert.Contains("controller", diagnostic.Message);
         // The message has to say the block REPLACED the defaults, because that is the part
         // nobody guesses: deleting the block is a fix, and narrowing it is not.
         Assert.Contains("REPLACES", diagnostic.Message);
-        // And the consequence the diagnostic exists to explain: the only rule keyed to the tag
-        // scores nothing, which on its own is indistinguishable from a clean solution.
-        Assert.False(report.ByRule.ContainsKey("methodReturnsEntityAcrossSection"));
+        // And the consequence the diagnostic exists to explain: the rule keyed to the tag scores
+        // nothing, which on its own is indistinguishable from a clean solution.
+        Assert.False(report.ByRule.ContainsKey("controllerAction"));
     }
 
     [Fact]
@@ -281,20 +280,21 @@ public class SurfaceScoreTests
         File.WriteAllText(configPath, """
             {
               "classifications": {
-                "entity": { "paths": ["src/NoSuchProject/Entities/**"] }
+                "controller": { "paths": ["src/NoSuchProject/Controllers/**"] }
               }
             }
             """);
 
         var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
 
-        Assert.Equal(new[] { "entity" }, cfg.DeclaredClassifications);
+        Assert.Equal(new[] { "controller" }, cfg.DeclaredClassifications);
         // Merged defaults are not "declared" — otherwise every unmatched default would warn.
-        Assert.True(cfg.Classifications.ContainsKey("controller"));
-        Assert.DoesNotContain("controller", cfg.DeclaredClassifications);
-        // And the declared block REPLACED the default entity patterns rather than extending them.
-        // This is the whole reason the diagnostic is worth having.
-        Assert.Empty(cfg.Classifications["entity"].NamePatterns);
+        Assert.True(cfg.Classifications.ContainsKey("dto"));
+        Assert.DoesNotContain("dto", cfg.DeclaredClassifications);
+        // And the declared block REPLACED the default controller patterns rather than extending
+        // them. This is the whole reason the diagnostic is worth having.
+        Assert.Empty(cfg.Classifications["controller"].NamePatterns);
+        Assert.Empty(cfg.Classifications["controller"].Inherits);
     }
 
     [Fact]
@@ -404,44 +404,6 @@ public class SurfaceScoreTests
 
         Assert.DoesNotContain(report.Groups["Reporting"].Entries, e => e.Rule == "canonicalReadDtoReturn"
             && e.Detail?.Contains("CampLegacyEntity", StringComparison.Ordinal) == true);
-    }
-
-    // ---------------- methodReturnsEntityAcrossSection ----------------
-
-    [Fact]
-    public async Task MethodReturnsEntityAcrossSection_FiresWhenReturnTypeLivesInDifferentSection()
-    {
-        // User lives in SampleSolution.Core/Models (matched by the default `entity`
-        // classification's "**/Models/**" path) — i.e. section Core. UserService lives in
-        // SampleSolution.Services, so GetUserAsync returning User leaks an entity across the
-        // assembly boundary. No config needed to see it.
-        var report = await ScoreDefaultAsync();
-
-        var leaks = report.Groups["Services"].Entries
-            .Where(e => e.Rule == "methodReturnsEntityAcrossSection")
-            .ToList();
-        Assert.NotEmpty(leaks);
-        // At least one should reference returning User (the canonical entity in the sample).
-        Assert.Contains(leaks, e => e.Detail?.Contains("User", StringComparison.Ordinal) == true);
-    }
-
-    [Fact]
-    public async Task MethodReturnsEntityAcrossSection_ExemptsCanonicalDtos()
-    {
-        // CampStayEntity and CampLegacyEntity are the same shape and both classified `entity` by
-        // name; only CampStayEntity is exported from Camp's contracts assembly. CampFeedReader
-        // (Reporting) returns both across the boundary — the published one is credited, the other
-        // is charged. No config decides this.
-        var report = await ScoreDefaultAsync();
-        var reporting = report.Groups["Reporting"];
-
-        Assert.DoesNotContain(reporting.Entries, e => e.Rule == "methodReturnsEntityAcrossSection"
-            && e.Detail?.Contains("-> CampStayEntity", StringComparison.Ordinal) == true);
-        Assert.Contains(reporting.Entries, e => e.Rule == "canonicalReadDtoReturn"
-            && e.Detail?.Contains("-> CampStayEntity", StringComparison.Ordinal) == true);
-
-        Assert.Contains(reporting.Entries, e => e.Rule == "methodReturnsEntityAcrossSection"
-            && e.Detail?.Contains("-> CampLegacyEntity", StringComparison.Ordinal) == true);
     }
 
     [Fact]
