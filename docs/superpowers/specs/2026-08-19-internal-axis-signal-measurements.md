@@ -6,8 +6,13 @@ Measurement record (2026-08-19). Discharges the Gate 2 obligation in
 `2026-08-15-scoring-alignment-design.md` for the two candidate signals issue #19 proposes, and
 answers the two open questions issue #35 flags for the `publicWriteSurface` transform.
 
-**No rule is proposed for immediate implementation.** Two of the three signals measured are
-recommended *against* in the shape they were proposed. That is the point of the gate.
+**No rule is proposed for immediate implementation.** All three signals measured are recommended
+*against* in the shape they were proposed — two on precision, one because it cannot be calibrated
+from this corpus. One deletion *is* recommended, and it is free: `crossSectionWriteSurface` scores
+0/44, so retiring it and its suppression machinery is a measured no-op.
+
+That is the point of the gate. A measurement round whose output is "not yet, and here is what would
+settle it" is the gate working, not the gate failing.
 
 Every number here is measured. Nothing is extrapolated.
 
@@ -218,7 +223,23 @@ capability at all. It flags two things to decide. Both are measurable, so both a
 | methods on them | 517 |
 | already charged by `fullServiceInterfaceMethod` (8/method) | **4,136 points** |
 
-Mean 11 methods per write interface.
+Mean 11 methods per write interface. But the mean hides the shape, and the shape is the finding:
+
+| write interfaces in the section | sections |
+|---:|---:|
+| 1 | **19** |
+| 2 | 2 |
+| 3 | 1 |
+| 5 | 1 |
+| **16** | **1** (Users) |
+
+**19 of the 24 sections that have a write interface have exactly one.** For those — and for the 20
+sections with none — a flat per-interface charge is a *constant*. It moves every score by the same
+amount and changes no ranking, which is the one thing a per-section rule exists to do.
+
+Essentially all of the rule's discriminating power on this corpus is a single observation: Users
+declares 16 write interfaces, three times the next section. That is a real and interesting finding —
+a section publishing sixteen separate write APIs is worth looking at — but it is **n = 1**.
 
 ### Question 1 — does it double-charge `fullServiceInterfaceMethod`?
 
@@ -232,18 +253,18 @@ Mean 11 methods per write interface.
 The distinction is only real if the new rule is flat. A per-method or size-scaled charge would be a
 weight change on `fullServiceInterfaceMethod` wearing a new name, exactly as #35 suspects.
 
-Modelled cost of a flat per-interface charge:
+Modelled cost of a flat per-interface charge, and how it lands:
 
-| weight | added points | share of current surface |
-|---:|---:|---:|
-| 5 | 235 | 1.4% |
-| 10 | 470 | 2.7% |
-| 15 | 705 | 4.1% |
-| 25 | 1,175 | 6.8% |
+| weight | added points | share of current surface | Users gets | the other 23 sections get |
+|---:|---:|---:|---:|---|
+| 5 | 235 | 1.4% | +80 | +5 to +25 |
+| 10 | 470 | 2.7% | +160 | +10 to +50 |
+| 15 | 705 | 4.1% | +240 | +15 to +75 |
+| 25 | 1,175 | 6.8% | +400 | +25 to +125 |
 
-A weight of 25 — the current `crossSectionRepository` level — would make this the 6th largest rule in
-the system on its first day, off 47 declarations. **10 is the defensible ceiling**: it prices the
-decision without letting a fixed population of 47 dominate a 17,379-point score.
+At every weight, a third of the rule's total lands on one section. A weight of 25 — the current
+`crossSectionRepository` level — would also make this the 6th largest rule in the system on its
+first day, off 47 declarations.
 
 ### Question 2 — what happens to `crossSectionSuppress`?
 
@@ -257,9 +278,26 @@ simplification, not a behaviour change — which is the cheapest kind of deletio
 
 ### Decision
 
-Transform is **supported by the measurements**, with a flat weight of at most 10, and the suppression
-machinery deleted alongside. The weight itself is policy and belongs to the repo owner; what the
-measurement establishes is the range in which the rule is informative rather than dominant.
+Split, because the two halves of #35 measure very differently.
+
+**Retire `crossSectionWriteSurface`: yes, and it is free.** It scores 0/44, and its suppression set
+is empty in consequence. Deleting the rule, the set, and the branch in `ScoreAsync` is a measured
+no-op — a pure simplification.
+
+**Add a scored `publicWriteSurface`: not yet.** The direction is right and the double-charging
+concern is answerable (a flat per-interface charge prices a different decision from a per-method
+one; the codebase already prices `newRepositoryInterface` at 15 beside `repositoryInterfaceMethod`
+at 10, so the shape has precedent). What cannot be answered from this corpus is the **weight**,
+because the distribution is one constant and one outlier. Any weight picked here is fitted to Users.
+
+That is precisely the failure Gate 2 exists to prevent, so the gate should hold.
+
+**Recommended instead: report it, don't score it.** The 2026-08-15 spec already has a "Reported, not
+scored" category for exactly this state — a signal believed real, not yet calibratable. Surfacing
+the exported-write-interface count per section in the `metrics` block added by #45 costs nothing,
+changes no total, and makes the distribution visible on every corpus reforge is ever run against.
+Pick the weight when a second corpus shows whether 19-of-24-have-exactly-one is a property of
+Humans or a property of sectioned codebases.
 
 ---
 
@@ -273,8 +311,10 @@ measurement establishes is the range in which the rule is informative rather tha
    section carrying `locProd`, `files`, `classes`, `interfaces`, `methods` and both complexity
    distributions, plus a solution rollup.
 3. **The read-surface retirement argument strengthened**, from 7% of surface to 11.8%.
-4. **Nothing here changes a weight.** Two of three signals are recommended against in their proposed
-   form, and the third's weight is left to the owner with a measured ceiling.
+4. **Nothing here changes a weight.** All three signals are recommended against in their proposed
+   form: two on precision, the third because its distribution on this corpus is one constant and one
+   outlier, so any weight would be fitted to a single section. Each has a stated next step; none of
+   them is "pick a number now".
 
 ## What was not measured, and why
 
