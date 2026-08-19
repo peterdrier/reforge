@@ -14,7 +14,9 @@ retiring it is a no-op there — though not on the sample solution, which fires 
 That is the point of the gate. A measurement round whose output is "not yet, and here is what would
 settle it" is the gate working, not the gate failing.
 
-Every number here is measured. Nothing is extrapolated.
+Every number here is measured. Nothing is extrapolated. Every figure that review moved is recorded
+with what moved it — including one recommendation that flipped and flipped back across three passes at
+the same population, which is the most transferable thing in this document.
 
 ## Method
 
@@ -29,13 +31,17 @@ project, excluding `obj/`, `Migrations/`, `*.g.cs` and `*.Designer.cs`.
 | Humans | `113061bcf5f6`, committed 2026-08-19 |
 | reforge | `50ebc39faa87` (version 0.28.1, `main` after #48) |
 | SDK | .NET 10.0.111 |
-| corpus | 45 sections, 3,448 types, 157,860 prod LOC, 5,523 method bodies |
+| corpus | 45 configured sections (44 score anything — `Tour` is empty), 3,448 types, 157,860 prod LOC, 5,523 method bodies |
 | score | `surfaceTotal` 17,379, `internalComplexityTotal` 3,113, `degraded: false` |
 
 The harness is not committed, so the **signal definitions are stated as predicates** below rather
 than left implicit in code that no longer exists. Each is a few lines of Roslyn over the same walk:
 
-- **Single-caller private helper.** A method declaration whose symbol is `private` and has a body.
+- **Single-caller private helper.** A method declaration whose symbol is `private`, has a body, and
+  has **no `ExplicitInterfaceImplementations`**. That last exclusion is load-bearing: Roslyn reports
+  an explicit interface implementation as `private`, but it is externally callable and calls to it
+  bind to the *interface* member rather than to this `OriginalDefinition`, so every one of them lands
+  in the zero-caller bucket while not being a private helper at all.
   Every `SimpleNameSyntax` in the declaring assembly (excluding the declaration's own name) whose
   resolved symbol is that method's `OriginalDefinition` is attributed to the member enclosing it —
   the nearest `MethodDeclaration` / `ConstructorDeclaration` / `PropertyDeclaration` /
@@ -48,7 +54,11 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
   outside can reach.
 - **Feature envy.** A method with at least one parameter, whose first parameter's type is a
   solution-declared class or struct other than the containing type. `targetTouches` counts
-  `MemberAccessExpressionSyntax` nodes whose **receiver resolves to that first parameter**;
+  `MemberAccessExpressionSyntax` nodes whose **receiver resolves to that first parameter**, plus
+  `MemberBindingExpressionSyntax` nodes whose conditional receiver does (`p?.Foo` is
+  `ConditionalAccessExpression(p, MemberBinding(.Foo))`, not a member access, so a predicate that
+  looks only for member accesses misses every null-conditional read — the form nullable DTO and
+  entity handling uses constantly);
   `selfTouches` counts explicit `this.X` accesses plus unqualified names resolving to an instance
   member of the containing type (implicit `this`). Fires when
   `targetTouches >= 3 && targetTouches > selfTouches * 2`. Binding to the receiver rather than to the
@@ -65,10 +75,16 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
     methods were async and the synchronous filter had already removed them. The predicate was wrong
     even though the published number was not.)
   - *synchronous* — return type is not `Task` / `ValueTask`.
-- **Write surface.** Each section's `fullServiceInterfaces` array from
-  `section-shape --format json`, which lists them by **symbol**. No harness needed; it is readable
-  off the report. Counting distinct declaring *files* instead — the earlier proxy — undercounts
-  wherever two interfaces share a file, and is wrong by roughly a factor of two on this corpus.
+- **Write surface.** Each section's `fullServiceInterfaces` array from `section-shape --format json`
+  — by **symbol**, not by declaring file — **filtered to `IsExported` types**. Both halves matter and
+  each was got wrong in turn. Counting declaring *files* undercounts wherever two interfaces share a
+  file. Counting every classified symbol **over**counts, because `SectionShapeAnalyzer` builds
+  `FullServiceInterfaces` from the unfiltered classified types while `SurfaceScoreEngine` skips
+  non-exported types before charging `fullServiceInterfaceMethod` — and on this corpus 46 of the 93
+  classified write interfaces are `internal`, so they publish nothing and score nothing. The exported
+  set was then cross-checked a second way, by mapping every charged `fullServiceInterfaceMethod` entry
+  in `surface-score --format json --all` back to the interface declared in its file; both routes give
+  the same 47.
 
 ## Context reproduced
 
@@ -88,7 +104,7 @@ Two other standing figures moved and are worth recording:
 - The six read-surface rules #19 proposes retiring now total **2,047 points, 11.8% of surface** — up
   from the 1,230 / 7% #19 measured. The share **grew**. If the argument for cutting them was
   value-per-line, that argument is now stronger, not weaker.
-- `crossSectionWriteSurface` still scores **0 across all 45 sections**, confirming #35's reading on a
+- `crossSectionWriteSurface` still scores **0 across all 44 scored sections**, confirming #35's reading on a
   second, larger corpus.
 
 ---
@@ -100,20 +116,20 @@ extract-to-satisfy-the-linter artifact. Needed as a counterweight if any size ru
 
 ### Distribution
 
-1,319 **private** methods with bodies, by number of **distinct callers** in their declaring assembly:
+1,288 **private** methods with bodies, by number of **distinct callers** in their declaring assembly:
 
 | callers | methods | share | median LOC |
 |---:|---:|---:|---:|
-| 0 | 38 | 2.9% | 6 |
-| **1** | **762** | **57.8%** | 15 |
-| 2 | 328 | 24.9% | 11 |
-| 3 | 79 | 6.0% | 10 |
+| 0 | 7 | 0.5% | 9 |
+| **1** | **762** | **59.2%** | 15 |
+| 2 | 328 | 25.5% | 11 |
+| 3 | 79 | 6.1% | 10 |
 | 4 | 34 | 2.6% | 8 |
-| 5+ | 78 | 5.9% | 8 |
+| 5+ | 78 | 6.1% | 8 |
 
 360 of the 762 single-caller helpers are under 15 LOC.
 
-**Three corrections from review, all of which this table already reflects.** The first pass measured
+**Four corrections from review, all of which this table already reflects.** The first pass measured
 the wrong population, undercounted references, and then counted the wrong thing entirely:
 
 - It included `internal` and `protected internal` while counting only within the declaring assembly.
@@ -134,15 +150,24 @@ the wrong population, undercounted references, and then counted the wrong thing 
   from exactly one other member out of it. Both are excluded. (Worth 2 methods on this corpus —
   57.6% → 57.8% — but they distort in opposite directions, so the small net says nothing about
   either.)
+- It included **explicit interface implementations**, which Roslyn reports as `private` even though
+  they are externally callable and calls to them bind to the interface member, not to the
+  implementation. 31 of them were in the population and essentially all of them sat in the
+  zero-caller bucket — which is why that bucket collapsed from 38 methods to **7** when they were
+  excluded. The numerator did not move at all (762 either way); the denominator did, 1,319 → 1,288,
+  taking the base rate from 57.8% to **59.2%**.
 
 The population and counting fixes moved the figure barely (48.9% → 48.5%). Grouping by caller moved
-it a lot: **57.8%**. Worth separating those, because they say different things. The first two were
-flaws that happened not to matter in aggregate; the third was measuring a different quantity than the
-one under discussion, and correcting it made the finding *stronger*.
+it a lot: 57.8%. Excluding explicit interface implementations moved it again, to **59.2%**. Worth
+separating those, because they say different things. The first two were flaws that happened not to
+matter in aggregate; grouping by caller was measuring a different quantity than the one under
+discussion; and the explicit-implementation exclusion removed a population that was never eligible.
+Every correction that moved the number moved it the same way — the finding got *stronger* each
+time it was made more careful, which is the opposite of the pattern that should worry a reader.
 
 ### Reading
 
-**The base rate is 57.8%.** Well over half of all private methods in this codebase have exactly one
+**The base rate is 59.2%.** Well over half of all private methods in this codebase have exactly one
 caller — in a corpus nobody has accused of extract-method fragmentation, and much of which predates
 any LLM involvement.
 
@@ -181,7 +206,7 @@ on the wrong shape pays an agent to do the wrong thing.
 Criteria: primary parameter is a solution-declared class or struct other than the containing type;
 the body touches its members at least 3 times; and at least twice as often as the containing type's.
 
-**360 candidates.**
+**361 candidates.**
 
 Manual read of the top 15 — the gate's requirement — finds the population dominated by one shape:
 
@@ -205,7 +230,7 @@ rule implies is actively wrong for this shape, and this shape is most of the pop
 
 Excluding methods that construct their own return type from the parameter:
 
-- **170 of 360 (47.2%) are mappers** by that structural test.
+- **171 of 361 (47.4%) are mappers** by that structural test.
 - 190 remain.
 
 But a manual read of the *non-mapper* top 15 still finds `MapDetailIssue`, `MapList`,
@@ -222,8 +247,11 @@ numerator. And it counted `selfTouches` only from `MemberAccessExpressionSyntax`
 same way: toward firing.
 
 Touches are now bound to the receiver (the member access must be *on the first parameter*), and
-implicit-`this` names count toward `selfTouches`. Raw candidates fell 385 → 360 and the mapper share
-barely moved, but **membership changed at the margins** — the case I had held up as the textbook hit,
+implicit-`this` names count toward `selfTouches`. A later round added the null-conditional form —
+`p?.Foo`, which Roslyn models as a `MemberBindingExpressionSyntax` under a conditional access rather
+than as a member access, so a member-access-only predicate misses every one of them. Raw candidates
+fell 385 → 360 under receiver binding and rose to 361 once null-conditional reads were counted, and
+the mapper share barely moved, but **membership changed at the margins** — the case I had held up as the textbook hit,
 `MailerAdminController.DriftedMoreThanTenPercent`, drops out under receiver binding. Its 18 touches
 were not all on its parameter.
 
@@ -243,7 +271,7 @@ Two further conditions, each with a stated reason:
   persistence and IO — `UpdateLineItemAsync`, `SyncFolderBasedDocumentAsync`, `UpsertContactAsync`.
   Moving those onto the data type would put IO on a DTO.
 
-**360 → 190 → 38 → 26 candidates.**
+**361 → 190 → 36 → 26 candidates.**
 
 Manual read of all 26:
 
@@ -268,7 +296,7 @@ Manual read of all 26:
 | `UserService.HasRequiredNameFields(Profile)` | |
 | `CalendarOccurrenceViewExtensions.ShouldHideTimeLabel(CalendarOccurrence)` | |
 
-**≈73% precision at 26 hits across 45 sections** (19 + 7 — an earlier draft listed only 25 because
+**≈73% precision at 26 hits across the corpus** (19 + 7 — an earlier draft listed only 25 because
 the harness table was capped at 25 rows while the count said 26, so `GetDisplayName` was measured but
 never displayed; the audit is now over all of them). `SurveyBranchingEvaluator.IsVisible(BranchCondition)`
 and `UserStateClassifier.Classify(User)` are the shape the rule was proposed for: a predicate or
@@ -308,68 +336,90 @@ Concretely:
 ## Signal C — `publicWriteSurface` (issue #35)
 
 #35 proposes retiring `crossSectionWriteSurface` — a three-condition conjunction that measures
-**0/45 sections** — and replacing it with a declaration-side rule that charges for *exporting* write
+**0/44 scored sections** — and replacing it with a declaration-side rule that charges for *exporting* write
 capability at all. It flags two things to decide. Both are measurable, so both are measured.
 
 ### Population
 
-Counted from `section-shape --format json`, which lists each section's full-service interfaces by
-**symbol**. An earlier draft of this document counted distinct *files* carrying a
-`fullServiceInterfaceMethod` entry, which collapses two interfaces declared in one file into one —
-a layout this repo's own sample solution uses (`ICampService` and `ICampRequestService` share
-`CampFixtures.cs`). That proxy was wrong by roughly a factor of two, and correcting it reverses the
-recommendation below.
+**47 exported write-capable service interfaces across 24 of the 44 scored sections**, carrying
+**292 charged methods** worth **4,136 points** under `fullServiceInterfaceMethod`.
 
-| | file proxy (wrong) | interface symbols (correct) |
-|---|---:|---:|
-| write-capable service interfaces | 47 | **93** |
-| sections declaring at least one | 24 of 45 | **37 of 45** |
+This number took three passes to get right, and the intermediate one is worth recording because it
+briefly reversed the recommendation:
 
-Methods on them: 517, already charged **4,136 points** by `fullServiceInterfaceMethod` at 8/method.
+| pass | predicate | interfaces | sections |
+|---|---|---:|---:|
+| 1 | distinct files carrying a `fullServiceInterfaceMethod` entry | 47 | 24 of 44 |
+| 2 | every symbol in `section-shape`'s `fullServiceInterfaces` | 93 | 37 of 45 |
+| 3 | **those symbols filtered to `IsExported`** | **47** | **24 of 44** |
 
-The distribution is the part that matters, and it is not the shape the earlier draft described:
+Pass 1 was a proxy: it collapses two interfaces sharing a file into one, a layout this repo's own
+sample solution uses (`ICampService` and `ICampRequestService` share `CampFixtures.cs`). Pass 2 fixed
+that and counted symbols — but counted *all* classified symbols, and `SectionShapeAnalyzer` builds
+`FullServiceInterfaces` from the unfiltered classified types while `SurfaceScoreEngine` skips
+non-exported types before charging anything. **46 of those 93 interfaces are `internal`** —
+`IShiftManagementService`, `ITicketService`, `ICampService` and most of Humans' other headline
+service interfaces are internal to their section, which is the architecture working as intended. An
+internal interface publishes no write capability outside its assembly and scores nothing, so a rule
+about *exported* write surface must not count it.
+
+Pass 3 was verified a second, independent way: every `fullServiceInterfaceMethod` entry in
+`surface-score --format json --all` was mapped back to the interface declared in its file. That route
+gives the same 47 interfaces in the same 24 sections, and it is the set the engine actually charges.
+
+Pass 1 landed on the right number for the wrong reason — the exported write interfaces in this
+codebase each live alone in a `*.Contracts` file, so counting files happened to count them. A proxy
+that is accidentally right is still a proxy, and it is only visible as accidental once the correct
+predicate exists.
+
+The distribution over the exported set:
 
 | write interfaces in the section | sections |
 |---:|---:|
-| 1 | 18 |
-| 2 | 9 |
-| 3 | 5 |
-| 4 | 1 |
-| 6 | 1 |
-| 7 | 1 |
-| 9 | 1 |
-| 16 | 1 (Users) |
+| 1 | 19 |
+| 2 | 2 |
+| 3 | 1 |
+| 5 | 1 |
+| **16** | **1** (Users) |
 
-**This is a graded distribution, not a binary split with one outlier.** Half the positive sections
-have more than one write interface, and the tail runs 3, 4, 6, 7, 9, 16 rather than jumping from 1 to
-16. Users is the top of a range, not a lone anomaly.
+**This is a binary split with a single outlier.** Nineteen of the 24 positive sections publish exactly
+one write interface; the next three are 2, 2 and 3; then GoogleIntegration at 5; then Users at 16.
+
+One correction to a figure this document carried through both earlier passes: the method count is
+**292**, not 517. 517 came from counting methods across all 93 classified interfaces. The 4,136 points
+are unchanged and always were — they are the engine's own total, and at 292 charged methods they
+reflect the per-section multipliers, not a flat 8 per method.
 
 ### Question 1 — does it double-charge `fullServiceInterfaceMethod`?
 
 **Not necessarily, and the answer differs by reading.**
 
 - `fullServiceInterfaceMethod` scales with **width** — how much write API a section published, by
-  method. 517 methods, 4,136 points.
+  method. 292 methods, 4,136 points.
 - A **per-interface** charge measures **fragmentation** — how many separate write APIs a section
-  publishes. 93 interfaces. A section with one 30-method interface and a section with fifteen
-  2-method interfaces have the same width and very different shapes, and only this rule can tell
-  them apart.
+  publishes. 47 interfaces. A section with one 30-method interface and a section with fifteen
+  2-method interfaces have the same width and very different shapes, and in principle only this rule
+  can tell them apart.
 - A **per-section** charge measures the binary decision to publish write capability at all.
 
-Fragmentation and width are correlated but distinct, so a per-interface charge is not simply a
-weight change on the existing rule — which is the concern #35 raises, and it is answerable on the
-data rather than by argument.
+Fragmentation and width are distinct in principle, so a per-interface charge is not *automatically*
+the weight change on the existing rule that #35 worries about. On this corpus, though, the two barely
+separate: 19 of 24 positive sections have exactly one write interface, so for 79% of them
+fragmentation is a constant and the rule reduces to the per-section reading with extra machinery.
+Only Users, GoogleIntegration and three others differ at all — and Users would take 16 of 47 charges,
+**34% of the rule's entire output**, for what is architecturally one decision made once. That is the
+weight change wearing a new name.
 
 ### Question 2 — what happens to `crossSectionSuppress`?
 
 `ScoreAsync` maintains a suppression set purely so `crossSectionWriteSurface` can pre-empt
 `writeCapableInterfaceUsedReadOnly` for the same caller/dependency pairs. Since the old rule fires
-**0 times on 45 sections of Humans**, that set is empty there, and `writeCapableInterfaceUsedReadOnly`
+**0 times on all 44 scored sections of Humans**, that set is empty there, and `writeCapableInterfaceUsedReadOnly`
 scores 60 points across 5 files in 3 sections regardless.
 
 **On Humans, retiring the rule and its suppression set is a measured no-op.** It is worth being
 precise about the scope of that claim, because an earlier draft of this document was not:
-"0/45, therefore free" is true of Humans and false in general.
+"0/44, therefore free" is true of Humans and false in general.
 
 The **sample solution scores it 30** — two fixtures, `ReadOnlyGreetingConsumer` in Services and
 `CampReportBuilder` in Reporting, both deliberately built to fire it. So retiring the rule is not a
@@ -389,42 +439,61 @@ precisely the case where one corpus is not enough.
 
 ### Modelled cost
 
-| weight | per section (37 charges) | per interface (93 charges) |
+| weight | per section (24 charges) | per interface (47 charges) |
 |---:|---:|---:|
-| 5 | 185 (1.1%) | 465 (2.7%) |
-| 10 | 370 (2.1%) | 930 (5.4%) |
-| 15 | 555 (3.2%) | 1,395 (8.0%) |
-| 25 | 925 (5.3%) | 2,325 (13.4%) |
+| 5 | 120 (0.7%) | 235 (1.4%) |
+| 10 | 240 (1.4%) | 470 (2.7%) |
+| 15 | 360 (2.1%) | 705 (4.1%) |
+| 25 | 600 (3.5%) | 1,175 (6.8%) |
 
-Percentages are of the current 17,379-point surface. Under the per-interface reading Users takes
-16 of 93 charges — **17%** of the rule's output, not the third the file-proxy figures implied.
+Percentages are of the current 17,379-point surface. Under the per-interface reading Users alone
+takes 16 of 47 charges — **34%** of the rule's output.
 
 ### Decision
 
-**Per interface, not per section — which reverses this document's earlier recommendation.**
+**Per section, not per interface** — and reported before scored.
 
-The reversal is entirely due to the count. On the file proxy the distribution looked binary (19 of 24
-sections at exactly one), which made a per-section charge look like the discriminating reading and a
-per-interface charge look like an outlier detector for Users. On the real counts:
+This document reversed itself once here and is now back where it started, so the reasoning is worth
+laying out rather than just the answer:
 
-- **Per section fires on 37 of 45 — 82% of the solution.** A charge that lands on four sections in
-  five is close to a constant: it shifts nearly every score by the same amount and changes almost no
-  ranking, which is the one thing a per-section rule exists to do.
-- **Per interface has a real distribution** — 1 through 16, with half the positive sections above 1 —
-  so it discriminates, and it measures fragmentation, which nothing else in the config measures.
+- The **first** pass counted declaring files, saw a binary distribution, and recommended per section.
+  Right answer, unsound predicate.
+- The **second** pass counted every classified interface symbol, saw a graded 1-to-16 distribution
+  across 82% of sections, and reversed to per interface. Sound predicate, wrong population — it
+  counted 46 `internal` interfaces that export nothing and score nothing.
+- The **third** pass filtered to exported symbols and cross-checked against the entries the engine
+  actually charges. The distribution is binary-with-one-outlier again, and per section is the
+  defensible reading again.
 
-The `n = 1` objection the earlier draft raised does not survive the corrected count either: 16 is the
-top of a graded tail, not a lone spike.
+On the corrected count:
 
-**The weight remains policy**, as every weight in the config is, but it is now calibratable against a
-real distribution rather than fitted to one section. A weight of 25 would make this the fourth
-largest rule in the system on its first day; 5 to 10 keeps it informative without dominating.
+- **Per section fires on 24 of 44 — 55% of scored sections.** That is a real split, not a
+  near-constant: it separates the sections that publish write capability from the sections that do
+  not, which is exactly what #35's crossed-the-line rationale asks for, and it is orthogonal to
+  `fullServiceInterfaceMethod`, which prices width by method.
+- **Per interface would charge Users 16 times** — 34% of the rule's total output — for a single
+  architectural decision, and would be a near-constant for the 79% of positive sections that have
+  exactly one interface. It measures fragmentation only in the five sections where fragmentation
+  varies at all.
 
-**Still recommended as reported-before-scored**, but for a narrower reason than before: not because
-the signal cannot be calibrated, but because a rule that fires on 82% of sections in its *binary*
-form and on 93 declarations in its *per-interface* form deserves one look at a second corpus before
-it ships. Surfacing the per-section interface count in the `metrics` block added by #45 costs nothing
-and makes that second reading free to take.
+The `n = 1` calibration objection therefore stands, and applies to the **per-interface** reading only:
+any weight calibrated against a graded tail would in fact be calibrated against Users. Under the
+per-section reading there is no outlier problem, and what remains is the milder objection that one
+corpus cannot say whether 55% prevalence is normal or high.
+
+**Recommended as reported, not scored** — a category the 2026-08-15 spec already has — pending a
+second corpus. Surfacing the per-section exported write-interface count in the `metrics` block added
+by #45 costs nothing and makes that second reading free to take. If it is later scored, the weight
+remains policy; 5 to 10 keeps it informative without making it the fourth-largest rule in the system
+on its first day.
+
+**The methodological finding is the more durable one.** Three passes over the same question produced
+per-section, per-interface, per-section — and the flip in the middle came from a population that was
+*more* correct in one dimension (symbols, not files) and wrong in another (unfiltered, not exported).
+`SectionShapeAnalyzer.FullServiceInterfaces` and the set `SurfaceScoreEngine` charges are not the same
+set, and nothing in either output says so. Anyone measuring off the section-shape report should filter
+by `IsExported` or cross-check against `--all` entries; better, the report should say which of the two
+it is listing. That is a real gap in reforge's own output, not just a mistake in this document.
 
 ## Consequences for the 2026-08-15 spec
 
@@ -437,9 +506,16 @@ and makes that second reading free to take.
    distributions, plus a solution rollup.
 3. **The read-surface retirement argument strengthened**, from 7% of surface to 11.8%.
 4. **Nothing here changes a weight.** All three signals are recommended against in their proposed
-   form: two on precision, the third because its distribution on this corpus is one constant and one
-   outlier, so any weight would be fitted to a single section. Each has a stated next step; none of
-   them is "pick a number now".
+   form: two on precision, the third because its distribution on this corpus is 19 sections at one
+   interface plus a single 16-interface outlier, so any per-interface weight would be fitted to that
+   one section. Each has a stated next step; none of them is "pick a number now".
+5. **Gate 2 needs a stated population, not just a stated predicate.** The spec requires measuring a
+   candidate against a real corpus before weighting it. Three of the eleven defects review found in
+   this round were predicates that were correct about *how* to count and wrong about *what* was in the
+   population — `internal` methods, explicit interface implementations, non-exported interfaces. Two
+   of those changed a number; one changed a recommendation and then changed it back. Worth adding to
+   the gate: state the population and its exclusions alongside the predicate, and where the corpus
+   offers a second route to the same count, take it.
 
 ## What was not measured, and why
 

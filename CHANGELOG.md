@@ -7,37 +7,45 @@ What changed and why. Newest first.
 `docs/superpowers/specs/2026-08-19-internal-axis-signal-measurements.md`. Discharges the
 measure-before-weighting obligation the 2026-08-15 scoring-alignment spec sets for the two candidate
 signals #19 proposes, and answers both open questions #35 flags for the `publicWriteSurface`
-transform. Measured against Humans: 45 sections, 3,448 types, 157,860 prod LOC.
+transform. Measured against Humans: 45 configured sections (44 score anything), 3,448 types,
+157,860 prod LOC.
 
 **All three signals are recommended against in the form they were proposed**, which is the gate
 working rather than failing. One deletion is recommended, with its real cost stated below.
 
-- **Single-caller private helper.** 762 of 1,319 private methods have exactly one caller — a
-  **57.8% base rate**. As a stock this is not a smell detector, it is a tax on decomposition, and it
+- **Single-caller private helper.** 762 of 1,288 private methods have exactly one caller — a
+  **59.2% base rate** (explicit interface implementations excluded: Roslyn reports them as `private`
+  but they are externally callable and calls bind to the interface member, so all 31 of them sat in
+  the zero-caller bucket). As a stock this is not a smell detector, it is a tax on decomposition, and it
   would point an agent at inlining private methods back into their callers. Confirms the spec's
   existing position that the signal is meaningful only as a net-new delta, and supplies the evidence
-  for why: the stock is half the population.
-- **Feature envy.** 360 candidates as specified, of which **170 (47.2%) are mappers** — and for a
+  for why: the stock is the majority of the population.
+- **Feature envy.** 361 candidates as specified, of which **171 (47.4%) are mappers** — and for a
   mapper, the refactor the rule implies (move it onto the type it reads) is a dependency inversion:
   the entity would depend on its own projection. A manual read of the non-mapper top 15 finds five
   more mappers the structural test missed. A refinement does work — non-mapper, returns a
   scalar/bool/enum/string, synchronous — landing at **26 candidates at roughly 70% precision**, with
   the residue a nameable class (`Render*` / `Format*` / `Display*`). Recommended for one more round,
   not for a weight.
-- **`publicWriteSurface`.** 93 write interfaces across 37 of 45 sections, in a graded distribution
-  (18 sections at one, 9 at two, 5 at three, then 4, 6, 7, 9, 16). **Per interface**, not per
-  section: a binary per-section charge fires on 82% of the solution and so is close to a constant,
-  while the per-interface count measures *fragmentation* of the write surface — how many separate
-  write APIs a section publishes — which is distinct from the width `fullServiceInterfaceMethod`
-  already prices by method. This reverses an earlier draft, which counted declaring *files* rather
-  than interface symbols, was wrong by roughly 2×, and on that bad count made the distribution look
-  binary-plus-one-outlier. Weight stays policy but is now calibratable; still recommended as
-  reported-before-scored pending one look at a second corpus.
-- **Retiring `crossSectionWriteSurface`.** It scores 0 across all 45 sections of Humans, so the
+- **`publicWriteSurface`.** 47 **exported** write interfaces across 24 of the 44 scored sections,
+  carrying 292 charged methods and 4,136 existing points. The distribution is binary with one
+  outlier: 19 sections at exactly one interface, then 2, 2, 3, 5, and Users at 16. **Per section, not
+  per interface** — a per-interface charge would give Users 16 of 47 charges (34% of the rule's
+  output) for one architectural decision, and would be a near-constant for the 79% of positive
+  sections that have exactly one interface. Recommended as reported-before-scored pending a second
+  corpus. This figure took three passes and the recommendation flipped in the middle: counting
+  declaring *files* (47) was a proxy that happened to be right; counting every classified interface
+  symbol (93 across 37 of 45) fixed the proxy but included 46 `internal` interfaces that export
+  nothing and score nothing, and on that population per-interface looked like the discriminating
+  reading; filtering to `IsExported` returns 47 across 24, verified a second way by mapping every
+  charged `fullServiceInterfaceMethod` entry back to its interface. Note for anyone measuring off
+  these reports: `SectionShapeAnalyzer.FullServiceInterfaces` is unfiltered while
+  `SurfaceScoreEngine` charges only exported types, and neither output says so.
+- **Retiring `crossSectionWriteSurface`.** It scores 0 across all 44 scored sections of Humans, so the
   deletion is a no-op *there* — but not on the sample solution, which scores it 30 across two
   purpose-built fixtures, and whose suppression set is correspondingly non-empty. The retirement
   carries fixture work and a `NotYetCovered` entry with it. Worth doing; not free. Recorded that way
-  because an earlier draft of the document generalised "0/45" into "free", which is the exact
+  because an earlier draft of the document generalised "0/44" into "free", which is the exact
   mistake the measure-before-weighting gate exists to catch.
 
 Two standing figures also moved and are recorded: the internal axis is still **87% size rules**
