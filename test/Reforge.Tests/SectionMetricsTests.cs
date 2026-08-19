@@ -233,6 +233,33 @@ public class SectionMetricsTests
         Assert.Equal(solution.Methods, bySection.Values.Sum(m => m.Methods));
     }
 
+    [Fact]
+    public async Task Analyze_IncludesConstructorsAndPartialImplementations()
+    {
+        var classified = await SolutionClassifier.ClassifyAsync(
+            _fixture.Solution, SurfaceScoreConfig.Default(),
+            LocationHelper.GetSolutionDirectory(_fixture.Solution), CancellationToken.None);
+
+        var (bySection, solution) = SectionMetricsAnalyzer.Analyze(classified, CancellationToken.None);
+
+        // Constructors carry implementation just as methods do, and `snapshot` has always sampled
+        // them — excluding them understated a section and made the cyclomatic figure incomparable
+        // with the series it sits beside. Count the corpus's constructors-with-a-body directly.
+        int constructorsWithBodies = classified
+            .SelectMany(c => c.Type.GetMembers().OfType<Microsoft.CodeAnalysis.IMethodSymbol>())
+            .Where(m => m.MethodKind == Microsoft.CodeAnalysis.MethodKind.Constructor
+                        && !m.IsImplicitlyDeclared
+                        && m.DeclaringSyntaxReferences.Length > 0)
+            .Count(m => m.DeclaringSyntaxReferences
+                .Select(r => r.GetSyntax(CancellationToken.None))
+                .OfType<BaseMethodDeclarationSyntax>()
+                .Any(bm => bm.Body is not null || bm.ExpressionBody is not null));
+
+        Assert.True(constructorsWithBodies > 0, "sample solution declares no constructor with a body");
+        Assert.True(solution.Methods >= constructorsWithBodies);
+        Assert.Equal(solution.Methods, bySection.Values.Sum(m => m.Methods));
+    }
+
     // ---------------- Output ----------------
 
     [Fact]

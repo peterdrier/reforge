@@ -27,6 +27,7 @@ public sealed record SectionMetrics(
     int Files,
     int Classes,
     int Interfaces,
+    /// <summary>Methods and constructors with a body — the sample both distributions are taken over.</summary>
     int Methods,
     MetricDistribution Cognitive,
     MetricDistribution Cyclomatic,
@@ -154,7 +155,12 @@ public static class SectionMetricsAnalyzer
         foreach (var member in c.Type.GetMembers())
         {
             if (member is not IMethodSymbol m) continue;
-            if (m.MethodKind != MethodKind.Ordinary) continue;
+            // Constructors included: `snapshot` has always sampled ConstructorDeclarationSyntax,
+            // and a constructor that branches carries the same implementation cost as a method
+            // that does. Excluding them understated a section and made the cyclomatic figure
+            // incomparable with the history series it is meant to sit beside.
+            if (m.MethodKind is not (MethodKind.Ordinary or MethodKind.Constructor or MethodKind.StaticConstructor))
+                continue;
             // Property/event accessors and compiler-synthesized members are not written code.
             if (m.AssociatedSymbol is not null) continue;
             if (m.IsImplicitlyDeclared) continue;
@@ -165,7 +171,7 @@ public static class SectionMetricsAnalyzer
             if (syntax.Body is null && syntax.ExpressionBody is null) continue;
 
             methods.Add(new MethodFact(
-                $"{c.Type.Name}.{m.Name}",
+                MethodDisplay(c.Type.Name, m),
                 ImplementationComplexity.Cognitive(syntax),
                 ImplementationComplexity.Cyclomatic(syntax)));
         }
@@ -179,12 +185,38 @@ public static class SectionMetricsAnalyzer
             methods);
     }
 
+    /// <summary>Snapshot-style display name: <c>Type.Method</c>, and <c>Type.ctor</c> for constructors.</summary>
+    private static string MethodDisplay(string typeName, IMethodSymbol m) => m.MethodKind switch
+    {
+        MethodKind.Constructor => $"{typeName}.ctor",
+        MethodKind.StaticConstructor => $"{typeName}.cctor",
+        _ => $"{typeName}.{m.Name}"
+    };
+
+    /// <summary>
+    /// The declaration that actually carries the body.
+    /// </summary>
+    /// <remarks>
+    /// Two ways the first declaration is the wrong one. A <b>partial method</b> is two symbols: the
+    /// defining declaration <c>partial void M();</c> is what <c>GetMembers()</c> returns and it has
+    /// no body, while the implementation hangs off <see cref="IMethodSymbol.PartialImplementationPart"/> —
+    /// so taking the first reference on the symbol in hand dropped every implemented partial method
+    /// from the corpus entirely. A <b>partial type</b> can also declare the same method across files
+    /// in an order that puts a bodyless reference first. Preferring the declaration with a body
+    /// covers both, and falls back to the first so a genuinely bodyless method still resolves (and
+    /// is then filtered by the caller).
+    /// </remarks>
     private static BaseMethodDeclarationSyntax? MethodSyntax(IMethodSymbol m, CancellationToken ct)
     {
-        foreach (var r in m.DeclaringSyntaxReferences)
-            if (r.GetSyntax(ct) is BaseMethodDeclarationSyntax bm)
-                return bm;
-        return null;
+        var target = m.PartialImplementationPart ?? m;
+        BaseMethodDeclarationSyntax? first = null;
+        foreach (var r in target.DeclaringSyntaxReferences)
+        {
+            if (r.GetSyntax(ct) is not BaseMethodDeclarationSyntax bm) continue;
+            first ??= bm;
+            if (bm.Body is not null || bm.ExpressionBody is not null) return bm;
+        }
+        return first;
     }
 
     private static int CountNonBlankLines(SyntaxTree tree, CancellationToken ct)

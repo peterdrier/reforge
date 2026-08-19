@@ -43,6 +43,20 @@ design question, not an aggregation.
 `SnapshotAnalyzer`, so the history series and the per-section number are one implementation rather
 than two that agree until one is edited.
 
+Measured against Humans (`Humans.slnx`, 3,448 types, 44 sections) before and after those five
+corrections, the metrics move and the score does not:
+
+| | before | after |
+|---|---:|---:|
+| `locProd` | 160,291 | **157,860** |
+| `files` | 1,695 | **1,691** |
+| `methods` | 5,425 | **5,493** |
+| `surfaceTotal` / `internalComplexityTotal` | 17,379 / 3,162 | 17,379 / 3,162 |
+
+2,431 lines (1.5% of the corpus) were generated code leaking in through partial types whose
+handwritten half happened to be the classifier's primary file; 68 method bodies — constructors and
+implemented partial methods — were missing from both distributions.
+
 Three corrections from review, all of which the metrics pass made newly load-bearing:
 
 - **Deconstructing `foreach` was never counted.** `foreach (var (k, v) in xs)` parses as
@@ -57,6 +71,17 @@ Three corrections from review, all of which the metrics pass made newly load-bea
   handwritten class with a generated `.Designer.cs` half leaked the generated LOC and methods in
   when the handwritten file happened to be primary, and dropped the handwritten half when it did
   not. Each declaring syntax reference and each method is now filtered by its own tree.
+- **Constructors are in the sample.** The rollup filtered to `MethodKind.Ordinary`, which dropped
+  every constructor — while `snapshot` has always sampled `ConstructorDeclarationSyntax`. A
+  constructor that branches carries the same implementation cost as a method that does, so
+  excluding them both understated a section and made the cyclomatic figure incomparable with the
+  series it is meant to sit beside.
+- **Implemented partial methods reached the sample at all.** A partial method is two symbols: the
+  defining declaration `partial void M();` is what `GetMembers()` returns and it has no body, while
+  the implementation hangs off `PartialImplementationPart`. Taking the first declaring reference on
+  the symbol in hand therefore found a bodyless declaration and dropped the method entirely.
+  Resolving through the implementation part, and preferring whichever declaration carries a body,
+  covers that and the partial-type ordering case with it.
 - **`--list-groups` covers sections that scored nothing.** A section whose types are all unscored
   has metrics and no `GroupScore`, so enumerating only the scored groups dropped it — precisely the
   section a size-ranked listing needs to show. The listing (and a new `sections` array in the JSON)
