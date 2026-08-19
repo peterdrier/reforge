@@ -519,4 +519,40 @@ public class MisplacedAnalyzerTests
         Assert.NotNull(finding.BlockedBy);
         Assert.Contains("type parameter T", finding.BlockedBy);
     }
+
+    [Fact]
+    public async Task Analyze_InheritedIndexerReadsOfAConfiguredDto_AreData()
+    {
+        var report = await AnalyzeAsync();
+
+        // An indexer carries its receiver on the element access itself, not on a parent member access,
+        // so a receiver lookup written only for the latter judged these reads by the unconfigured base
+        // that declares the indexer — and three data reads read as three behavior calls, which is a
+        // move rather than a mapper. Both spellings of the read reach the receiver the same way.
+        foreach (var method in new[] { "SummarizeInheritedIndexedRow", "SummarizeNullSafeInheritedIndexedRow" })
+        {
+            var finding = Find(report, method);
+            Assert.NotNull(finding);
+            Assert.Equal(MisplacedVerdict.Mapper, finding.Verdict);
+            Assert.Equal(3, finding.TargetDataTouches);
+            Assert.Equal(0, finding.TargetBehaviorTouches);
+        }
+    }
+
+    [Fact]
+    public async Task Analyze_CastReceivers_AreStillConduits()
+    {
+        var report = await AnalyzeAsync();
+
+        // `((GreetingService)_greetings).Method()` reaches the other section exactly as `_greetings`
+        // alone would. Stopping the wrapper walk at the cast scored the receiver as own state three
+        // times, tying 3:3 and suppressing the pipe. `as` is the same conversion as an operator.
+        foreach (var method in new[] { "SummarizeThroughCast", "SummarizeThroughAsCast" })
+        {
+            var finding = Find(report, method);
+            Assert.NotNull(finding);
+            Assert.Equal(0, finding.OwnTouches);
+            Assert.Equal(3, finding.TargetBehaviorTouches);
+        }
+    }
 }

@@ -155,3 +155,22 @@ public static class OuterB
         public string Describe() => "b";
     }
 }
+
+/// <summary>
+/// An indexer declared on an unconfigured, behaviorful base. Read through a configured DTO those reads
+/// are data; resolved from the declaring base — which no rule names — they counted as behavior calls.
+/// </summary>
+public class IndexedRowBase
+{
+    private readonly string[] _cells = ["a", "b", "c"];
+
+    public string this[int index] => _cells[index];
+
+    public string Recompute() => _cells[0];
+}
+
+/// <summary>A configured-only DTO whose indexer is inherited.</summary>
+public class IndexedSummaryResult : IndexedRowBase
+{
+    public string Label { get; init; } = "";
+}

@@ -583,3 +583,41 @@ public class GenericSourceReporter<T>
         return $"{payload}:{greeting}/{recent.Count}";
     }
 }
+
+/// <summary>
+/// Three reads through an indexer the configured DTO <i>inherits</i>. An element access carries its
+/// receiver on the node itself rather than on its parent, so a receiver lookup written only for member
+/// accesses saw nothing and judged the reads by the unconfigured declaring base.
+/// </summary>
+public class InheritedIndexerRowMapper
+{
+    public string SummarizeInheritedIndexedRow(IndexedSummaryResult row) => $"{row[0]}|{row[1]}|{row[2]}";
+
+    public string SummarizeNullSafeInheritedIndexedRow(IndexedSummaryResult? row) =>
+        $"{row?[0]}|{row?[1]}|{row?[2]}";
+}
+
+/// <summary>
+/// Delegation through a cast receiver. The cast changes nothing about what is reached, but a wrapper
+/// walk that stops at it counts the field as own state and the pipe ties 3:3.
+/// </summary>
+public class CastingConduitReporter
+{
+    private readonly object _greetings = new GreetingService();
+
+    public string SummarizeThroughCast()
+    {
+        var greeting = ((GreetingService)_greetings).GetGreetingAsync(1).GetAwaiter().GetResult();
+        var recent = ((GreetingService)_greetings).GetRecentGreetingsAsync(1).GetAwaiter().GetResult();
+        ((GreetingService)_greetings).RecordGreetingAsync(1, greeting).GetAwaiter().GetResult();
+        return $"{greeting}/{recent.Count}";
+    }
+
+    public string SummarizeThroughAsCast()
+    {
+        var greeting = (_greetings as GreetingService)!.GetGreetingAsync(1).GetAwaiter().GetResult();
+        var recent = (_greetings as GreetingService)!.GetRecentGreetingsAsync(1).GetAwaiter().GetResult();
+        (_greetings as GreetingService)!.RecordGreetingAsync(1, greeting).GetAwaiter().GetResult();
+        return $"{greeting}/{recent.Count}";
+    }
+}

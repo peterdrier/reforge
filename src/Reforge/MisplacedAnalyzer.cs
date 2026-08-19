@@ -665,14 +665,25 @@ public static class MisplacedAnalyzer
     /// </remarks>
     private static INamedTypeSymbol? AccessedThrough(SyntaxNode node, SolutionDocument doc, CancellationToken ct)
     {
-        // `receiver.Member`, and `receiver?.Member` where the name sits under a member binding and the
-        // receiver hangs off the enclosing conditional access.
-        var receiver = node.Parent switch
+        // An indexer read is the access, so it carries its own receiver rather than hanging off a
+        // parent: `row[0]` keeps it on the element access and `row?[0]` on the enclosing conditional
+        // access. Resolved only from the parent, an indexer inherited by a configured DTO was judged
+        // by its declaring base — the same miss that once made inherited PROPERTIES read as behavior.
+        var receiver = node switch
         {
-            MemberAccessExpressionSyntax access when access.Name == node => access.Expression,
-            MemberBindingExpressionSyntax binding when binding.Name == node =>
+            ElementAccessExpressionSyntax element => element.Expression,
+            ElementBindingExpressionSyntax binding =>
                 binding.Ancestors().OfType<ConditionalAccessExpressionSyntax>().FirstOrDefault()?.Expression,
-            _ => null
+
+            // `receiver.Member`, and `receiver?.Member` where the name sits under a member binding and
+            // the receiver hangs off the enclosing conditional access.
+            _ => node.Parent switch
+            {
+                MemberAccessExpressionSyntax access when access.Name == node => access.Expression,
+                MemberBindingExpressionSyntax binding when binding.Name == node =>
+                    binding.Ancestors().OfType<ConditionalAccessExpressionSyntax>().FirstOrDefault()?.Expression,
+                _ => null
+            }
         };
         if (receiver is null) return null;
 
@@ -830,12 +841,23 @@ public static class MisplacedAnalyzer
 
             // Only keep climbing while there is a wrapper that leaves this node the receiver. `_dep!` is
             // such a wrapper: the null-forgiving operator changes nothing about what is being reached,
-            // and `_dep!.Method()` is the same delegation as `_dep.Method()`.
-            if (current.Parent is MemberAccessExpressionSyntax
-                or ParenthesizedExpressionSyntax
-                or PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.SuppressNullableWarningExpression })
+            // and `_dep!.Method()` is the same delegation as `_dep.Method()`. So is a cast — reaching
+            // another section through `((IForeign)_dep).Method()` is the same delegation as through
+            // `_dep.Method()`, and stopping at the cast scored the receiver as own state and tied.
+            bool transparent = current.Parent switch
             {
-                current = current.Parent;
+                MemberAccessExpressionSyntax or ParenthesizedExpressionSyntax => true,
+                PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.SuppressNullableWarningExpression } => true,
+                CastExpressionSyntax cast => cast.Expression == current,
+                // `_dep as IForeign` — the same conversion written as an operator, and only the left
+                // side is the value being converted; the right side is a type name.
+                BinaryExpressionSyntax { RawKind: (int)SyntaxKind.AsExpression } asExpression =>
+                    asExpression.Left == current,
+                _ => false
+            };
+            if (transparent)
+            {
+                current = current.Parent!;
                 continue;
             }
             return false;
