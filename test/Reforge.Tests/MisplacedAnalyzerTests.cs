@@ -277,7 +277,7 @@ public class MisplacedAnalyzerTests
         // leans on hardest — it has to, for the collision check to be sayable — and discarding it meant
         // the actionable verdict named only an assembly unless a namesake happened to exist.
         Assert.Equal(MisplacedVerdict.Move, finding.Verdict);
-        Assert.Equal("GreetingService", finding.DestinationType);
+        Assert.EndsWith(".GreetingService", finding.DestinationType!, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -307,6 +307,66 @@ public class MisplacedAnalyzerTests
         // added for inherited contracts never matched the very method it exists to pin.
         Assert.Equal(MisplacedVerdict.Blocked, finding.Verdict);
         Assert.Contains("IGenericContractReport", finding.BlockedBy!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Analyze_EnumMemberReads_AreDataAndProposeNoDestinationType()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SizeToSquareMetres");
+
+        Assert.NotNull(finding);
+        // An enum has no behavior to call. Counted as calls, enum members made the evidence say
+        // "N call(s) into Services" where nothing is called, and let the enum win the destination
+        // contest — proposing a move onto a type that cannot declare a method. Found on Humans, where
+        // five of twelve destinations were enums once the destination became visible.
+        Assert.Equal(MisplacedVerdict.Mapper, finding.Verdict);
+        Assert.Equal(0, finding.TargetBehaviorTouches);
+        // Three named patterns; the discard arm names no member.
+        Assert.Equal(3, finding.TargetDataTouches);
+        Assert.Null(finding.DestinationType);
+    }
+
+    [Fact]
+    public async Task Analyze_TouchesThroughAnIndexer_AreMeasured()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeBySlot");
+
+        Assert.NotNull(finding);
+        // An indexer hangs off the element-access expression, not off any identifier, so three reads
+        // through one measured as nothing and the method vanished from the report.
+        Assert.Equal("Services", finding.TargetSection);
+        Assert.Equal(3, finding.TargetBehaviorTouches);
+        Assert.Equal(0, finding.OwnTouches);
+    }
+
+    [Fact]
+    public async Task Analyze_ContractOnOneRefOverload_DoesNotBlockTheOther()
+    {
+        var report = await AnalyzeAsync();
+        var findings = report.Findings
+            .Where(f => f.Method.EndsWith(".HandleRefOverload", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.Equal(2, findings.Count);
+        // `M(ref int)` and `M(int)` are two distinct methods, so only the one the interface map resolves
+        // to is pinned. Keyed without the ref kind, both collided on one entry and the unconstrained
+        // overload was reported as blocked — the opposite failure to the one the index was added to fix.
+        Assert.Contains(findings, f => f.Verdict == MisplacedVerdict.Blocked);
+        Assert.Contains(findings, f => f.Verdict == MisplacedVerdict.Move);
+    }
+
+    [Fact]
+    public async Task Analyze_DestinationType_IsNamespaceQualified()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeGreetingsForRelocation");
+
+        Assert.NotNull(finding);
+        // A section can hold two types of one name in different namespaces, and nothing else in the
+        // output says which was meant — no destination file or namespace is reported anywhere.
+        Assert.Equal("SampleSolution.Services.GreetingService", finding.DestinationType);
     }
 
     [Fact]

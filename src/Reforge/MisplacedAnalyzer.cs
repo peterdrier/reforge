@@ -333,7 +333,11 @@ public static class MisplacedAnalyzer
             // name inside it — the name binds to the TYPE. Without this, `new ForeignThing()` counted as
             // nothing at all while `_dep.Create()` counted as one, which is an artifact of the filter
             // rather than a decision: constructing another section's types is working with that section.
-            if (node is not (IdentifierNameSyntax or GenericNameSyntax or BaseObjectCreationExpressionSyntax)) continue;
+            // Element access carries its indexer on the ElementAccessExpression, the same way object
+            // creation carries its constructor: `table[0]` has no identifier that binds to the indexer,
+            // so three reads through an indexer measured as nothing at all.
+            if (node is not (IdentifierNameSyntax or GenericNameSyntax
+                or BaseObjectCreationExpressionSyntax or ElementAccessExpressionSyntax)) continue;
             if (IsInsideNameOf(node)) continue;
 
             // A type name inside `new T(...)` would otherwise be counted a second time, once as the
@@ -470,7 +474,7 @@ public static class MisplacedAnalyzer
 
         return Finding(m, target, behaviorTouches, dataTouches,
             collision is null ? MisplacedVerdict.Move : MisplacedVerdict.MoveWouldDuplicate,
-            evidence, duplicateOf: collision, destinationType: destination?.Name);
+            evidence, duplicateOf: collision, destinationType: QualifiedName(destination));
     }
 
     /// <summary>
@@ -569,7 +573,13 @@ public static class MisplacedAnalyzer
     /// </remarks>
     private static bool IsData(
         INamedTypeSymbol type, INamedTypeSymbol? through, ISymbol touched, HashSet<string> configuredDtos) =>
-        CanonicalReadDtoSet.IsDataCarrier(type)
+        // An enum has no behavior to call. The structural test excludes enums only because it gates on
+        // class-or-struct, which is a gap in that test rather than a claim that an enum is behavior:
+        // reading `SpaceSize.Large` is reading a constant. Counted as calls, enum members made the
+        // evidence line say "11 call(s) into Camps" where nothing is called, and let an enum WIN the
+        // destination contest -- proposing that a method be moved onto a type that cannot declare one.
+        type.TypeKind == TypeKind.Enum
+        || CanonicalReadDtoSet.IsDataCarrier(type)
         || (touched is IPropertySymbol or IFieldSymbol
             && (configuredDtos.Contains(SolutionClassifier.TypeKey(type))
                 || (through is not null && configuredDtos.Contains(SolutionClassifier.TypeKey(through)))));
@@ -797,6 +807,22 @@ public static class MisplacedAnalyzer
             : null;
     }
 
+    /// <summary>
+    /// Namespace-qualified name of the destination type, or null when none was chosen.
+    /// </summary>
+    /// <remarks>
+    /// Qualified rather than simple because a section can hold two types of one name in different
+    /// namespaces, and nothing else in the output identifies which was meant — no destination file or
+    /// namespace is reported anywhere. The section is still readable from the evidence line, so the
+    /// qualified name costs the reader nothing it does not already say.
+    /// </remarks>
+    private static string? QualifiedName(INamedTypeSymbol? type) =>
+        type is null
+            ? null
+            : type.ContainingNamespace is { IsGlobalNamespace: false } ns
+                ? $"{ns.ToDisplayString()}.{type.Name}"
+                : type.Name;
+
     /// <summary><c>1 touch</c> / <c>4 touches</c>. The output is read by people and by models.</summary>
     private static string Touches(int n) => n == 1 ? "1 touch" : $"{n} touches";
 
@@ -863,7 +889,12 @@ public static class MisplacedAnalyzer
     /// </summary>
     private static string MethodKey(IMethodSymbol method) =>
         $"{SolutionClassifier.TypeKey(method.ContainingType)}|{method.Name}|" +
-        string.Join(",", method.Parameters.Select(p => p.Type.ToDisplayString())) +
+        // The ref kind belongs in the key even though it is deliberately IGNORED when asking whether two
+        // declarations collide. Those are opposite questions: collision asks "could one type declare
+        // both?", where ref and out are the same answer, while this key asks "which method is this?",
+        // where `M(int)` and `M(ref int)` are two distinct methods. Omitted, a contract pinning the `ref`
+        // overload also pinned the by-value one, blocking a method nothing constrains.
+        string.Join(",", method.Parameters.Select(p => $"{p.RefKind}:{p.Type.ToDisplayString()}")) +
         $"|{method.TypeParameters.Length}";
 
     /// <summary>

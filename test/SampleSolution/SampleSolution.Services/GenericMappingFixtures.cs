@@ -89,3 +89,39 @@ public class ConstructedWorkItem
 
     public string Render() => $"<{Label}>";
 }
+
+/// <summary>
+/// An enum in another section, for the data/behavior split. Reading its members is reading constants —
+/// counted as calls they both mis-describe the evidence and let a type that cannot declare a method win
+/// the destination contest.
+/// </summary>
+public enum WorkItemSize
+{
+    Small,
+    Medium,
+    Large,
+    Enormous
+}
+
+/// <summary>
+/// Reached through an indexer. The indexer symbol hangs off the element-access expression, not off any
+/// identifier, so reads through it were measured as nothing. <c>Count</c> is a method so the type is not
+/// a data carrier and the reads count as behavior.
+/// </summary>
+public class SlotTable
+{
+    private readonly string[] _slots = { "a", "b", "c", "d" };
+
+    public string this[int index] => _slots[index];
+
+    public int Count() => _slots.Length;
+}
+
+/// <summary>
+/// A base declaring two overloads that differ only in how the parameter is passed, one of which supplies
+/// a derived type's interface member. The contract pins that overload and nothing else.
+/// </summary>
+public interface IRefOverloadContract
+{
+    string HandleRefOverload(ref int value);
+}

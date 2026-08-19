@@ -451,3 +451,58 @@ public interface IGenericContractReport
 public class GenericContractReporter : GenericContractReporterBase<int>, IGenericContractReport
 {
 }
+
+/// <summary>
+/// Switches over another section's enum. Every touch is an enum member — a constant, not a call — so
+/// this is a mapper, and no destination TYPE is proposed: the only Services type it touches is an enum,
+/// which cannot host a method.
+/// </summary>
+public class EnumMappingReporter
+{
+    public int SizeToSquareMetres(WorkItemSize size) => size switch
+    {
+        WorkItemSize.Small => 10,
+        WorkItemSize.Medium => 20,
+        WorkItemSize.Large => 40,
+        _ => 80
+    };
+}
+
+/// <summary>
+/// Uses another section entirely through an indexer. The table arrives as a parameter, so there is no
+/// receiver field to weigh at home — the three reads are the whole measurement.
+/// </summary>
+public class IndexerReadingReporter
+{
+    public string SummarizeBySlot(SlotTable table) => $"{table[0]}|{table[1]}|{table[2]}";
+}
+
+/// <summary>
+/// Two overloads differing only in how the parameter is passed. A derived type binds the <c>ref</c> one
+/// to <c>IRefOverloadContract</c>; the by-value one is pinned by nothing. Keyed without the ref kind,
+/// the contract on the first also blocked the second.
+/// </summary>
+public class RefOverloadReporterBase
+{
+    private readonly GreetingService _greetings = new();
+
+    public string HandleRefOverload(ref int value)
+    {
+        var greeting = _greetings.GetGreetingAsync(value).GetAwaiter().GetResult();
+        var recent = _greetings.GetRecentGreetingsAsync(value).GetAwaiter().GetResult();
+        _greetings.RecordGreetingAsync(value, greeting).GetAwaiter().GetResult();
+        return $"{greeting}/{recent.Count}";
+    }
+
+    public string HandleRefOverload(int value)
+    {
+        var greeting = _greetings.GetGreetingAsync(value).GetAwaiter().GetResult();
+        var recent = _greetings.GetRecentGreetingsAsync(value).GetAwaiter().GetResult();
+        _greetings.RecordGreetingAsync(value, greeting).GetAwaiter().GetResult();
+        return $"{greeting}/{recent.Count}";
+    }
+}
+
+public class RefOverloadReporter : RefOverloadReporterBase, IRefOverloadContract
+{
+}

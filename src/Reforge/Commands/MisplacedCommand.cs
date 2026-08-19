@@ -176,11 +176,11 @@ public static class MisplacedCommand
             foreach (var f in group)
             {
                 // The destination TYPE where one was chosen: a section is not a place a method goes.
+                // The destination TYPE where one was chosen, already namespace-qualified: a section is
+                // not a place a method goes, and the section is still named in the evidence line below.
                 var arrow = f.TargetSection is null
                     ? ""
-                    : f.DestinationType is null
-                        ? $" -> {f.TargetSection}"
-                        : $" -> {f.TargetSection}.{f.DestinationType}";
+                    : $" -> {f.DestinationType ?? f.TargetSection}";
                 sb.AppendLine($"  {f.Method}{arrow}  [{Slug(f.Verdict)}]");
                 sb.AppendLine($"    {f.File}:{f.Line}");
                 sb.AppendLine($"    {f.Evidence}");
