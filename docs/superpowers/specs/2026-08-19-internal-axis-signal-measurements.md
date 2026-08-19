@@ -61,8 +61,12 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
   entity handling uses constantly);
   `selfTouches` counts explicit `this.X` accesses plus unqualified names resolving to an instance
   member of the containing type (implicit `this`); `otherTouches` counts accesses through any *other*
-  receiver — another parameter, a local, a field, an injected dependency. Fires when
-  `targetTouches >= 3 && targetTouches > selfTouches * 2`. Binding to the receiver rather than to the
+  receiver — another parameter, a local, a field, an injected dependency. **An extension call on the
+  parameter (`p.Normalize()`) is not a target touch**: the receiver resolves to the parameter, but the
+  member lives on an unrelated static class and is not owned by the target type, so it counts toward
+  `otherTouches` instead. Fires when `targetTouches >= 3 && targetTouches >= selfTouches * 2` — `>=` on
+  the ratio, matching "at least twice as often"; the first cut used strict `>`, which silently rejected
+  the exact two-to-one boundary the prose admits. Binding to the receiver rather than to the
   member's declaring type is load-bearing — see the correction recorded under Signal B.
   - **Two of #19's own scope conditions are measured separately rather than built into the firing
     test, because both turn out to matter more than the firing test does.** #19 scopes the signal to
@@ -90,13 +94,13 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
     answers-a-question-about-the-parameter shape this filter selects for. `Nullable<T>` is the one
     generic worth unwrapping alongside the await wrappers, because `bool?` and `MyEnum?` are the same
     answer with a third "unknown" case, whereas `List<T>` is a container. **Correcting this changed
-    nothing on this corpus** — 36 intermediate and 26 refined, with identical membership — because
+    nothing on this corpus** — the intermediate and refined sets kept identical membership — because
     Humans returns none of the omitted primitives from a feature-envy candidate. Recorded because the
     predicate was wrong even though the number was right, which is the second time that has happened
     to this same filter. Not any other single-argument generic: unwrapping those would reduce `IEnumerable<string>`, `List<int>` or
     `Result<MyEnum>` to their argument and call them scalar, and a method returning a container is a
     projection — the population this refinement exists to exclude. (Correcting this moved the
-    intermediate scalar set 38 → 36 and left the refined 26 unchanged, because the container-returning
+    intermediate scalar set down by two and left the refined set's membership unchanged, because the container-returning
     methods were async and the synchronous filter had already removed them. The predicate was wrong
     even though the published number was not.)
   - *synchronous* — return type is not `Task` / `ValueTask`.
@@ -290,7 +294,7 @@ on the wrong shape pays an agent to do the wrong thing.
 Criteria: primary parameter is a solution-declared class or struct other than the containing type;
 the body touches its members at least 3 times; and at least twice as often as the containing type's.
 
-**361 candidates.**
+**363 candidates.**
 
 Manual read of the top 15 — the gate's requirement — finds the population dominated by one shape:
 
@@ -314,8 +318,8 @@ rule implies is actively wrong for this shape, and this shape is most of the pop
 
 Excluding methods that construct their own return type from the parameter:
 
-- **171 of 361 (47.4%) are mappers** by that structural test.
-- 190 remain.
+- **172 of 363 (47.4%) are mappers** by that structural test.
+- 191 remain.
 
 But a manual read of the *non-mapper* top 15 still finds `MapDetailIssue`, `MapList`,
 `MapTeamSummary`, `CloneUserInfoFields` and `EventSettingsFormMapper.Apply` — at least 5 of 15 are
@@ -355,11 +359,11 @@ Two further conditions, each with a stated reason:
   persistence and IO — `UpdateLineItemAsync`, `SyncFolderBasedDocumentAsync`, `UpsertContactAsync`.
   Moving those onto the data type would put IO on a DTO.
 
-**361 → 190 → 36 → 26 candidates.**
+**363 → 191 → 35 → 25 candidates.**
 
-Manual read of all 26:
+Manual read of all 25:
 
-| genuine feature envy (19) | presentation / formatting (7) |
+| genuine feature envy (18) | presentation / formatting (7) |
 |---|---|
 | `ProfileCompletion.ComputePercent(ProfileInfo)` / `(Profile)` | `AgentPromptAssembler.BuildUserContextTail(AgentUserSnapshot)` |
 | `GateAdmissionRules.Evaluate(GateScanContext)` | `AgentPromptAssembler.RenderShiftEntry(UpcomingShiftEntry)` |
@@ -378,11 +382,12 @@ Manual read of all 26:
 | `Service.ClassifyStripeSession(StoreCheckoutSessionData)` | |
 | `GateScanCardViewModel.TooEarlyReason(GateScanResult)` | |
 | `UserService.HasRequiredNameFields(Profile)` | |
-| `CalendarOccurrenceViewExtensions.ShouldHideTimeLabel(CalendarOccurrence)` | |
 
-**≈73% precision at 26 hits across the corpus** (19 + 7 — an earlier draft listed only 25 because
-the harness table was capped at 25 rows while the count said 26, so `GetDisplayName` was measured but
-never displayed; the audit is now over all of them). `SurveyBranchingEvaluator.IsVisible(BranchCondition)`
+**≈72% precision at 25 hits across the corpus** (18 + 7). Two bookkeeping corrections got the audit to
+cover exactly the population: an earlier draft listed only 25 of 26 because the harness table was capped
+at 25 rows while the count said 26, so `GetDisplayName` was measured but never displayed; and
+`ShouldHideTimeLabel` later left the population altogether once extension calls stopped counting as
+target touches. `SurveyBranchingEvaluator.IsVisible(BranchCondition)`
 and `UserStateClassifier.Classify(User)` are the shape the rule was proposed for: a predicate or
 classification about a data type, living somewhere else.
 
@@ -392,10 +397,15 @@ Two things about the residue:
   `Build*Label`. Whether they are false positives at all is arguable: a display name for a `TeamInfo`
   is a fact about a `TeamInfo`. But pushing view concerns onto a DTO is a trade many teams refuse, so
   they should not be charged without the owner taking that position first.
-- **One of the 26 is already an extension method** (`ShouldHideTimeLabel`). An extension method is
-  C#'s idiom for "this belongs on the type and cannot be put there", i.e. the fix already applied as
-  far as the language allows. A scored rule should exclude them, or it charges people for having
-  complied. One instance here, but it is a definitional exclusion rather than a tuning knob.
+- **Extension methods: now zero, and the reason is instructive.** An earlier round found one
+  (`CalendarOccurrenceViewExtensions.ShouldHideTimeLabel`) and concluded that a scored rule must exclude
+  extension methods, since an extension method is C#'s idiom for "this belongs on the type and cannot be
+  put there" — the fix already applied as far as the language allows, so charging it charges someone for
+  having complied. That conclusion stands and is now *structural* rather than a special case: once
+  extension **calls** stopped counting as target touches, `ShouldHideTimeLabel`'s own touches on its
+  parameter turned out to be extension calls, and it fell below the threshold and left the population.
+  The two exclusions are the same principle seen from both ends — members a type does not own are not
+  that type's members, whether the candidate method is the extension or merely calls one.
 
 ### #19's scope conditions, measured — and one of them changes the answer
 
@@ -408,12 +418,12 @@ Both measured against all three populations:
 
 | population | data-carrier param *(proxy, not the condition)* | **no other-receiver touches** | both | other-receiver touches exceed target |
 |---|---:|---:|---:|---:|
-| raw (361) | 306 (85%) | **76 (21%)** | 68 | 129 (36%) |
-| non-mapper (190) | 170 (89%) | **15 (8%)** | 12 | 85 (45%) |
-| refined (26) | 24 (92%) | **3 (12%)** | 3 | 3 |
+| raw (363) | 308 (85%) | **75 (21%)** | 67 | 133 (37%) |
+| non-mapper (191) | 171 (90%) | **14 (7%)** | 11 | 88 (46%) |
+| refined (25) | 23 (92%) | **2 (8%)** | 2 | 3 |
 
 **The entity/DTO condition is not established, and the numbers above do not establish it.** 85% of
-raw candidates and 24 of the refined 26 pass the *data-carrier proxy* — but the proxy is not the
+raw candidates and 23 of the refined 25 pass the *data-carrier proxy* — but the proxy is not the
 condition. It errs in both directions:
 
 - **False negatives.** `Shift` (`CalculateScore`) and `EventSettings` (`GetAvailableEeSlots`) are real
@@ -422,7 +432,7 @@ condition. It errs in both directions:
 - **False positives.** A property-only context or view model passes the proxy while being neither an
   entity nor a DTO — and `GateScanContext`, top of the refined list, is exactly that shape.
 
-So "24 of 26" measures agreement with a proxy, not compliance with #19's scope, and it cannot support
+So "23 of 25" measures agreement with a proxy, not compliance with #19's scope, and it cannot support
 "this condition is free". What it does establish is narrower and still useful: the refined population
 is not dominated by service or dependency parameters, which was the specific failure mode worth ruling
 out. **Adopting the entity/DTO condition needs a real classification first** — and the obvious
@@ -430,8 +440,7 @@ candidate, reforge's own DTO name patterns, is the thing #54 shows to be 79% pre
 classification is itself unbuilt work rather than a lookup.
 
 **The exclusivity condition is not free at all — it is the whole finding.** Read literally, "touch
-only that type's members" leaves **3 of the 26**: `GateAdmissionRules.Evaluate(GateScanContext)`,
-`CalendarOccurrenceViewExtensions.ShouldHideTimeLabel(CalendarOccurrence)`, and
+only that type's members" leaves **2 of the 25**: `GateAdmissionRules.Evaluate(GateScanContext)` and
 `UserService.HasRequiredNameFields(Profile)`. Everything else does at least some work through another
 receiver. The worst case in the refined set is
 `AgentPromptAssembler.BuildUserContextTail(AgentUserSnapshot)` at **33 other-receiver touches against
@@ -442,13 +451,13 @@ So the refinement's headline depends entirely on how "touch only" is read:
 
 | reading of "touch only that type's members" | refined candidates |
 |---|---:|
-| literal — zero other-receiver touches | **3** |
-| `otherTouches <= targetTouches` | 23 |
-| ignored, as the firing test does | 26 |
+| literal — zero other-receiver touches | **2** |
+| `otherTouches <= targetTouches` | 22 |
+| ignored, as the firing test does | 25 |
 
-**The 26 figure elsewhere in this document is the third row.** It is a real population and the manual
+**The 25 figure elsewhere in this document is the third row.** It is a real population and the manual
 audit of it stands, but it is a *looser* rule than #19 specifies, and this table is the honest version
-of the precision claim. Under #19 as written the signal fires 3 times on a 157,860-line corpus — which
+of the precision claim. Under #19 as written the signal fires **twice** on a 157,860-line corpus — which
 is a different problem from imprecision, and a worse one for a rule meant to carry an axis.
 
 ### Decision
@@ -462,14 +471,14 @@ Concretely:
   This is the same class of result as the rejected duplication rule: a plausible signal whose top
   hits are the wrong thing.
 - The refined form (non-mapper + scalar/bool/enum/string return + synchronous) is a usable signal at
-  ~70% precision and a tractable 26 hits — **but only under the loose reading of "touch only that
-  type's members"**. Under #19's literal reading it fires 3 times on 157,860 lines. Whoever takes the
-  next round has to pick a reading first, because the two differ by 8×, and the loose one is what the
-  ~73% precision figure was measured against.
-- Before it earns a weight it needs: **a decision on how strictly to read exclusivity** (3 hits or 23
-  or 26), a decision on the `Render*`/`Format*` class, and a re-measure against a second corpus,
-  because 26 hits on one codebase is a thin basis for a weight and 3 is no basis at all.
-- The entity/DTO scope condition **cannot** be adopted yet. 24 of the 26 pass a data-carrier proxy,
+  ~72% precision and a tractable 25 hits — **but only under the loose reading of "touch only that
+  type's members"**. Under #19's literal reading it fires twice on 157,860 lines. Whoever takes the
+  next round has to pick a reading first, because the two differ by more than 12×, and the loose one is
+  what the ~72% precision figure was measured against.
+- Before it earns a weight it needs: **a decision on how strictly to read exclusivity** (2 hits or 22
+  or 25), a decision on the `Render*`/`Format*` class, and a re-measure against a second corpus,
+  because 25 hits on one codebase is a thin basis for a weight and 2 is no basis at all.
+- The entity/DTO scope condition **cannot** be adopted yet. 23 of the 25 pass a data-carrier proxy,
   but that proxy rejects entities with domain methods (`Shift`, `EventSettings`) and accepts
   property-only contexts (`GateScanContext`), so adopting it would discard true hits while keeping
   out-of-scope ones. It needs a real entity/DTO classification, which reforge does not currently have
@@ -742,4 +751,4 @@ it is listing. That is a real gap in reforge's own output, not just a mistake in
 - **Net-new single-caller helpers.** Requires two runs across a real change; the stock measurement
   above is what one run can establish, and it was enough to settle the question asked.
 - **Whether the refined feature-envy hits are worth fixing.** Precision is measured; value is not.
-  26 findings that an owner would decline to act on would be 26 findings too many.
+  25 findings that an owner would decline to act on would be 25 findings too many.
