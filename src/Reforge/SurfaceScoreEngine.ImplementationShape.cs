@@ -16,7 +16,8 @@ public sealed partial class SurfaceScoreEngine
     /// that observably mutate state — a read-shape consolidation on a query is exempt by
     /// behavior, not by parameter naming. All points land on the internal-complexity axis.
     /// </summary>
-    private void ScoreImplementationComplexity(List<ClassifiedType> classified, ScoreReport report, CancellationToken ct)
+    private void ScoreImplementationComplexity(List<ClassifiedType> classified, ScoreReport report,
+        CancellationToken ct, HashSet<string> analyzedAssemblies)
     {
         var longW = _config.Weight("longMethod");
         var largeW = _config.Weight("largeClass");
@@ -35,7 +36,7 @@ public sealed partial class SurfaceScoreEngine
         {
             if (c.Type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) continue;
             // Pure data carriers (DTOs) have no implementation to score.
-            if (c.Tags.Contains("dto") && LooksLikeDataCarrier(c.Type)) continue;
+            if (c.Tags.Contains("dto") && LooksLikeDataCarrier(c.Type, analyzedAssemblies)) continue;
             // Generated code (EF migrations, *.g.cs/*.Designer.cs) is not developer-controlled
             // implementation complexity — counting its huge Up()/Down() methods would swamp the
             // internal axis with noise that's also stable across commits (useless to the gate).

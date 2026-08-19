@@ -19,6 +19,7 @@ public sealed partial class SurfaceScoreEngine
     private readonly SurfaceScoreConfig _config;
     private readonly string _solutionDirectory;
 
+
     public SurfaceScoreEngine(SurfaceScoreConfig config, string solutionDirectory)
     {
         _config = config;
@@ -30,6 +31,18 @@ public sealed partial class SurfaceScoreEngine
         var report = new ScoreReport();
         var classified = (await SolutionClassifier.ClassifyAsync(solution, _config, _solutionDirectory, ct)).ToList();
         report.TypesAnalyzed = classified.Count;
+        // What "inside the solution" means for this run, computed once and passed to the passes
+        // that need it rather than held on the engine: an engine is not otherwise run-scoped, and a
+        // field would be wrong the moment one instance scored two solutions.
+        //
+        // Assembly membership, not `Location.IsInSource`. The two agree only for the common project
+        // layout: where one project references another as a compiled DLL rather than a
+        // ProjectReference, the type arrives as a metadata symbol with no source location while its
+        // assembly is very much part of the analysed set. This is the definition
+        // SolutionClassifier itself uses.
+        var analyzedAssemblies = new HashSet<string>(
+            classified.Select(c => c.Type.ContainingAssembly?.Name).OfType<string>(),
+            StringComparer.Ordinal);
         report.ConfiguredSections.AddRange(classified
             .Select(c => c.Group).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.Ordinal));
 
@@ -115,7 +128,7 @@ public sealed partial class SurfaceScoreEngine
                 crossSectionSuppress.Add((use.Caller, use.Dependency));
 
         // Pass 1 — durable surface
-        ScoreDurableSurface(classified, report);
+        ScoreDurableSurface(classified, report, analyzedAssemblies);
 
         // Pass 2 — dependency use
         ScoreDependencyUse(classified, typesByDisplay, report);
@@ -138,7 +151,7 @@ public sealed partial class SurfaceScoreEngine
 
         // Pass 6 — internal complexity (separate scalar). Cognitive complexity, method/class
         // size, and structural action-dispatcher detection — the counterweight to surface.
-        ScoreImplementationComplexity(classified, report, ct);
+        ScoreImplementationComplexity(classified, report, ct, analyzedAssemblies);
 
         // Pass 7 — boundary-input surface. Charges for parameter/command objects that hide a
         // long argument list (so a parameter-object refactor can't game methodParameterOverflow).

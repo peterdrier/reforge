@@ -6,13 +6,14 @@ namespace Reforge;
 // breaking a consumer. DTO members, service/repository interface methods, controller actions.
 public sealed partial class SurfaceScoreEngine
 {
-    private void ScoreDurableSurface(List<ClassifiedType> classified, ScoreReport report)
+    private void ScoreDurableSurface(List<ClassifiedType> classified, ScoreReport report,
+        HashSet<string> analyzedAssemblies)
     {
         // Types that get their own ScoreDtoSurface call. A DTO deriving from another scored DTO
         // must not be charged for the base's properties as well — the base already pays for them.
         var scoredDtos = new HashSet<string>(
             classified
-                .Where(x => x.IsExported && x.Tags.Contains("dto") && LooksLikeDataCarrier(x.Type))
+                .Where(x => x.IsExported && x.Tags.Contains("dto") && LooksLikeDataCarrier(x.Type, analyzedAssemblies))
                 .Select(x => SolutionClassifier.TypeKey(x.Type.OriginalDefinition)),
             StringComparer.Ordinal);
 
@@ -23,8 +24,8 @@ public sealed partial class SurfaceScoreEngine
             // changing them. Their implementation still scores on the internal-complexity axis.
             if (!c.IsExported) continue;
 
-            if (c.Tags.Contains("dto") && LooksLikeDataCarrier(c.Type))
-                ScoreDtoSurface(c, report, scoredDtos);
+            if (c.Tags.Contains("dto") && LooksLikeDataCarrier(c.Type, analyzedAssemblies))
+                ScoreDtoSurface(c, report, scoredDtos, analyzedAssemblies);
 
             if (c.Tags.Contains("readServiceInterface"))
                 ScoreInterfaceMethods(c, "readServiceInterfaceMethod", report);
@@ -68,7 +69,8 @@ public sealed partial class SurfaceScoreEngine
     /// pays for its own properties. A property redeclared in a derived type is charged once.
     /// </para>
     /// </remarks>
-    private void ScoreDtoSurface(ClassifiedType c, ScoreReport report, HashSet<string> scoredDtos)
+    private void ScoreDtoSurface(ClassifiedType c, ScoreReport report, HashSet<string> scoredDtos,
+        HashSet<string> analyzedAssemblies)
     {
         AddEntry(report, c.Group, "publicDtoType", _config.Weight("publicDtoType"), c.Type, c.File, c.Line, null);
 
@@ -78,7 +80,7 @@ public sealed partial class SurfaceScoreEngine
             if (!ReferenceEquals(t, c.Type))
             {
                 if (t.SpecialType == SpecialType.System_Object) break;
-                if (!t.Locations.Any(l => l.IsInSource)) break;
+                if (!IsInAnalyzedSolution(t, analyzedAssemblies)) break;
                 // OriginalDefinition: a constructed generic base (`BaseResponse<int>`) has a
                 // different display string from the declaration the set was built from
                 // (`BaseResponse<T>`), so querying with the constructed form misses and the
@@ -99,7 +101,7 @@ public sealed partial class SurfaceScoreEngine
                 var loc = prop.Locations.FirstOrDefault(l => l.IsInSource);
                 var (file, line) = LocateMember(loc, c);
 
-                var (rule, weight) = ClassifyDtoProperty(prop);
+                var (rule, weight) = ClassifyDtoProperty(prop, analyzedAssemblies);
                 var detail = prop.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
                 // Name the base so a reader is not left wondering why a type is charged for a
                 // property its own declaration does not contain.
@@ -108,6 +110,14 @@ public sealed partial class SurfaceScoreEngine
             }
         }
     }
+
+    /// <summary>
+    /// Whether a type belongs to the analysed solution, decided by declaring assembly rather than
+    /// by source location. The two agree only for the common project layout — see the comment where
+    /// the set is built in <see cref="ScoreAsync"/>.
+    /// </summary>
+    private static bool IsInAnalyzedSolution(ISymbol t, HashSet<string> analyzedAssemblies) =>
+        t.ContainingAssembly?.Name is { } name && analyzedAssemblies.Contains(name);
 
     /// <summary>
     /// A public instance indexer. <see cref="CanonicalReadDtoSet.IsCarriedData"/> excludes these on
@@ -134,12 +144,12 @@ public sealed partial class SurfaceScoreEngine
             ? prop.Name
             : $"{prop.Name}({string.Join(",", prop.Parameters.Select(p => p.Type.ToDisplayString()))})";
 
-    private (string Rule, int Weight) ClassifyDtoProperty(IPropertySymbol prop)
+    private (string Rule, int Weight) ClassifyDtoProperty(IPropertySymbol prop, HashSet<string> analyzedAssemblies)
     {
         var t = prop.Type;
         if (IsCollectionType(t))
             return ("dtoCollectionProperty", _config.Weight("dtoCollectionProperty"));
-        if (IsNestedDtoType(t))
+        if (IsNestedDtoType(t, analyzedAssemblies))
             return ("dtoNestedProperty", _config.Weight("dtoNestedProperty"));
         return ("dtoScalarProperty", _config.Weight("dtoScalarProperty"));
     }
@@ -157,22 +167,23 @@ public sealed partial class SurfaceScoreEngine
         return false;
     }
 
-    private static bool IsNestedDtoType(ITypeSymbol t)
+    private static bool IsNestedDtoType(ITypeSymbol t, HashSet<string> analyzedAssemblies)
     {
         if (t.SpecialType != SpecialType.None) return false;
         if (t.TypeKind != TypeKind.Class && t.TypeKind != TypeKind.Struct) return false;
         if (t.ContainingNamespace?.ToDisplayString().StartsWith("System", StringComparison.Ordinal) == true) return false;
-        if (!t.Locations.Any(l => l.IsInSource)) return false;
+        // Same boundary as the base-chain walks, for the same reason: a solution type reached
+        // through a compiled DLL reference has no source location, and treating it as foreign
+        // would price a nested DTO property (3) as a scalar one (1).
+        if (!IsInAnalyzedSolution(t, analyzedAssemblies)) return false;
         return true;
     }
 
     /// <summary>
-    /// A type only counts as a DTO if it actually carries data: public properties and
-    /// no business-logic methods. This prevents static command-registration classes,
-    /// service classes that happen to match a name pattern, etc. from inflating the DTO score.
-    /// </summary>
-    /// <summary>
     /// Whether a type is a pure data carrier: carried data, and nothing a consumer can invoke.
+    /// A type only counts as a DTO if it carries data and no behaviour, which keeps static
+    /// command-registration classes and services that happen to match a name pattern out of the
+    /// DTO score.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -195,7 +206,7 @@ public sealed partial class SurfaceScoreEngine
     /// other predicate has no such stop is filed as its own issue rather than changed from here.
     /// </para>
     /// </remarks>
-    private static bool LooksLikeDataCarrier(INamedTypeSymbol type)
+    private static bool LooksLikeDataCarrier(INamedTypeSymbol type, HashSet<string> analyzedAssemblies)
     {
         if (type.IsStatic) return false;
         if (type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
@@ -207,7 +218,7 @@ public sealed partial class SurfaceScoreEngine
             {
                 // Object and ValueType carry universal members rather than a published API choice.
                 if (t.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType) break;
-                if (!t.Locations.Any(l => l.IsInSource)) break;
+                if (!IsInAnalyzedSolution(t, analyzedAssemblies)) break;
             }
 
             foreach (var m in t.GetMembers())

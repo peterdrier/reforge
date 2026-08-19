@@ -117,3 +117,15 @@ public sealed class IndexerOnlyReportInfo
 {
     public string this[int index] => "";
 }
+
+// Derives from a base declared in a different project of the same solution. Its inherited
+// properties are published by THIS section and must be charged to it.
+public sealed class CrossProjectReportInfo : SampleSolution.Camp.CrossProjectEnvelopeBase
+{
+    public string Summary { get; set; } = "";
+
+    // A property whose TYPE lives in another project of the solution. It is a nested DTO property
+    // (weight 3), not a scalar one (weight 1) — deciding that by source location rather than by
+    // assembly membership would misprice it wherever the reference is a compiled DLL.
+    public SampleSolution.Camp.CrossProjectNestedPayload Payload { get; set; } = new();
+}
