@@ -66,3 +66,20 @@ public static class LookupFactory
         public string GetLabel(int id) => id.ToString();
     }
 }
+
+/// <summary>
+/// Holds the <see cref="IBadgeService"/> implementation two levels deep. `EnumerateTypes` used to
+/// yield a top-level type and its immediate children only, so `Inner.Impl` was invisible.
+/// </summary>
+public static class BadgeHost
+{
+    public static IBadgeService Create() => new Inner.Impl();
+
+    public static class Inner
+    {
+        public sealed class Impl : IBadgeService
+        {
+            public string GetBadge(int id) => $"badge-{id}";
+        }
+    }
+}

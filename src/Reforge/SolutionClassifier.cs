@@ -256,8 +256,17 @@ public static class SolutionClassifier
         if (impl.GetMethod is null) return true; // set-only: nothing to read, and a setter is a write anyway
 
         var body = GetterBody(impl, ct);
-        if (body is not null && ImplementationComplexity.CommitsPersistentWrite(body)) writes.Add(key);
-        return true;
+        if (body is not null)
+        {
+            if (ImplementationComplexity.CommitsPersistentWrite(body)) writes.Add(key);
+            return true;
+        }
+
+        // No body found means one of two opposite things. A property declared in SOURCE with no body
+        // is an auto-property, which provably commits nothing — a complete observation. A property
+        // reached from a referenced binary has no syntax to read at all, so its getter could do
+        // anything; that is a gap, and a gap must not read as read-only.
+        return impl.Locations.Any(l => l.IsInSource);
     }
 
     /// <summary>
@@ -330,12 +339,23 @@ public static class SolutionClassifier
                     foreach (var t in EnumerateTypes(child)) yield return t;
                     break;
                 case INamedTypeSymbol type:
-                    yield return type;
-                    foreach (var nested in type.GetTypeMembers())
-                        yield return nested;
+                    foreach (var t in WithNested(type)) yield return t;
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// A type and every type nested inside it, to any depth. Recursive rather than one level: an
+    /// implementation nested inside a nested factory is still a type in this solution, and stopping at
+    /// depth 1 made it invisible to every pass at once.
+    /// </summary>
+    private static IEnumerable<INamedTypeSymbol> WithNested(INamedTypeSymbol type)
+    {
+        yield return type;
+        foreach (var nested in type.GetTypeMembers())
+            foreach (var t in WithNested(nested))
+                yield return t;
     }
 
     private static HashSet<string> Classify(SurfaceScoreConfig config, INamedTypeSymbol type, string filePath, string namespaceName)

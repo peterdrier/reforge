@@ -61,3 +61,12 @@ public interface ILookupService
 {
     string GetLabel(int id);
 }
+
+/// <summary>
+/// Fixture for the deep-nesting case. Its only implementer is nested two levels down, which the
+/// one-level type enumeration could not see at all.
+/// </summary>
+public interface IBadgeService
+{
+    string GetBadge(int id);
+}

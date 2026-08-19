@@ -37,16 +37,22 @@ on an analysis gap is the failure #51 fixed elsewhere:
   leave its members abstract; a bodyless data-returning declaration reads as a query under the shape
   heuristic, so demoting there would be concluding from an absence. Evidence of *writing* still counts
   from a partial observation — only the read-only conclusion needs every member accounted for by some
-  one implementer. A bodyless *getter* is the one exception, and in the other direction: it is an
-  auto-property, which provably commits nothing, so it counts as fully accounted for.
+  one implementer. A bodyless *getter* declared in **source** is the one exception, and it runs the
+  other way: that is an auto-property, which provably commits nothing. A getter with no syntax at all
+  is a property reached from a referenced binary, which is a gap again, not an auto-property.
 
 Demoted interfaces are not exempted either — they score `readServiceInterfaceMethod` (6) instead of
 `fullServiceInterfaceMethod` (8). A published read facade is real surface; it is just not a write
 commitment.
 
-The inherited-member, accessor, getter-body, private-implementer, and partial-observation rules
-**change no number on Humans** — the demoted interface set is byte-identical with and without them,
-all 45 full / 68 read either way. They are correctness fixes for shapes Humans does not currently
+`SolutionClassifier` also enumerates nested types **recursively** now, where it stopped at one level of
+nesting before. An implementation nested inside a nested factory was invisible to every pass at once,
+not just this one. Measured: +5 types on the sample solution, +0 on Humans, `surfaceTotal` unchanged on
+both — a correctness fix that moves no score, which is why it ships here rather than as its own change.
+
+The inherited-member, accessor, getter-body, private-implementer, nested-type, and
+partial-observation rules **change no number on Humans** — the demoted interface set is byte-identical
+with and without them, all 45 full / 68 read either way. They are correctness fixes for shapes Humans does not currently
 contain, and the sample-solution fixtures below are what exercises them. A clean corpus is not evidence
 that a predicate is right, only that this corpus does not reach the wrong part of it.
 
@@ -93,7 +99,14 @@ to any branch moves a test rather than a number:
 | `IArchiveService` | stays full | write inherited from `IArchiveWriter<T>` |
 | `IRetentionService` | stays full | settable property, every method read-shaped |
 | `IQuotaService` | stays full | getter-only property whose getter commits |
+| `IBadgeService` | demote | implementer nested two levels deep — now reachable |
 | `ILedgerService` | stays full | only implementer is abstract, so no body is observed |
+
+One branch has **no fixture**: a getter reached from a referenced *binary*, where the implementation
+property has no syntax to read. Every project in the sample solution is a `ProjectReference`, so Roslyn
+hands back source symbols and the shape cannot be reproduced there. The code distinguishes it — a
+bodyless getter counts as observed only when the property is declared in source — but that line is
+covered by reading, not by a test, and is recorded here rather than left to look tested.
 
 The last five each fail against the commit before the one that added them.
 

@@ -123,6 +123,31 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_DeeplyNestedImplementer_IsStillObserved()
+    {
+        var classified = await ClassifyAsync();
+
+        // IBadgeService's only implementer is BadgeHost.Inner.Impl — two levels of nesting. Type
+        // enumeration used to yield a top-level type and its immediate children only, so this was
+        // invisible to every pass, not just the demotion one.
+        Assert.Contains(classified, c => c.Type.Name == "ILookupService" && c.Tags.Contains("readServiceInterface"));
+        Assert.Contains(classified, c => c.Type.Name == "IBadgeService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IBadgeService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_EnumeratesNestedTypesToAnyDepth()
+    {
+        var classified = await ClassifyAsync();
+
+        // The corpus itself, not just the demotion decision: a nested-in-nested type is a type this
+        // solution declares, and every rule that sizes or scores a section needs to see it. Asserted at
+        // depth TWO on purpose — BadgeHost.Inner is an immediate child, which the one-level walk already
+        // yielded, so asserting on it would pass either way and prove nothing.
+        Assert.Contains(classified, c => c.Type.ToDisplayString() == "SampleSolution.Core.BadgeHost.Inner.Impl");
+    }
+
+    [Fact]
     public async Task ClassifyAsync_SameTypeNameInTwoAssemblies_KeepsBoth()
     {
         var classified = await ClassifyAsync();
