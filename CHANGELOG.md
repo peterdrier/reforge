@@ -29,9 +29,9 @@ Placement is decided per method, from **per-section touch counts** rather than p
 | `move` | one other section dominates, nothing at the destination is in the way |
 | `move-would-duplicate` | same, but the destination already declares something under this name |
 | `foundation-target` | the dominant section is shared infrastructure, so the coupling is expected and no move is proposed |
-| `orchestrator` | reaches three or more sections, so no single one could host it |
+| `orchestrator` | reaches two or more sections, so no single one could host it |
 | `mapper` | reads the target's data carriers rather than calling its behavior — a mapper belongs to whoever needs the mapped shape |
-| `blocked` | the method implements an interface member or overrides a base member, so it cannot move alone |
+| `blocked` | the method is pinned to its type — by a contract it supplies, or by a type parameter that type declares — so it cannot move alone |
 
 By default only `move` and `move-would-duplicate` are reported, since the rest are explanations for why a
 method that *looks* misplaced is not. The tail line always counts every verdict over the full result set,
@@ -41,8 +41,17 @@ so a filtered view still says what it filtered.
 construction**. A method aggregating four sections is the opposite of one concentrating touches on a
 single type, so an envy score reads it as clean — and it is the shape most likely to be an accidental
 junction drawer. It gets a verdict rather than a score so it can be looked at. The orchestrator verdict is
-structural for now (three or more sections touched); distinguishing a legitimate cross-cutting
+structural for now (two or more sections touched); distinguishing a legitimate cross-cutting
 orchestrator from a drawer needs its own detector and is not attempted here.
+
+**Two, not three.** The threshold was three, with two-section methods reported under a separate
+`judgment` verdict. That verdict applied no dominance test — exactly like `orchestrator`, and for exactly
+the same reason: neither of the two sections could host the method without leaving the other reached from
+the wrong side. It was one claim under two names, the weaker of which is now gone. On Humans this is the
+largest population by far: 634 orchestrators, 467 of them reaching exactly two sections.
+
+The per-section split is part of the orchestrator evidence, where it does more work at a fan-out of two
+than at seven — it separates a method spread evenly across its sections from one leaning on a single one.
 
 ### What the destination already has
 
@@ -66,6 +75,13 @@ it exists to find, and three pipe fixtures produced no output at all until this 
 property used only as the receiver through which another section is reached is now dropped from both
 sides — dropped rather than credited to the target, because crediting it would double the target's count
 and shift every threshold with it.
+
+Every wrapper that leaves a receiver a receiver had to be recognised one at a time, and each one hid the
+same 3:3 tie until it was: `this._dep`, parentheses, `_dep?.M()`, `_dep!.M()`, `_dep[0]`, `_dep?[0]`,
+`((IForeign)_dep).M()`, `(_dep as IForeign)!.M()`, `(await _depTask).M()`. Symmetrically, work expressed
+as something other than a named member had to be measured one shape at a time: a constructor hangs off
+the creation expression, an indexer off the element access, and a user-defined operator off the operator
+expression, so `new Foreign()`, `foreign[0]` and `left + right` each measured as nothing until handled.
 
 ### The tuned number
 
