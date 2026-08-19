@@ -75,3 +75,17 @@ public class InheritedSummaryResult : BehaviorfulRowBase
 {
     public string Label { get; init; } = "";
 }
+
+/// <summary>
+/// Constructed rather than called. Three of these in a method are three touches on this section, and
+/// counting only member accesses missed them entirely — <c>new T()</c> carries its constructor on the
+/// creation expression, while the type name inside it binds to the type.
+/// </summary>
+public class ConstructedWorkItem
+{
+    public ConstructedWorkItem(string label) => Label = label;
+
+    public string Label { get; }
+
+    public string Render() => $"<{Label}>";
+}

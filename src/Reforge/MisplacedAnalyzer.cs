@@ -63,7 +63,14 @@ public sealed record MisplacedMethod(
     MisplacedVerdict Verdict,
     string Evidence,
     string? DuplicateOf,
-    string? BlockedBy);
+    string? BlockedBy,
+    /// <summary>
+    /// The concrete type in <see cref="TargetSection"/> this method leans on hardest — the natural host
+    /// if it moves. Null when no destination was chosen (orchestrators, or nothing callable in the
+    /// target). Reported because the section alone is not where a method goes, and because the choice
+    /// should be auditable rather than visible only when a namesake happens to collide with it.
+    /// </summary>
+    string? DestinationType);
 
 /// <summary>How much of the solution depends on a section, and how much of it the section depends on.</summary>
 public sealed record SectionDependencyProfile(string Section, int FanIn, int FanOut);
@@ -322,8 +329,17 @@ public static class MisplacedAnalyzer
             // is NOT listed: its own `.Name` is an identifier that this walk already visits, so counting
             // the binding too scored every null-conditional call twice — inflating the target's side of
             // a comparison whose whole job is to weigh one section against another.
-            if (node is not (IdentifierNameSyntax or GenericNameSyntax)) continue;
+            // Object creation carries its constructor on the ObjectCreationExpression, not on the type
+            // name inside it — the name binds to the TYPE. Without this, `new ForeignThing()` counted as
+            // nothing at all while `_dep.Create()` counted as one, which is an artifact of the filter
+            // rather than a decision: constructing another section's types is working with that section.
+            if (node is not (IdentifierNameSyntax or GenericNameSyntax or BaseObjectCreationExpressionSyntax)) continue;
             if (IsInsideNameOf(node)) continue;
+
+            // A type name inside `new T(...)` would otherwise be counted a second time, once as the
+            // type and once as the constructor.
+            if (node is (IdentifierNameSyntax or GenericNameSyntax)
+                && node.Parent is ObjectCreationExpressionSyntax creation && creation.Type == node) continue;
 
             var touched = doc.Model.GetSymbolInfo(node, ct).Symbol;
             if (touched is null) continue;
@@ -454,7 +470,7 @@ public static class MisplacedAnalyzer
 
         return Finding(m, target, behaviorTouches, dataTouches,
             collision is null ? MisplacedVerdict.Move : MisplacedVerdict.MoveWouldDuplicate,
-            evidence, duplicateOf: collision);
+            evidence, duplicateOf: collision, destinationType: destination?.Name);
     }
 
     /// <summary>
@@ -672,9 +688,10 @@ public static class MisplacedAnalyzer
 
     private static MisplacedMethod Finding(
         MethodTouches m, string? target, int behaviorTouches, int dataTouches,
-        MisplacedVerdict verdict, string evidence, string? duplicateOf = null, string? blockedBy = null) =>
+        MisplacedVerdict verdict, string evidence, string? duplicateOf = null, string? blockedBy = null,
+        string? destinationType = null) =>
         new(m.Name, m.File, m.Line, m.Section, target, m.OwnTouches, behaviorTouches, dataTouches,
-            m.TouchedSections, verdict, evidence, duplicateOf, blockedBy);
+            m.TouchedSections, verdict, evidence, duplicateOf, blockedBy, destinationType);
 
     /// <summary>
     /// Whether this own-section field or property is being used purely as the receiver through which
@@ -775,7 +792,9 @@ public static class MisplacedAnalyzer
 
         // Last, because it is the only branch needing an index: the contract may belong to a type further
         // down the hierarchy rather than to this one.
-        return inheritedContracts.TryGetValue(MethodKey(symbol), out var inherited) ? inherited : null;
+        return inheritedContracts.TryGetValue(MethodKey(symbol.OriginalDefinition), out var inherited)
+            ? inherited
+            : null;
     }
 
     /// <summary><c>1 touch</c> / <c>4 touches</c>. The output is read by people and by models.</summary>
@@ -823,8 +842,13 @@ public static class MisplacedAnalyzer
                     // Declared on this very type is the case Contract already answers without an index.
                     if (SymbolEqualityComparer.Default.Equals(impl.ContainingType, c.Type)) continue;
 
+                    // The ORIGINAL definition. A contract supplied through a constructed base —
+                    // `Derived : Base<int>, IFoo` inheriting `Base<T>.M(T)` — resolves to the
+                    // substituted `Base<int>.M(int)`, while the method measured from syntax is
+                    // `Base<T>.M(T)`. Keyed as substituted, the two never meet and the pin stays
+                    // invisible, which is the bug this index was added to fix.
                     index.TryAdd(
-                        MethodKey(impl),
+                        MethodKey(impl.OriginalDefinition),
                         $"implements {iface.Name}.{candidate.Name} for {c.Type.Name}");
                 }
         }

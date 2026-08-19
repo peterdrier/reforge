@@ -175,7 +175,12 @@ public static class MisplacedCommand
             sb.AppendLine(group.Key);
             foreach (var f in group)
             {
-                var arrow = f.TargetSection is null ? "" : $" -> {f.TargetSection}";
+                // The destination TYPE where one was chosen: a section is not a place a method goes.
+                var arrow = f.TargetSection is null
+                    ? ""
+                    : f.DestinationType is null
+                        ? $" -> {f.TargetSection}"
+                        : $" -> {f.TargetSection}.{f.DestinationType}";
                 sb.AppendLine($"  {f.Method}{arrow}  [{Slug(f.Verdict)}]");
                 sb.AppendLine($"    {f.File}:{f.Line}");
                 sb.AppendLine($"    {f.Evidence}");
@@ -224,6 +229,7 @@ public static class MisplacedCommand
                 line = f.Line,
                 section = f.Section,
                 targetSection = f.TargetSection,
+                destinationType = f.DestinationType,
                 verdict = Slug(f.Verdict),
                 ownTouches = f.OwnTouches,
                 targetBehaviorTouches = f.TargetBehaviorTouches,

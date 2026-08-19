@@ -408,3 +408,46 @@ public interface IInheritedContractReport
 public class InheritedContractReporter : InheritedContractReporterBase, IInheritedContractReport
 {
 }
+
+/// <summary>
+/// A method whose foreign work is expressed entirely through <c>new</c>. Nothing is called on the other
+/// section; three of its types are constructed. Counting only member accesses reported no finding at all.
+/// </summary>
+public class ConstructingReporter
+{
+    public string BuildWorkItems(string a, string b, string c)
+    {
+        var first = new ConstructedWorkItem(a);
+        var second = new ConstructedWorkItem(b);
+        var third = new ConstructedWorkItem(c);
+        return $"{first}{second}{third}";
+    }
+}
+
+/// <summary>
+/// The inherited-contract case again, but supplied through a <b>constructed</b> base:
+/// <c>Derived : Base&lt;int&gt;, IGenericContractReport</c> is served by <c>Base&lt;T&gt;.RenderGenericAsync(T)</c>.
+/// The interface map resolves to the substituted <c>Base&lt;int&gt;.RenderGenericAsync(int)</c>, so an
+/// index keyed on the substituted symbol never matches the method as declared.
+/// </summary>
+public class GenericContractReporterBase<T>
+{
+    private readonly GreetingService _greetings = new();
+
+    public async Task<string> RenderGenericAsync(T key)
+    {
+        var greeting = await _greetings.GetGreetingAsync(1);
+        var recent = await _greetings.GetRecentGreetingsAsync(1);
+        await _greetings.RecordGreetingAsync(1, greeting);
+        return $"{key}/{greeting}/{recent.Count}";
+    }
+}
+
+public interface IGenericContractReport
+{
+    Task<string> RenderGenericAsync(int key);
+}
+
+public class GenericContractReporter : GenericContractReporterBase<int>, IGenericContractReport
+{
+}

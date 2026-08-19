@@ -267,6 +267,49 @@ public class MisplacedAnalyzerTests
     }
 
     [Fact]
+    public async Task Analyze_Move_NamesTheDestinationType()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeGreetingsForRelocation");
+
+        Assert.NotNull(finding);
+        // A section is not a place a method goes. The analyzer already picks the concrete type the method
+        // leans on hardest — it has to, for the collision check to be sayable — and discarding it meant
+        // the actionable verdict named only an assembly unless a namesake happened to exist.
+        Assert.Equal(MisplacedVerdict.Move, finding.Verdict);
+        Assert.Equal("GreetingService", finding.DestinationType);
+    }
+
+    [Fact]
+    public async Task Analyze_ConstructingAnotherSectionsTypes_CountsAsTouches()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "BuildWorkItems");
+
+        Assert.NotNull(finding);
+        // `new T(...)` carries its constructor on the creation expression; the type name inside binds to
+        // the type. A method whose foreign work is all construction therefore measured as touching
+        // nothing, while one calling the same section once measured as touching it.
+        Assert.Equal("Services", finding.TargetSection);
+        Assert.Equal(3, finding.TargetBehaviorTouches);
+        Assert.Equal(0, finding.OwnTouches);
+    }
+
+    [Fact]
+    public async Task Analyze_ContractThroughAConstructedGenericBase_IsBlocked()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "RenderGenericAsync");
+
+        Assert.NotNull(finding);
+        // The interface map resolves to the SUBSTITUTED Base<int>.RenderGenericAsync(int), while the
+        // method measured from syntax is Base<T>.RenderGenericAsync(T). Keyed as substituted, the index
+        // added for inherited contracts never matched the very method it exists to pin.
+        Assert.Equal(MisplacedVerdict.Blocked, finding.Verdict);
+        Assert.Contains("IGenericContractReport", finding.BlockedBy!, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Analyze_MethodSpanningThreeSections_IsAnOrchestratorNotAMove()
     {
         var report = await AnalyzeAsync();
