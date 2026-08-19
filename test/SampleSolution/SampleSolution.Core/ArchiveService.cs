@@ -99,3 +99,25 @@ public class SeasonRosterService : RosterServiceBase
 {
     public override string GetRosterName(int id) => $"roster-{id}";
 }
+
+/// <summary>Implements the writable-ref fixtures. Nothing in either body commits.</summary>
+public class GaugeService : IGaugeService, ISlotService
+{
+    private int _current;
+    private readonly int[] _slots = new int[8];
+
+    public ref int Current => ref _current;
+
+    public ref int GetSlot(int index) => ref _slots[index];
+}
+
+/// <summary>Implements the <c>ref readonly</c> negative control.</summary>
+public class ReadingService : IReadingService
+{
+    private readonly int _value;
+    private readonly int[] _readings = new int[8];
+
+    public ref readonly int Value => ref _value;
+
+    public ref readonly int GetReading(int index) => ref _readings[index];
+}

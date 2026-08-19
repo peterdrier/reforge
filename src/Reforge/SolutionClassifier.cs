@@ -168,7 +168,7 @@ public static class SolutionClassifier
             foreach (var member in PublishedMembers(c.Type))
             {
                 ct.ThrowIfCancellationRequested();
-                if (member is IPropertySymbol { SetMethod: not null } or IEventSymbol)
+                if (PublishesWriteByDeclaration(member))
                 {
                     writes.Add(key);
                     break;
@@ -226,6 +226,32 @@ public static class SolutionClassifier
             tags.Add("readServiceInterface");
         }
     }
+
+    /// <summary>
+    /// Whether a member hands consumers a mutation on the strength of its <b>declaration alone</b>, so
+    /// that no implementation body could withdraw it.
+    /// </summary>
+    /// <remarks>
+    /// Three shapes qualify:
+    /// <list type="bullet">
+    ///   <item>A <b>settable property</b> — including <c>init</c>, and including indexers.</item>
+    ///   <item>An <b>event</b>, whose add/remove mutate the subscriber list.</item>
+    ///   <item>A member <b>returned by writable reference</b>. <c>ref int Current { get; }</c> has no
+    ///         setter, but <c>svc.Current = 5</c> compiles and writes through to the backing state;
+    ///         the implementation is <c>=&gt; ref _current</c>, which contains no persistence call and
+    ///         so reads as a query. <c>ref readonly</c> does not qualify, which is why the test is
+    ///         <c>ReturnsByRef</c> rather than a <c>RefKind</c> comparison — it is already false for
+    ///         the readonly form.</item>
+    /// </list>
+    /// </remarks>
+    private static bool PublishesWriteByDeclaration(ISymbol member) => member switch
+    {
+        IPropertySymbol { SetMethod: not null } => true,
+        IPropertySymbol { ReturnsByRef: true } => true,
+        IMethodSymbol { ReturnsByRef: true } => true,
+        IEventSymbol => true,
+        _ => false
+    };
 
     /// <summary>
     /// Reads one method's implementation on <paramref name="type"/>. Returns whether behavior was

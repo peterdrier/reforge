@@ -173,6 +173,32 @@ public class SolutionClassifierTests
         Assert.DoesNotContain(classified, c => c.Type.Name == "IRosterService" && c.Tags.Contains("fullServiceInterface"));
     }
 
+    [Theory]
+    [InlineData("IGaugeService")]
+    [InlineData("ISlotService")]
+    public async Task ClassifyAsync_WritableRefReturn_StaysFullService(string interfaceName)
+    {
+        var classified = await ClassifyAsync();
+
+        // Neither has a setter, and neither implementation commits — `=> ref _current` contains no
+        // persistence call and reads as a query. But `svc.Current = 5` and `svc.GetSlot(0) = 5` both
+        // compile and write through to the backing state, so the write is in the declaration.
+        Assert.Contains(classified, c => c.Type.Name == interfaceName && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == interfaceName && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_RefReadonlyReturn_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // The negative control for the rule above. A `ref readonly` reference cannot be assigned
+        // through, so IReadingService is a read surface — without this the rule would be "any ref",
+        // which would re-inflate the write population it exists to shrink.
+        Assert.Contains(classified, c => c.Type.Name == "IReadingService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IReadingService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
     [Fact]
     public async Task ClassifyAsync_SameTypeNameInTwoAssemblies_KeepsBoth()
     {

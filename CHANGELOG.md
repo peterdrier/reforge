@@ -12,10 +12,14 @@ mutates state, reusing the existing `ImplementationComplexity.IsMutation` rather
 write detector.
 
 For **methods** the question is only decidable at the implementation — an interface method has no body
-— which is why this could not be fixed in the classification rules alone. Two member shapes are
-decidable on the declaration and are read there instead: a **settable property** and an **event**.
-Either hands every consumer a mutation that no implementation body can withdraw, so one is sufficient
-on its own, with no implementation needed. A **getter-only property** is read at the implementation like
+— which is why this could not be fixed in the classification rules alone. Three member shapes are
+decidable on the declaration and are read there instead: a **settable property** (including `init`, and
+including indexers), an **event**, and anything **returned by writable reference**. Each hands every
+consumer a mutation that no implementation body can withdraw, so one is sufficient on its own, with no
+implementation needed. `ref int Current { get; }` has no setter and its implementation is
+`=> ref _current` — no persistence call, so it reads as a query — but `svc.Current = 5` compiles and
+writes through. `ref readonly` does not qualify, and has its own negative-control fixture so the rule
+cannot silently widen to "any ref". A **getter-only property** is read at the implementation like
 a method, but only for the definitive signal — a persistence commit in the getter body. The
 command-shape heuristic is meaningless for an accessor, since a getter returns data by definition, so
 `ImplementationComplexity.CommitsPersistentWrite` is now exposed separately from `IsMutation` for this.
@@ -108,7 +112,7 @@ Following dependency calls one level would fix both and risks the opposite failu
 a service that writes becomes a write surface, which re-inflates the population the change exists to
 shrink. Left as-is deliberately, and recorded rather than hidden.
 
-Sample solution: `surfaceTotal` 2,068 → 2,034. One fixture per branch of the rule, so a future change
+Sample solution: `surfaceTotal` 2,118 → 2,082. One fixture per branch of the rule, so a future change
 to any branch moves a test rather than a number:
 
 | fixture | expected | why |
@@ -120,6 +124,8 @@ to any branch moves a test rather than a number:
 | `IArchiveService` | stays full | write inherited from `IArchiveWriter<T>` |
 | `IRetentionService` | stays full | settable property, every method read-shaped |
 | `IQuotaService` | stays full | getter-only property whose getter commits |
+| `IGaugeService`, `ISlotService` | stays full | writable `ref` return — assignable with no setter |
+| `IReadingService` | demote | `ref readonly` return — the negative control for the rule above |
 | `IBadgeService` | demote | implementer nested two levels deep — now reachable |
 | `IManifestService` | demote | implemented by a partial method whose body is on the other half |
 | `IRosterService` | demote | declared by an abstract base, accounted for by the concrete derived class |

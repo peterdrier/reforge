@@ -91,3 +91,29 @@ public interface IRosterService
 {
     string GetRosterName(int id);
 }
+
+/// <summary>
+/// Fixture for the writable-ref-property case. No setter, and the implementation is
+/// <c>=&gt; ref _current</c> — no persistence call — yet <c>svc.Current = 5</c> compiles and writes.
+/// </summary>
+public interface IGaugeService
+{
+    ref int Current { get; }
+}
+
+/// <summary>Fixture for the same rule reached through a method rather than a property.</summary>
+public interface ISlotService
+{
+    ref int GetSlot(int index);
+}
+
+/// <summary>
+/// Negative control for both. <c>ref readonly</c> hands out a reference that cannot be assigned
+/// through, so this is a read surface and must demote — otherwise the rule above is just "any ref".
+/// </summary>
+public interface IReadingService
+{
+    ref readonly int Value { get; }
+
+    ref readonly int GetReading(int index);
+}
