@@ -112,7 +112,7 @@ public static class SectionMetricsAnalyzer
     private sealed record MethodFact(string Name, int Cognitive, int Cyclomatic);
 
     private sealed record TypeFacts(
-        string Section,
+        string Assembly,
         string Name,
         List<(string Path, int Loc)> Files,
         bool IsClass,
@@ -187,7 +187,7 @@ public static class SectionMetricsAnalyzer
         }
 
         return new TypeFacts(
-            c.Group,
+            c.Type.ContainingAssembly?.Name ?? "",
             c.Type.Name,
             files,
             c.Type.TypeKind is TypeKind.Class or TypeKind.Struct,
@@ -276,15 +276,15 @@ public static class SectionMetricsAnalyzer
 
         public void Feed(TypeFacts f)
         {
-            // Keyed by section AND path, not path alone. The same physical file can be LINKED into
-            // two projects, which compiles it into two assemblies and so into two sections — two
-            // real copies of the code, each of which the sections count. A path-only key made the
-            // solution rollup drop the second copy's LOC while still counting its classes and
-            // methods, so the rollup stopped being the sum of its sections and stopped describing
-            // the pooled corpus. For a per-section accumulator every fact carries the same section,
-            // so the key changes nothing there.
+            // Keyed by declaring ASSEMBLY and path, not path alone and not section and path. The
+            // unit being counted is a compiled copy: the same physical file can be LINKED into
+            // several projects, and each compilation of it is real code whose classes and methods
+            // are fed separately. A path-only key dropped every copy after the first, so LOC and
+            // files stopped agreeing with the classes and methods counted beside them. Section is
+            // the wrong key for the same reason in miniature — `X` and `X.Contracts` deliberately
+            // fold into one section, so a file linked into both would collapse again.
             foreach (var (path, loc) in f.Files)
-                if (_files.Add($"{f.Section}\u0000{path}")) _loc += loc;
+                if (_files.Add($"{f.Assembly}\u0000{path}")) _loc += loc;
 
             if (f.IsClass) _classes++;
             else if (f.IsInterface) _interfaces++;
