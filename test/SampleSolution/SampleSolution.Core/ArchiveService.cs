@@ -28,3 +28,41 @@ public abstract class LedgerServiceBase : ILedgerService
 {
     public abstract string GetLedgerName(int id);
 }
+
+/// <summary>
+/// Implements <see cref="IQuotaService"/> with a getter that commits. Pathological on purpose: the
+/// point is that only the body says so.
+/// </summary>
+public class QuotaService : IQuotaService
+{
+    private readonly AuditDbContext _db = new();
+
+    public int CurrentQuota
+    {
+        get
+        {
+            _db.SaveChanges();
+            return 7;
+        }
+    }
+}
+
+/// <summary>Minimal stub so the getter above has something to commit on.</summary>
+public class AuditDbContext
+{
+    public int SaveChanges() => 0;
+}
+
+/// <summary>
+/// Publishes <see cref="ILookupService"/> without publishing a type. The implementation is private
+/// and nested, so it never reaches the scored corpus.
+/// </summary>
+public static class LookupFactory
+{
+    public static ILookupService Create() => new Impl();
+
+    private sealed class Impl : ILookupService
+    {
+        public string GetLabel(int id) => id.ToString();
+    }
+}

@@ -343,19 +343,8 @@ public static class ImplementationComplexity
     /// </summary>
     public static bool IsMutation(IMethodSymbol method, BaseMethodDeclarationSyntax? syntax)
     {
-        if (syntax is not null)
-        {
-            SyntaxNode? body = (SyntaxNode?)syntax.Body ?? syntax.ExpressionBody?.Expression;
-            if (body is not null)
-            {
-                foreach (var inv in body.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
-                {
-                    var name = InvokedName(inv);
-                    if (name is not null && WriteCallNames.Contains(name, StringComparer.Ordinal))
-                        return true;
-                }
-            }
-        }
+        if (syntax is not null && CommitsPersistentWrite((SyntaxNode?)syntax.Body ?? syntax.ExpressionBody?.Expression))
+            return true;
 
         bool returnsData = ReturnsData(method);
         var bare = StripAsync(method.Name);
@@ -364,6 +353,25 @@ public static class ImplementationComplexity
         if (!returnsData)
             return true; // command shape (void / non-generic Task) with no read signal
         return false; // returns data, no write calls -> treat as read
+    }
+
+    /// <summary>
+    /// Whether a body contains a persistence-commit call — the one <b>definitive</b> write signal, as
+    /// opposed to the command-shape heuristic. Exposed separately because not every write-capable
+    /// member is a <c>BaseMethodDeclarationSyntax</c>: a property getter's declaration is an
+    /// <c>AccessorDeclarationSyntax</c> or an arrow clause on the property itself, and the shape
+    /// heuristic is meaningless for an accessor anyway (a getter returns data by definition).
+    /// </summary>
+    public static bool CommitsPersistentWrite(SyntaxNode? body)
+    {
+        if (body is null) return false;
+        foreach (var inv in body.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
+        {
+            var name = InvokedName(inv);
+            if (name is not null && WriteCallNames.Contains(name, StringComparer.Ordinal))
+                return true;
+        }
+        return false;
     }
 
     public static bool IsRead(IMethodSymbol method, BaseMethodDeclarationSyntax? syntax)

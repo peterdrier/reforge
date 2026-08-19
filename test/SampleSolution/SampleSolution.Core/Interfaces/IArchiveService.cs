@@ -42,3 +42,22 @@ public interface ILedgerService
 {
     string GetLedgerName(int id);
 }
+
+/// <summary>
+/// Fixture for the getter-body case. Every member is read-shaped and the property has no setter, so
+/// nothing on the declaration argues for a write — but the implementing getter commits.
+/// </summary>
+public interface IQuotaService
+{
+    int CurrentQuota { get; }
+}
+
+/// <summary>
+/// Fixture for the private-implementer case. Its only implementer is a private nested class behind a
+/// factory, which is not scored surface but is still implementation evidence: the interface IS
+/// implemented in this solution, read-only, so it must demote.
+/// </summary>
+public interface ILookupService
+{
+    string GetLabel(int id);
+}

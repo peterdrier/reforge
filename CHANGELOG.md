@@ -15,31 +15,40 @@ For **methods** the question is only decidable at the implementation — an inte
 — which is why this could not be fixed in the classification rules alone. Two member shapes are
 decidable on the declaration and are read there instead: a **settable property** and an **event**.
 Either hands every consumer a mutation that no implementation body can withdraw, so one is sufficient
-on its own, with no implementation needed. Membership is read from the interface **and its base
-interfaces**, because `GetMembers()` returns only what a type declares itself — `IOrderService :
-ICrudService<Order>` would otherwise look empty and demote while its consumers get a full set of writes.
+on its own, with no implementation needed. A **getter-only property** is read at the implementation like
+a method, but only for the definitive signal — a persistence commit in the getter body. The
+command-shape heuristic is meaningless for an accessor, since a getter returns data by definition, so
+`ImplementationComplexity.CommitsPersistentWrite` is now exposed separately from `IsMutation` for this.
+
+Membership is read from the interface **and its base interfaces**, because `GetMembers()` returns only
+what a type declares itself — `IOrderService : ICrudService<Order>` would otherwise look empty and
+demote while its consumers get a full set of writes.
 
 **Demotion requires evidence of read-only-ness, not absence of evidence of writing.** Two gaps
 therefore preserve the name-derived classification rather than repricing on nothing — repricing surface
 on an analysis gap is the failure #51 fixed elsewhere:
 
 - **No implementation in the analyzed solution.** The walk skips test projects and cannot see other
-  assemblies, so "not found" means unknown, not read-only.
+  assemblies, so "not found" means unknown, not read-only. *Private* types are explicitly not such a
+  gap: they are excluded from the scored corpus but included as implementation evidence, so an
+  interface implemented only by a private nested class behind a factory is still observed. Answering
+  "unknown" about a type the walk is looking straight at is not conservatism.
 - **No implementing type accounts for the whole surface.** An abstract class may list the interface and
   leave its members abstract; a bodyless data-returning declaration reads as a query under the shape
   heuristic, so demoting there would be concluding from an absence. Evidence of *writing* still counts
   from a partial observation — only the read-only conclusion needs every member accounted for by some
-  one implementer.
+  one implementer. A bodyless *getter* is the one exception, and in the other direction: it is an
+  auto-property, which provably commits nothing, so it counts as fully accounted for.
 
 Demoted interfaces are not exempted either — they score `readServiceInterfaceMethod` (6) instead of
 `fullServiceInterfaceMethod` (8). A published read facade is real surface; it is just not a write
 commitment.
 
-The inherited-member, accessor, and partial-observation rules **change no number on either corpus** —
-verified by diffing the demoted interface set with and without them, empty in both directions. They are
-correctness fixes for shapes Humans does not currently contain, and the sample-solution fixtures below
-are what exercises them. A clean corpus is not evidence that a predicate is right, only that this
-corpus does not reach the wrong part of it.
+The inherited-member, accessor, getter-body, private-implementer, and partial-observation rules
+**change no number on Humans** — the demoted interface set is byte-identical with and without them,
+all 45 full / 68 read either way. They are correctness fixes for shapes Humans does not currently
+contain, and the sample-solution fixtures below are what exercises them. A clean corpus is not evidence
+that a predicate is right, only that this corpus does not reach the wrong part of it.
 
 Measured against Humans (`113061bcf5f6`): **48 of 93 classified service interfaces reclassified**, and
 `surfaceTotal` **17,379 → 17,129**.
@@ -72,13 +81,21 @@ Following dependency calls one level would fix both and risks the opposite failu
 a service that writes becomes a write surface, which re-inflates the population the change exists to
 shrink. Left as-is deliberately, and recorded rather than hidden.
 
-Sample solution: `surfaceTotal` 2,002 → 1,976. `IUserService` (two `Get*` methods) and both
-`IGateRegistrar*Service` fixtures (`int Count()`) demote. Five fixtures stay full, one per rule above:
-`IGreetingService` (`RecordGreetingAsync` writes), `ICampBillingService` (nothing implements it),
-`IArchiveService` (its write is inherited from `IArchiveWriter<T>`), `IRetentionService` (settable
-property, every method read-shaped), and `ILedgerService` (its only implementer is abstract, so no
-behavior is observed). Six tests cover exactly those behaviors; the last three each fail against the
-first cut of this pass.
+Sample solution: `surfaceTotal` 2,018 → 1,990. One fixture per branch of the rule, so a future change
+to any branch moves a test rather than a number:
+
+| fixture | expected | why |
+|---|---|---|
+| `IUserService`, `IGateRegistrar*Service` | demote | only `Get*` / `int Count()` |
+| `ILookupService` | demote | implemented only by a private nested class — evidence all the same |
+| `IGreetingService` | stays full | `RecordGreetingAsync` writes |
+| `ICampBillingService` | stays full | nothing implements it |
+| `IArchiveService` | stays full | write inherited from `IArchiveWriter<T>` |
+| `IRetentionService` | stays full | settable property, every method read-shaped |
+| `IQuotaService` | stays full | getter-only property whose getter commits |
+| `ILedgerService` | stays full | only implementer is abstract, so no body is observed |
+
+The last five each fail against the commit before the one that added them.
 
 ## Unreleased - Gate 2 measurements for the internal-axis candidate signals
 

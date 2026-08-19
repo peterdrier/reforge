@@ -98,6 +98,31 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceWithWritingGetter_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IQuotaService publishes one getter-only property. Nothing on the declaration is a write and
+        // a getter cannot be judged by shape — it returns data by definition — so only QuotaService's
+        // getter body, which calls SaveChanges(), says otherwise.
+        Assert.Contains(classified, c => c.Type.Name == "IQuotaService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IQuotaService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceImplementedPrivately_IsStillObserved()
+    {
+        var classified = await ClassifyAsync();
+
+        // ILookupService's only implementer is LookupFactory.Impl — private, nested, and therefore not
+        // scored surface. It is still implementation evidence: the interface is implemented in this
+        // solution and read-only. Skipping private types made the pass answer "unknown" about a type
+        // it was looking straight at, which is the opposite of the conservatism it was aiming for.
+        Assert.Contains(classified, c => c.Type.Name == "ILookupService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "ILookupService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
     public async Task ClassifyAsync_SameTypeNameInTwoAssemblies_KeepsBoth()
     {
         var classified = await ClassifyAsync();

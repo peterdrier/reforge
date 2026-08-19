@@ -28,6 +28,9 @@ public static class SolutionClassifier
         // Pass 1 — collect types with their raw assembly name. The section name can't be assigned
         // yet: it depends on the prefix shared across the assemblies that actually declare types.
         var collected = new List<(INamedTypeSymbol Type, string Assembly, HashSet<string> Tags, string File, Location Location)>();
+        // Every non-interface source type in the analyzed set, private ones included. Only Pass 1.5
+        // reads this; see the note at the point it is filled.
+        var implementers = new List<INamedTypeSymbol>();
 
         foreach (var project in projects)
         {
@@ -38,11 +41,6 @@ public static class SolutionClassifier
             {
                 if (!type.Locations.Any(l => l.IsInSource)) continue;
                 if (type.IsImplicitlyDeclared) continue;
-                // Internal types stay in the corpus on purpose: their implementation is still
-                // complexity the section carries, and the sizing rules must see it. What they no
-                // longer do is score as surface — see ClassifiedType.IsExported.
-                if (type.DeclaredAccessibility == Accessibility.Private) continue;
-
                 // A compilation's global namespace also reaches referenced projects' source types,
                 // so the enumerating project is NOT the owner — the containing assembly is. Types
                 // from assemblies outside the analyzed set (test projects reached by reference)
@@ -57,6 +55,18 @@ public static class SolutionClassifier
                 // map entirely.
                 if (!seenByDisplay.Add($"{assembly}|{type.ToDisplayString()}")) continue;
 
+                // Private types are not corpus, but they ARE implementation evidence. An interface
+                // whose only implementer is a private nested class behind a public factory is
+                // implemented in this solution, and Pass 1.5 has to be able to read those bodies —
+                // otherwise it concludes "unknown" for a type it is looking straight at. Held in a
+                // separate list so nothing downstream mistakes them for scored types.
+                if (type.TypeKind != TypeKind.Interface) implementers.Add(type);
+
+                // Internal types stay in the corpus on purpose: their implementation is still
+                // complexity the section carries, and the sizing rules must see it. What they no
+                // longer do is score as surface — see ClassifiedType.IsExported.
+                if (type.DeclaredAccessibility == Accessibility.Private) continue;
+
                 var primaryLocation = type.Locations.First(l => l.IsInSource);
                 var filePath = primaryLocation.SourceTree?.FilePath ?? "";
                 var relPath = LocationHelper.NormalizePath(filePath, solutionDirectory);
@@ -67,7 +77,7 @@ public static class SolutionClassifier
         }
 
         // Pass 1.5 — demote name-classified write surfaces that nothing actually writes through.
-        DemoteReadOnlyServiceInterfaces(collected, ct);
+        DemoteReadOnlyServiceInterfaces(collected, implementers, ct);
 
         // Pass 2 — name the sections. Only type-declaring assemblies participate: a docs/tooling
         // project that ships no C# is not a section, and letting it into the prefix calculation
@@ -133,6 +143,7 @@ public static class SolutionClassifier
     /// </remarks>
     private static void DemoteReadOnlyServiceInterfaces(
         List<(INamedTypeSymbol Type, string Assembly, HashSet<string> Tags, string File, Location Location)> collected,
+        List<INamedTypeSymbol> implementers,
         CancellationToken ct)
     {
         var candidates = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
@@ -164,10 +175,9 @@ public static class SolutionClassifier
         }
 
         // Pass B -- everything else is decided at the implementation.
-        foreach (var c in collected)
+        foreach (var type in implementers)
         {
-            if (c.Type.TypeKind == TypeKind.Interface) continue;
-            foreach (var iface in c.Type.AllInterfaces)
+            foreach (var iface in type.AllInterfaces)
             {
                 ct.ThrowIfCancellationRequested();
                 var key = TypeKey(iface.OriginalDefinition);
@@ -176,26 +186,19 @@ public static class SolutionClassifier
                 bool complete = true;
                 foreach (var member in PublishedMembers(iface))
                 {
-                    if (member is not IMethodSymbol { MethodKind: MethodKind.Ordinary } m) continue;
-
-                    // An abstract or bodyless implementation is not a behavioral observation. An
-                    // abstract class may list the interface and leave every member abstract, and the
-                    // shape heuristic would then read a data-returning declaration as a read and
-                    // demote on nothing. The concrete override may be in a skipped test project or
-                    // another assembly entirely.
-                    var impl = c.Type.FindImplementationForInterfaceMember(m) as IMethodSymbol;
-                    var syntax = impl is { IsAbstract: false } && impl.DeclaringSyntaxReferences.Length > 0
-                        ? impl.DeclaringSyntaxReferences[0].GetSyntax(ct) as BaseMethodDeclarationSyntax
-                        : null;
-                    if (syntax is null || (syntax.Body is null && syntax.ExpressionBody is null))
+                    switch (member)
                     {
-                        complete = false;
-                        continue;
-                    }
+                        case IMethodSymbol { MethodKind: MethodKind.Ordinary } m:
+                            if (!ObserveMethod(type, m, key, writes, ct)) complete = false;
+                            break;
 
-                    // Evidence of writing counts from a partial observation too -- it is only the
-                    // read-only conclusion that needs the whole surface accounted for.
-                    if (ImplementationComplexity.IsMutation(impl!, syntax)) writes.Add(key);
+                        // A getter cannot be judged by shape -- it returns data by definition -- but
+                        // its body can still commit a write. Only the definitive signal applies, so
+                        // this can add a write and never invent one.
+                        case IPropertySymbol { GetMethod: not null } p:
+                            if (!ObserveGetter(type, p, key, writes, ct)) complete = false;
+                            break;
+                    }
                 }
 
                 if (complete) observed.Add(key);
@@ -208,6 +211,82 @@ public static class SolutionClassifier
             tags.Remove("fullServiceInterface");
             tags.Add("readServiceInterface");
         }
+    }
+
+    /// <summary>
+    /// Reads one method's implementation on <paramref name="type"/>. Returns whether behavior was
+    /// actually observed; records a write in <paramref name="writes"/> if it mutates.
+    /// </summary>
+    /// <remarks>
+    /// An abstract or bodyless implementation is not an observation. An abstract class may list the
+    /// interface and leave every member abstract, and the shape heuristic would then read a
+    /// data-returning declaration as a read and demote on nothing — the concrete override may be in a
+    /// skipped test project or another assembly. Evidence of writing counts from a partial observation
+    /// either way; it is only the read-only conclusion that needs the whole surface accounted for.
+    /// </remarks>
+    private static bool ObserveMethod(
+        INamedTypeSymbol type, IMethodSymbol member, string key, HashSet<string> writes, CancellationToken ct)
+    {
+        if (type.FindImplementationForInterfaceMember(member) is not IMethodSymbol { IsAbstract: false } impl)
+            return false;
+        if (impl.DeclaringSyntaxReferences.Length == 0) return false;
+        if (impl.DeclaringSyntaxReferences[0].GetSyntax(ct) is not BaseMethodDeclarationSyntax syntax) return false;
+        if (syntax.Body is null && syntax.ExpressionBody is null) return false;
+
+        if (ImplementationComplexity.IsMutation(impl, syntax)) writes.Add(key);
+        return true;
+    }
+
+    /// <summary>
+    /// Reads one property getter's implementation on <paramref name="type"/>, scanning it for a
+    /// persistence commit. Returns whether the getter was accounted for.
+    /// </summary>
+    /// <remarks>
+    /// An auto-property getter has no body at all, and that is a <b>complete</b> observation rather
+    /// than a gap: a compiler-generated field read provably commits nothing. Only an abstract getter,
+    /// or one whose declaration cannot be read, leaves the member unaccounted for. Note the asymmetry
+    /// with <see cref="ObserveMethod"/> — a bodyless METHOD is abstract or partial and could do
+    /// anything; a bodyless getter is an auto-property and can do nothing.
+    /// </remarks>
+    private static bool ObserveGetter(
+        INamedTypeSymbol type, IPropertySymbol member, string key, HashSet<string> writes, CancellationToken ct)
+    {
+        if (type.FindImplementationForInterfaceMember(member) is not IPropertySymbol { IsAbstract: false } impl)
+            return false;
+        if (impl.GetMethod is null) return true; // set-only: nothing to read, and a setter is a write anyway
+
+        var body = GetterBody(impl, ct);
+        if (body is not null && ImplementationComplexity.CommitsPersistentWrite(body)) writes.Add(key);
+        return true;
+    }
+
+    /// <summary>
+    /// The executable body behind a property getter, across the three shapes it can take: an
+    /// <c>AccessorDeclarationSyntax</c> with a block or arrow, an expression-bodied property
+    /// (<c>=&gt;</c> on the property itself), or an auto-property with no body at all.
+    /// </summary>
+    private static SyntaxNode? GetterBody(IPropertySymbol impl, CancellationToken ct)
+    {
+        foreach (var reference in impl.GetMethod!.DeclaringSyntaxReferences)
+        {
+            switch (reference.GetSyntax(ct))
+            {
+                case AccessorDeclarationSyntax accessor:
+                    var body = (SyntaxNode?)accessor.Body ?? accessor.ExpressionBody?.Expression;
+                    if (body is not null) return body;
+                    break;
+                case PropertyDeclarationSyntax { ExpressionBody.Expression: { } arrow }:
+                    return arrow;
+            }
+        }
+
+        // An expression-bodied property's getter may report the PROPERTY as its declaration only
+        // indirectly, so fall back to the property's own syntax before concluding there is no body.
+        foreach (var reference in impl.DeclaringSyntaxReferences)
+            if (reference.GetSyntax(ct) is PropertyDeclarationSyntax { ExpressionBody.Expression: { } arrow })
+                return arrow;
+
+        return null;
     }
 
     /// <summary>
