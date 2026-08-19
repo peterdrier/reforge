@@ -53,7 +53,10 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
   method" one caller rather than two. Counting per assembly is exact for `private`, which nothing
   outside can reach.
 - **Feature envy.** A method with at least one parameter, whose first parameter's type is a
-  solution-declared class or struct other than the containing type. `targetTouches` counts
+  solution-declared class or struct other than the containing type, and which is **not itself an
+  extension method** (`sym.IsExtensionMethod`). That exclusion is explicit and load-bearing: an
+  extension method *is* the refactoring this rule recommends, applied as far as C# allows, so charging
+  it charges someone for having complied. **7 declarations on this corpus**, all of them mappers. `targetTouches` counts
   `MemberAccessExpressionSyntax` nodes whose **receiver resolves to that first parameter**, plus
   `MemberBindingExpressionSyntax` nodes whose conditional receiver does (`p?.Foo` is
   `ConditionalAccessExpression(p, MemberBinding(.Foo))`, not a member access, so a predicate that
@@ -88,7 +91,9 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
     `ObjectCreationExpressionSyntax` or `ImplicitObjectCreationExpressionSyntax` of that return type.
   - *scalar result* — return type is an enum or **any primitive `SpecialType`** (`bool`, `string`,
     `char`, `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `decimal`, `double`,
-    `float`, `DateTime`), after unwrapping `Task<T>` / `ValueTask<T>` **and `Nullable<T>`**. The first
+    `float`, `nint`, `nuint`, `DateTime`), after unwrapping `Task<T>` / `ValueTask<T>` **and
+    `Nullable<T>`**. `nint` / `nuint` are `System_IntPtr` / `System_UIntPtr` in Roslyn, and omitting
+    them is how a second attempt at an "every primitive" list was still not exhaustive. The first
     cut listed eight primitives that came to mind, which silently excluded `byte`, `short`, `char`,
     `uint`, `ulong` and every nullable primitive or enum — all of which have exactly the
     answers-a-question-about-the-parameter shape this filter selects for. `Nullable<T>` is the one
@@ -294,7 +299,7 @@ on the wrong shape pays an agent to do the wrong thing.
 Criteria: primary parameter is a solution-declared class or struct other than the containing type;
 the body touches its members at least 3 times; and at least twice as often as the containing type's.
 
-**363 candidates.**
+**360 candidates.**
 
 Manual read of the top 15 — the gate's requirement — finds the population dominated by one shape:
 
@@ -318,7 +323,7 @@ rule implies is actively wrong for this shape, and this shape is most of the pop
 
 Excluding methods that construct their own return type from the parameter:
 
-- **172 of 363 (47.4%) are mappers** by that structural test.
+- **169 of 360 (46.9%) are mappers** by that structural test.
 - 191 remain.
 
 But a manual read of the *non-mapper* top 15 still finds `MapDetailIssue`, `MapList`,
@@ -359,7 +364,7 @@ Two further conditions, each with a stated reason:
   persistence and IO — `UpdateLineItemAsync`, `SyncFolderBasedDocumentAsync`, `UpsertContactAsync`.
   Moving those onto the data type would put IO on a DTO.
 
-**363 → 191 → 35 → 25 candidates.**
+**360 → 191 → 35 → 25 candidates.**
 
 Manual read of all 25:
 
@@ -397,15 +402,25 @@ Two things about the residue:
   `Build*Label`. Whether they are false positives at all is arguable: a display name for a `TeamInfo`
   is a fact about a `TeamInfo`. But pushing view concerns onto a DTO is a trade many teams refuse, so
   they should not be charged without the owner taking that position first.
-- **Extension methods: now zero, and the reason is instructive.** An earlier round found one
-  (`CalendarOccurrenceViewExtensions.ShouldHideTimeLabel`) and concluded that a scored rule must exclude
-  extension methods, since an extension method is C#'s idiom for "this belongs on the type and cannot be
-  put there" — the fix already applied as far as the language allows, so charging it charges someone for
-  having complied. That conclusion stands and is now *structural* rather than a special case: once
-  extension **calls** stopped counting as target touches, `ShouldHideTimeLabel`'s own touches on its
-  parameter turned out to be extension calls, and it fell below the threshold and left the population.
-  The two exclusions are the same principle seen from both ends — members a type does not own are not
-  that type's members, whether the candidate method is the extension or merely calls one.
+- **Extension methods are excluded, by an explicit test — and the route here is worth recording as a
+  mistake.** The principle is not in doubt: an extension method is C#'s idiom for "this belongs on the
+  type and cannot be put there", so charging one charges someone for having already applied the only fix
+  the language allows.
+
+  What was wrong was believing the exclusion had happened by itself. When extension **calls** stopped
+  counting as target touches, `CalendarOccurrenceViewExtensions.ShouldHideTimeLabel` fell below the
+  threshold and left the population — and this document then claimed the exclusion had become
+  "structural rather than a special case". **That was an overclaim, caught in the next review round.**
+  Reclassifying extension *calls* and excluding extension *declarations* are different mechanisms: an
+  extension like `IsValid(this Entity p)` that reads ordinary properties of `p` has entirely genuine
+  target touches and fires regardless. **7 such declarations were still in the population**, all of
+  them mappers; only the refined set happened to be clean, which is what made the wrong conclusion
+  look confirmed.
+
+  The candidate test now checks `sym.IsExtensionMethod` directly. Raw candidates 363 → **360**, mapper
+  share 47.4% → **46.9%**, refined set unchanged. Two lessons, both general: one candidate leaving for
+  the right-sounding reason is not the same as a class being excluded, and a clean sample is not
+  evidence about the population it was drawn from.
 
 ### #19's scope conditions, measured — and one of them changes the answer
 
@@ -418,7 +433,7 @@ Both measured against all three populations:
 
 | population | data-carrier param *(proxy, not the condition)* | **no other-receiver touches** | both | other-receiver touches exceed target |
 |---|---:|---:|---:|---:|
-| raw (363) | 308 (85%) | **75 (21%)** | 67 | 133 (37%) |
+| raw (360) | 306 (85%) | **73 (20%)** | 65 | 132 (37%) |
 | non-mapper (191) | 171 (90%) | **14 (7%)** | 11 | 88 (46%) |
 | refined (25) | 23 (92%) | **2 (8%)** | 2 | 3 |
 

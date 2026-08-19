@@ -31,7 +31,7 @@ points (5.2% of `fullServiceInterfaceMethod`), filed as #54; the report-side amb
   for why: the stock is the majority of the population. The **delta form has not itself been gated** —
   it is a different rule over a different population (helpers appearing in a diff), and a stock base
   rate says nothing about its precision, so it needs its own Gate 2 read before it earns a weight.
-- **Feature envy.** 363 candidates as specified, of which **172 (47.4%) are mappers** — and for a
+- **Feature envy.** 360 candidates as specified, of which **169 (46.9%) are mappers** — and for a
   mapper, the refactor the rule implies (move it onto the type it reads) is a dependency inversion:
   the entity would depend on its own projection. A manual read of the non-mapper top 15 finds five
   more mappers the structural test missed. A refinement does work — non-mapper, returns a
@@ -53,10 +53,16 @@ points (5.2% of `fullServiceInterfaceMethod`), filed as #54; the report-side amb
   parameter** (`p.Normalize()`) was counted as a target touch even though the member lives on an
   unrelated static class. Fixing both took raw 361 → 363 and refined 26 → **25**, and dropped
   `CalendarOccurrenceViewExtensions.ShouldHideTimeLabel` out of the population — the same candidate an
-  earlier round cited as evidence that scored rules must exclude extension methods. That conclusion is
-  now structural rather than a special case: its own touches on its parameter *were* extension calls.
-  Members a type does not own are not that type's members, whether the candidate is the extension or
-  merely calls one.
+  earlier round cited as evidence that scored rules must exclude extension methods.
+
+  That prompted a claim that the exclusion had become structural, which was **wrong and was caught in
+  the next round**: reclassifying extension *calls* is not excluding extension *declarations*, and an
+  extension like `IsValid(this Entity p)` reading ordinary properties of `p` has genuine target touches
+  and fires anyway. **7 such declarations were still in the population**, all mappers; only the refined
+  set happened to be clean, which made the wrong conclusion look confirmed. The candidate test now
+  checks `sym.IsExtensionMethod` directly: raw 363 → **360**, mapper share → **46.9%**, refined
+  unchanged. Also added `nint` / `nuint` (`System_IntPtr` / `System_UIntPtr`) to the scalar predicate,
+  which a second "every primitive" attempt had still missed; no effect on this corpus.
 - **`publicWriteSurface`.** **37 genuine exported write interfaces across 18 of the 44 scored
   sections** — 47 across 24 sections as classified, before the manual audit removed 10 read-only
   `I*Service` interfaces. The audited population is what the rule is meant to price and what the
