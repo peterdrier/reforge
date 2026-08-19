@@ -25,10 +25,15 @@ working rather than failing. One deletion is recommended and is free.
   the residue a nameable class (`Render*` / `Format*` / `Display*`). Recommended for one more round,
   not for a weight.
 - **`publicWriteSurface`.** The mean hid the shape: 19 of the 24 sections that declare a write
-  interface declare exactly one, so a flat per-interface charge is a constant for most of the corpus
-  and changes no ranking. Essentially all discriminating power is one section (Users, with 16), so
-  any weight would be fitted to n=1. Recommended as **reported, not scored** until a second corpus
-  says whether that distribution is a property of Humans or of sectioned codebases.
+  interface declare exactly one, so the distribution is effectively binary plus a single outlier
+  (Users, with 16). That forces a choice #35 leaves implicit — **per section** ("this section
+  publishes write capability") prices something `fullServiceInterfaceMethod` does not, while **per
+  interface** measures the same dimension more coarsely *and* contradicts the crossed-the-line
+  rationale by charging one section sixteen times for one decision. The per-section reading is the
+  defensible one and is not what a naive implementation produces. Either way the weight cannot be
+  calibrated here: past the binary split all discriminating power is n=1. Recommended as
+  **reported, not scored** until a second corpus says whether that distribution is a property of
+  Humans or of sectioned codebases.
 - **Retiring `crossSectionWriteSurface` is free.** It scores 0 across all 44 sections, so its
   `crossSectionSuppress` set is empty in consequence and deleting rule, set and branch is a measured
   no-op.

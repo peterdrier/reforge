@@ -19,14 +19,40 @@ Every number here is measured. Nothing is extrapolated.
 ## Method
 
 A throwaway Roslyn harness (~300 lines, not committed — same treatment as the type-2 clone detector
-whose negative result is recorded in the 2026-08-15 spec) opened `Humans.slnx` and walked every
-non-test project, excluding `obj/`, `Migrations/`, `*.g.cs` and `*.Designer.cs`.
+whose negative result the 2026-08-15 spec records) opened `Humans.slnx` and walked every non-test
+project, excluding `obj/`, `Migrations/`, `*.g.cs` and `*.Designer.cs`.
 
-**Corpus.** Humans at `main`, 44 sections, 3,448 types, 157,860 prod LOC, 5,523 method bodies.
-`surfaceTotal` 17,379, `internalComplexityTotal` 3,113, degraded: false.
+**Exact inputs**, so these numbers can be re-derived rather than taken on trust:
 
-Reproducing it needs only the public `peterdrier/humans` checkout and a .NET 10 SDK; `reforge` opens
-that solution cleanly, which is what makes any of this checkable rather than assertable.
+| | |
+|---|---|
+| Humans | `113061bcf5f6`, committed 2026-08-19 |
+| reforge | `50ebc39faa87` (version 0.28.1, `main` after #48) |
+| SDK | .NET 10.0.111 |
+| corpus | 44 sections, 3,448 types, 157,860 prod LOC, 5,523 method bodies |
+| score | `surfaceTotal` 17,379, `internalComplexityTotal` 3,113, `degraded: false` |
+
+The harness is not committed, so the **signal definitions are stated as predicates** below rather
+than left implicit in code that no longer exists. Each is a few lines of Roslyn over the same walk:
+
+- **Single-caller helper.** A method declaration whose symbol is `private` / `internal` /
+  `protected internal`, has a body, and whose `OriginalDefinition` is the resolved target of exactly
+  one `InvocationExpressionSyntax` or method-group `ArgumentSyntax` in its declaring assembly.
+  (Counting per assembly is exact for private members, which cannot be called from outside it.)
+- **Feature envy.** A method with at least one parameter, whose first parameter's type is a
+  solution-declared class or struct other than the containing type; counting
+  `MemberAccessExpressionSyntax` nodes in the body whose resolved symbol's `ContainingType` is that
+  parameter's type (`targetTouches`) versus the containing type (`selfTouches`); fires when
+  `targetTouches >= 3 && targetTouches > selfTouches * 2`.
+  - *mapper* — the method's return type (unwrapped one level through `Task<T>` / `ValueTask<T>` /
+    a single-type-argument generic) differs from the parameter's type, and the body contains an
+    `ObjectCreationExpressionSyntax` or `ImplicitObjectCreationExpressionSyntax` of that return type.
+  - *scalar result* — return type (same unwrapping) is an enum or one of `bool`, `string`, `int`,
+    `long`, `decimal`, `double`, `float`, `DateTime`.
+  - *synchronous* — return type is not `Task` / `ValueTask`.
+- **Write surface.** Distinct declaring files carrying a `fullServiceInterfaceMethod` entry in
+  `surface-score --format json --all`, grouped by section. No harness needed for this one; it is
+  readable off the report.
 
 ## Context reproduced
 
@@ -233,13 +259,30 @@ Mean 11 methods per write interface. But the mean hides the shape, and the shape
 | 5 | 1 |
 | **16** | **1** (Users) |
 
-**19 of the 24 sections that have a write interface have exactly one.** For those — and for the 20
-sections with none — a flat per-interface charge is a *constant*. It moves every score by the same
-amount and changes no ranking, which is the one thing a per-section rule exists to do.
+**19 of the 24 sections that have a write interface have exactly one.** So the distribution is
+effectively binary plus a single outlier: 20 sections at zero, 19 at one, four in between, and Users
+at sixteen.
 
-Essentially all of the rule's discriminating power on this corpus is a single observation: Users
-declares 16 write interfaces, three times the next section. That is a real and interesting finding —
-a section publishing sixteen separate write APIs is worth looking at — but it is **n = 1**.
+That shape forces a choice #35 does not make explicitly, and the two readings do not price the same
+thing:
+
+- **Per section (binary)** — "this section publishes write capability". Fires on 24 of 44, adds the
+  same amount to each, and separates 24 from 20. This is the reading that matches #35's rationale
+  that a section "has crossed the line once", and it is genuinely orthogonal to
+  `fullServiceInterfaceMethod`, which prices width.
+- **Per interface** — "this section publishes *N* write APIs". On this corpus that is the binary
+  signal for 43 of 44 sections and a 16× charge for Users. It also contradicts the crossed-the-line
+  rationale, since it charges Users sixteen times for one decision — and it measures the same
+  dimension `fullServiceInterfaceMethod` already measures more finely, which is exactly the
+  "weight change wearing a new name" #35 worries about.
+
+**The per-section reading is the defensible one**, and it is not what a naive implementation of
+"charge for exporting write capability" would produce. Worth settling before the rule is written,
+not after.
+
+Either way, the calibration problem stands: past the binary split, all remaining discriminating
+power is one observation — Users declares sixteen write interfaces, three times the next section.
+That is a real and interesting finding, and it is **n = 1**.
 
 ### Question 1 — does it double-charge `fullServiceInterfaceMethod`?
 
@@ -253,18 +296,18 @@ a section publishing sixteen separate write APIs is worth looking at — but it 
 The distinction is only real if the new rule is flat. A per-method or size-scaled charge would be a
 weight change on `fullServiceInterfaceMethod` wearing a new name, exactly as #35 suspects.
 
-Modelled cost of a flat per-interface charge, and how it lands:
+Modelled cost of each reading:
 
-| weight | added points | share of current surface | Users gets | the other 23 sections get |
-|---:|---:|---:|---:|---|
-| 5 | 235 | 1.4% | +80 | +5 to +25 |
-| 10 | 470 | 2.7% | +160 | +10 to +50 |
-| 15 | 705 | 4.1% | +240 | +15 to +75 |
-| 25 | 1,175 | 6.8% | +400 | +25 to +125 |
+| weight | per section (24 charges) | per interface (47 charges) | per-interface share landing on Users |
+|---:|---:|---:|---:|
+| 5 | 120 | 235 | 34% |
+| 10 | 240 | 470 | 34% |
+| 15 | 360 | 705 | 34% |
+| 25 | 600 | 1,175 | 34% |
 
-At every weight, a third of the rule's total lands on one section. A weight of 25 — the current
-`crossSectionRepository` level — would also make this the 6th largest rule in the system on its
-first day, off 47 declarations.
+Under the per-interface reading a third of the rule's entire output lands on one section at every
+weight. A weight of 25 — the current `crossSectionRepository` level — would additionally make this
+the 6th largest rule in the system on its first day, off 47 declarations.
 
 ### Question 2 — what happens to `crossSectionSuppress`?
 
@@ -284,11 +327,16 @@ Split, because the two halves of #35 measure very differently.
 is empty in consequence. Deleting the rule, the set, and the branch in `ScoreAsync` is a measured
 no-op — a pure simplification.
 
-**Add a scored `publicWriteSurface`: not yet.** The direction is right and the double-charging
-concern is answerable (a flat per-interface charge prices a different decision from a per-method
-one; the codebase already prices `newRepositoryInterface` at 15 beside `repositoryInterfaceMethod`
-at 10, so the shape has precedent). What cannot be answered from this corpus is the **weight**,
-because the distribution is one constant and one outlier. Any weight picked here is fitted to Users.
+**Add a scored `publicWriteSurface`: not yet, and settle the shape first.** #35's double-charging
+question has an answer, but it depends on the reading: a **per-section** charge prices a decision
+`fullServiceInterfaceMethod` does not price at all, and the codebase already prices
+`newRepositoryInterface` at 15 beside `repositoryInterfaceMethod` at 10, so the shape has precedent.
+A **per-interface** charge measures the dimension `fullServiceInterfaceMethod` already measures, only
+coarser — that one *is* a weight change wearing a new name, and it contradicts the crossed-the-line
+rationale by charging one section sixteen times for one decision.
+
+What cannot be answered from this corpus either way is the **weight**: past the binary split the
+distribution is a single outlier, so any number picked here is fitted to Users.
 
 That is precisely the failure Gate 2 exists to prevent, so the gate should hold.
 
