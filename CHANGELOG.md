@@ -32,8 +32,16 @@ interface as published write capability.
 `static` members are reachable, and are decided in two places. `IPurgeService.ClearAll()` needs no
 instance and no implementing type — it is as callable as any instance method, so skipping every static
 member let a published command go unseen. A static member with a **body** carries it on the interface
-itself, which makes it the one method shape decidable with no implementer at all; a `static abstract` one
-has no body there and is observed on the implementing type like anything else. A **getter-only property** is read at the implementation like
+itself, which makes it decidable with no implementer at all — methods, operators, and **getters** alike,
+since `static int Current => Db.SaveChanges();` is as callable as a static method and commits just the
+same. A `static abstract` member has no body there and is observed on the implementing type like anything
+else.
+
+Which raises the case where that accounts for the **whole** published surface.
+`IClockService { static int GetTicks() => 0; }` has nothing an implementer could supply and, in a real
+solution, no implementer at all — so requiring one kept a definitively read-only interface classified as a
+write forever. The declaration pass now records a complete observation when every reachable member is
+settled there, which is also what lets an interface publishing nothing at all demote. A **getter-only property** is read at the implementation like
 a method, but only for the definitive signal — a persistence commit in the getter body. The
 command-shape heuristic is meaningless for an accessor, since a getter returns data by definition, so
 `ImplementationComplexity.CommitsPersistentWrite` is now exposed separately from `IsMutation` for this.
@@ -123,10 +131,12 @@ type nested inside a `private` one is private in every sense that matters, and t
 admitting exactly the class of types that had never been in the corpus — and charging its section for
 them. It still counts as implementation evidence, like any private type.
 
-Every refinement above — inherited members, accessors, getter bodies, partial members, private and
-deeply nested implementers, most-derived overrides, and per-implementer completeness — **changes no
-number on Humans** — the demoted interface set is byte-identical
-with and without them, all 45 full / 68 read either way. They are correctness fixes for shapes Humans does not currently
+Every refinement above except the static-surface rules — inherited members, accessors, getter bodies,
+partial members, private and deeply nested implementers, most-derived overrides, and per-implementer
+completeness — **changes no number on Humans**: the demoted interface set is byte-identical
+with and without them, all 45 full / 68 read either way. The static-surface rules are the one group that
+*can* move a count, since a static-only or member-less interface now demotes with no implementer, and are
+measured separately below. They are correctness fixes for shapes Humans does not currently
 contain, and the sample-solution fixtures below are what exercises them. A clean corpus is not evidence
 that a predicate is right, only that this corpus does not reach the wrong part of it.
 
@@ -161,7 +171,7 @@ Following dependency calls one level would fix both and risks the opposite failu
 a service that writes becomes a write surface, which re-inflates the population the change exists to
 shrink. Left as-is deliberately, and recorded rather than hidden.
 
-Sample solution: `surfaceTotal` 2,318 → 2,270. One fixture per branch of the rule, so a future change
+Sample solution: `surfaceTotal` 2,368 → 2,316. One fixture per branch of the rule, so a future change
 to any branch moves a test rather than a number:
 
 | fixture | expected | why |
@@ -185,6 +195,9 @@ to any branch moves a test rather than a number:
 | `IStampService` | stays full | `static abstract` command whose implementation commits |
 | `IPollService` | demote | `static abstract` member whose implementation reads — control for that lookup |
 | `IVaultService` | demote | `private set` on a default interface property — unreachable write |
+| `IMeterService` | stays full | `public static` getter whose body commits |
+| `IDialService` | demote | `public static` getter that reads — negative control for the static getter rule |
+| `IClockService` | demote | nothing but a static query, and no implementer at all |
 | `IBadgeService` | demote | implementer nested two levels deep — now reachable |
 | `IManifestService` | demote | implemented by a partial method whose body is on the other half |
 | `IRosterService` | demote | declared by an abstract base, accounted for by the concrete derived class |

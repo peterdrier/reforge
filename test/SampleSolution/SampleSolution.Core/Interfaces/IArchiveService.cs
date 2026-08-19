@@ -231,3 +231,36 @@ public interface IRackService
 {
     int this[int slot] { get; }
 }
+
+/// <summary>
+/// Fixture for the static-only interface. Its whole published surface is a static query whose body is
+/// right here, so it is fully decided with no implementer — and it has none, deliberately. Waiting for an
+/// implementation that will never exist kept a definitively read-only surface classified as a write.
+/// </summary>
+public interface IClockService
+{
+    public static int GetTicks() => 0;
+}
+
+/// <summary>
+/// Fixture for the static GETTER. <c>Current</c> is callable as <c>IMeterService.Current</c> with no
+/// instance, and its body commits — the sibling of <see cref="IPurgeService"/>'s static method, which was
+/// scanned while static getters were not. Must stay <c>fullServiceInterface</c>.
+/// </summary>
+public interface IMeterService
+{
+    public static int Current => MeterBacking.Db.SaveChanges();
+
+    string GetMeterLabel(int id);
+}
+
+/// <summary>
+/// Negative control for <see cref="IMeterService"/>: same static getter shape, a body that reads. Without
+/// it, "any static getter is a write" would satisfy that fixture just as well.
+/// </summary>
+public interface IDialService
+{
+    public static int Current => 7;
+
+    string GetDialLabel(int id);
+}

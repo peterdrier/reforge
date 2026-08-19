@@ -206,3 +206,21 @@ public class TallyService : ITallyService
 {
     public string GetTallyState(int id) => $"tally-{id}";
 }
+
+/// <summary>Backing for <see cref="IMeterService"/>'s static getter — an interface cannot hold state.</summary>
+public static class MeterBacking
+{
+    public static readonly AuditDbContext Db = new();
+}
+
+/// <summary>Implements <see cref="IMeterService"/>'s instance member; the static getter is the interface's own.</summary>
+public class MeterService : IMeterService
+{
+    public string GetMeterLabel(int id) => $"meter-{id}";
+}
+
+/// <summary>Implements <see cref="IDialService"/>'s instance member.</summary>
+public class DialService : IDialService
+{
+    public string GetDialLabel(int id) => $"dial-{id}";
+}

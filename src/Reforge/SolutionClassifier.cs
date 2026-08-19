@@ -162,24 +162,43 @@ public static class SolutionClassifier
         var incomplete = new HashSet<string>(StringComparer.Ordinal);
         var writes = new HashSet<string>(StringComparer.Ordinal);
 
-        // Pass A -- write capability that needs no implementation to see. A settable property or an
-        // event ON the interface is already the write commitment: the declaration hands every
-        // consumer a mutation, and no body could withdraw it.
+        // Pass A -- everything decidable on the interface itself. A settable property or an event ON
+        // the interface is already the write commitment: the declaration hands every consumer a
+        // mutation, and no body could withdraw it. A non-abstract STATIC member is decidable here too,
+        // because its body is right here — and it is callable with no instance and no implementing type.
+        //
+        // When that accounts for the WHOLE published surface, the interface is fully observed with no
+        // implementer at all: `IClockService { static int GetTicks() => 0; }` publishes nothing but a
+        // static query, so waiting for an implementation that will never exist would keep a definitively
+        // read-only surface classified as a write.
         foreach (var c in collected)
         {
             if (c.Type.TypeKind != TypeKind.Interface) continue;
             var key = TypeKey(c.Type);
             if (!candidates.ContainsKey(key)) continue;
+
+            bool wholeSurfaceDecidedHere = true;
             foreach (var member in PublishedMembers(c.Type))
             {
                 ct.ThrowIfCancellationRequested();
                 if (!IsReachableByConsumers(member)) continue;
-                if (PublishesWriteByDeclaration(member) || PublishesStaticWrite(member, ct))
+
+                switch (DecideOnDeclaration(member, ct))
                 {
-                    writes.Add(key);
-                    break;
+                    case DeclarationVerdict.Write:
+                        writes.Add(key);
+                        break;
+                    case DeclarationVerdict.NoWrite:
+                        break;
+                    default:
+                        wholeSurfaceDecidedHere = false;
+                        break;
                 }
+
+                if (writes.Contains(key)) break;
             }
+
+            if (wholeSurfaceDecidedHere && !writes.Contains(key)) observed.Add(key);
         }
 
         // Pass B -- everything else is decided at the implementation.
@@ -319,20 +338,68 @@ public static class SolutionClassifier
         _ => false
     };
 
+    /// <summary>What the interface's own declaration settles about one published member.</summary>
+    private enum DeclarationVerdict
+    {
+        /// <summary>Publishes a mutation. No implementation could withdraw it.</summary>
+        Write,
+
+        /// <summary>Settled here, and it is not a write.</summary>
+        NoWrite,
+
+        /// <summary>Not decidable here: an implementing type has to supply the behavior.</summary>
+        NeedsImplementation
+    }
+
     /// <summary>
-    /// Whether a <c>public static</c> interface method mutates. A static member with a body carries it
-    /// on the interface itself, so unlike an instance method it is decidable without an implementer —
-    /// and it is callable: <c>IPurgeService.ClearAll()</c> needs no instance and no implementing type,
-    /// which is why skipping every static member could let a published command go unseen. A
-    /// <c>static abstract</c> member has no body here and is observed on the implementing type instead.
+    /// Decides one published member from the interface alone. A non-abstract <c>static</c> member carries
+    /// its body here, so unlike an instance member it needs no implementer — and it is callable:
+    /// <c>IPurgeService.ClearAll()</c> needs no instance and no implementing type, which is why skipping
+    /// every static member could let a published command go unseen. A <c>static abstract</c> member has
+    /// no body here and is observed on the implementing type instead.
     /// </summary>
-    private static bool PublishesStaticWrite(ISymbol member, CancellationToken ct) =>
-        member is IMethodSymbol
+    private static DeclarationVerdict DecideOnDeclaration(ISymbol member, CancellationToken ct)
+    {
+        if (PublishesWriteByDeclaration(member)) return DeclarationVerdict.Write;
+
+        switch (member)
         {
-            IsStatic: true, IsAbstract: false,
-            MethodKind: MethodKind.Ordinary or MethodKind.UserDefinedOperator or MethodKind.Conversion
-        } m
-        && ImplementationComplexity.IsMutation(m, MethodBody(m, ct));
+            // An accessor is settled with the property or event it belongs to; a nested type's members
+            // are its own surface, not this interface's; and any field reaching here is `readonly` or
+            // `const`, since a mutable one is a write above.
+            case IMethodSymbol
+            {
+                MethodKind: MethodKind.PropertyGet or MethodKind.PropertySet or MethodKind.EventAdd
+                            or MethodKind.EventRemove or MethodKind.EventRaise
+            }:
+            case INamedTypeSymbol:
+            case IFieldSymbol:
+                return DeclarationVerdict.NoWrite;
+        }
+
+        if (!member.IsStatic || member.IsAbstract) return DeclarationVerdict.NeedsImplementation;
+
+        return member switch
+        {
+            IMethodSymbol
+            {
+                MethodKind: MethodKind.Ordinary or MethodKind.UserDefinedOperator or MethodKind.Conversion
+            } m => ImplementationComplexity.IsMutation(m, MethodBody(m, ct))
+                ? DeclarationVerdict.Write
+                : DeclarationVerdict.NoWrite,
+
+            // A static getter is read exactly like an instance one: a getter returns data by definition,
+            // so only a persistence commit in its body counts. A body that cannot be read is a gap.
+            IPropertySymbol { GetMethod: not null } p => GetterBody(p, ct) switch
+            {
+                { } body when ImplementationComplexity.CommitsPersistentWrite(body) => DeclarationVerdict.Write,
+                { } => DeclarationVerdict.NoWrite,
+                _ => DeclarationVerdict.NeedsImplementation
+            },
+
+            _ => DeclarationVerdict.NeedsImplementation
+        };
+    }
 
     /// <summary>
     /// Reads one method's implementation on <paramref name="type"/>. Returns whether behavior was

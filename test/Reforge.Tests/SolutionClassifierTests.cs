@@ -186,6 +186,38 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_StaticOnlyReadInterface_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // IClockService publishes one static query and has no implementer at all. Its whole surface is
+        // decidable on the interface, so requiring an implementation would keep a definitively
+        // read-only interface classified as a write forever.
+        Assert.Contains(classified, c => c.Type.Name == "IClockService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_WritingStaticGetter_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IMeterService.Current is callable with no instance and its body commits. Static METHODS were
+        // scanned while static getters were not, so this demoted on the strength of its one read-only
+        // instance member.
+        Assert.Contains(classified, c => c.Type.Name == "IMeterService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IMeterService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ReadingStaticGetter_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // Negative control for the test above: same shape, a body that reads.
+        Assert.Contains(classified, c => c.Type.Name == "IDialService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
     public async Task ClassifyAsync_ServiceInterfaceImplementedPrivately_IsStillObserved()
     {
         var classified = await ClassifyAsync();
