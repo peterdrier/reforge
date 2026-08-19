@@ -71,10 +71,14 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
     it compares target touches against *self* touches only, ignoring `otherTouches` entirely. Both
     are reported under "#19's scope conditions, measured" below, and the exclusivity one changes the
     headline result.
-  - *entity or DTO* — tested structurally: the type declares no ordinary methods of its own beyond
-    object overrides and `Deconstruct`. Deliberately **not** reforge's `*Dto` / `*Info` / `*Request`
-    name patterns — this same document measures that style of classification at 79% precision on this
-    corpus, so using it to scope a precision measurement would be circular.
+  - *entity or DTO* — **not tested; approximated by a data-carrier proxy** whose error is known and
+    bidirectional. The proxy is "declares no ordinary methods of its own beyond object overrides and
+    `Deconstruct`". It rejects real entities that carry domain methods (`Shift`, `EventSettings` — see
+    below) and accepts property-only contexts and view models, which are not entities or DTOs. It is
+    deliberately not reforge's `*Dto` / `*Info` / `*Request` name patterns either, since this same
+    document measures that style of classification at 79% precision on this corpus, so scoping a
+    precision measurement with it would be circular. **Neither available test is the stated one**, so
+    the entity/DTO condition is reported as unmeasured rather than as satisfied.
   - *mapper* — the method's return type (unwrapped one level through `Task<T>` / `ValueTask<T>` /
     a single-type-argument generic) differs from the parameter's type, and the body contains an
     `ObjectCreationExpressionSyntax` or `ImplicitObjectCreationExpressionSyntax` of that return type.
@@ -393,17 +397,28 @@ Two things about the residue:
 
 Both measured against all three populations:
 
-| population | entity/DTO param | **no other-receiver touches** | both | other-receiver touches exceed target |
+| population | data-carrier param *(proxy, not the condition)* | **no other-receiver touches** | both | other-receiver touches exceed target |
 |---|---:|---:|---:|---:|
 | raw (361) | 306 (85%) | **76 (21%)** | 68 | 129 (36%) |
 | non-mapper (190) | 170 (89%) | **15 (8%)** | 12 | 85 (45%) |
 | refined (26) | 24 (92%) | **3 (12%)** | 3 | 3 |
 
-**The entity/DTO condition is nearly free.** 85% of raw candidates and 24 of the refined 26 already
-have a data-carrier first parameter. The two exceptions in the refined set are `Shift`
-(`CalculateScore`) and `EventSettings` (`GetAvailableEeSlots`) — EF entities that declare methods, so
-they fail the strict structural test while being entities in #19's sense. Applying it changes nothing
-material.
+**The entity/DTO condition is not established, and the numbers above do not establish it.** 85% of
+raw candidates and 24 of the refined 26 pass the *data-carrier proxy* — but the proxy is not the
+condition. It errs in both directions:
+
+- **False negatives.** `Shift` (`CalculateScore`) and `EventSettings` (`GetAvailableEeSlots`) are real
+  EF entities that declare domain methods, so the proxy rejects them. They are squarely in #19's
+  scope; adopting the proxy as the gate would discard them.
+- **False positives.** A property-only context or view model passes the proxy while being neither an
+  entity nor a DTO — and `GateScanContext`, top of the refined list, is exactly that shape.
+
+So "24 of 26" measures agreement with a proxy, not compliance with #19's scope, and it cannot support
+"this condition is free". What it does establish is narrower and still useful: the refined population
+is not dominated by service or dependency parameters, which was the specific failure mode worth ruling
+out. **Adopting the entity/DTO condition needs a real classification first** — and the obvious
+candidate, reforge's own DTO name patterns, is the thing #54 shows to be 79% precise, so that
+classification is itself unbuilt work rather than a lookup.
 
 **The exclusivity condition is not free at all — it is the whole finding.** Read literally, "touch
 only that type's members" leaves **3 of the 26**: `GateAdmissionRules.Evaluate(GateScanContext)`,
@@ -445,8 +460,11 @@ Concretely:
 - Before it earns a weight it needs: **a decision on how strictly to read exclusivity** (3 hits or 23
   or 26), a decision on the `Render*`/`Format*` class, and a re-measure against a second corpus,
   because 26 hits on one codebase is a thin basis for a weight and 3 is no basis at all.
-- The entity/DTO scope condition can be adopted for free — 24 of the 26 already satisfy it — so it
-  should be, if only to stop the rule firing on contexts and view models.
+- The entity/DTO scope condition **cannot** be adopted yet. 24 of the 26 pass a data-carrier proxy,
+  but that proxy rejects entities with domain methods (`Shift`, `EventSettings`) and accepts
+  property-only contexts (`GateScanContext`), so adopting it would discard true hits while keeping
+  out-of-scope ones. It needs a real entity/DTO classification, which reforge does not currently have
+  — its name-pattern version is what #54 measures at 79%.
 - If it lands as a **credit** rather than a penalty, precision matters more, not less — a credit
   firing on a mapper pays for a dependency inversion. The refined form is the only version safe to
   consider as a credit.
