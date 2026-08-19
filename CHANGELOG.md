@@ -34,9 +34,12 @@ working rather than failing. One deletion is recommended and is free.
   calibrated here: past the binary split all discriminating power is n=1. Recommended as
   **reported, not scored** until a second corpus says whether that distribution is a property of
   Humans or of sectioned codebases.
-- **Retiring `crossSectionWriteSurface` is free.** It scores 0 across all 44 sections, so its
-  `crossSectionSuppress` set is empty in consequence and deleting rule, set and branch is a measured
-  no-op.
+- **Retiring `crossSectionWriteSurface`.** It scores 0 across all 44 sections of Humans, so the
+  deletion is a no-op *there* — but not on the sample solution, which scores it 30 across two
+  purpose-built fixtures, and whose suppression set is correspondingly non-empty. The retirement
+  carries fixture work and a `NotYetCovered` entry with it. Worth doing; not free. Recorded that way
+  because an earlier draft of the document generalised "0/44" into "free", which is the exact
+  mistake the measure-before-weighting gate exists to catch.
 
 Two standing figures also moved and are recorded: the internal axis is still **87% size rules**
 (reproducing #19's 88% at a newer commit with a newer reforge), and the six read-surface rules #19

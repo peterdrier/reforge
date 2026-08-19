@@ -8,8 +8,8 @@ answers the two open questions issue #35 flags for the `publicWriteSurface` tran
 
 **No rule is proposed for immediate implementation.** All three signals measured are recommended
 *against* in the shape they were proposed — two on precision, one because it cannot be calibrated
-from this corpus. One deletion *is* recommended, and it is free: `crossSectionWriteSurface` scores
-0/44, so retiring it and its suppression machinery is a measured no-op.
+from this corpus. One deletion is recommended: `crossSectionWriteSurface` scores 0 on Humans, so
+retiring it is a no-op there — though not on the sample solution, which fires it twice.
 
 That is the point of the gate. A measurement round whose output is "not yet, and here is what would
 settle it" is the gate working, not the gate failing.
@@ -358,19 +358,38 @@ the 6th largest rule in the system on its first day, off 47 declarations.
 
 `ScoreAsync` maintains a suppression set purely so `crossSectionWriteSurface` can pre-empt
 `writeCapableInterfaceUsedReadOnly` for the same caller/dependency pairs. Since the old rule fires
-**0 times on 44 sections**, that set is empty in practice, and `writeCapableInterfaceUsedReadOnly`
+**0 times on 44 sections of Humans**, that set is empty there, and `writeCapableInterfaceUsedReadOnly`
 scores 60 points across 5 files in 3 sections regardless.
 
-**Retiring the old rule and its suppression set is a measured no-op on this corpus.** It is a pure
-simplification, not a behaviour change — which is the cheapest kind of deletion to justify.
+**On Humans, retiring the rule and its suppression set is a measured no-op.** It is worth being
+precise about the scope of that claim, because an earlier draft of this document was not:
+"0/44, therefore free" is true of Humans and false in general.
+
+The **sample solution scores it 30** — two fixtures, `ReadOnlyGreetingConsumer` in Services and
+`CampReportBuilder` in Reporting, both deliberately built to fire it. So retiring the rule is not a
+no-op there, and three things travel with it:
+
+- the two fixtures lose their reason to exist in their current form;
+- `crossSectionWriteSurface` has a `NotYetCovered` entry in `GateOneFixtureTests` that would have to
+  go with it — and that entry's stated reason ("the unverified advisories from a real corpus decide
+  whether the rule needs a fixture or a repair") is exactly what this measurement answers;
+- removing the suppression set means `writeCapableInterfaceUsedReadOnly` (12) can fire on pairs the
+  specialised rule (15) used to claim. Zero such pairs on Humans; two on the sample solution.
+
+None of that argues against retiring it. It argues that the retirement is a small change with
+fixture work attached, not a free deletion, and that whoever does it should measure the sample
+solution as well as Humans — a rule that fires nowhere in the field but twice in the fixtures is
+precisely the case where one corpus is not enough.
 
 ### Decision
 
 Split, because the two halves of #35 measure very differently.
 
-**Retire `crossSectionWriteSurface`: yes, and it is free.** It scores 0/44, and its suppression set
-is empty in consequence. Deleting the rule, the set, and the branch in `ScoreAsync` is a measured
-no-op — a pure simplification.
+**Retire `crossSectionWriteSurface`: yes — but it is not free, and an earlier draft of this document
+said it was.** It scores 0 on Humans's 44 sections, so the deletion is a measured no-op *there*. The
+sample solution scores it 30 across two purpose-built fixtures, and the suppression set is not empty
+there either. The retirement carries fixture work and a `NotYetCovered` entry with it. Small, still
+worth doing, not a free deletion.
 
 **Add a scored `publicWriteSurface`: not yet, and settle the shape first.** #35's double-charging
 question has an answer, but it depends on the reading: a **per-section** charge prices a decision
