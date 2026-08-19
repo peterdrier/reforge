@@ -75,6 +75,46 @@ public class NamesakeGreetingReporter
 }
 
 /// <summary>
+/// Null-safe delegation. Every call goes through <c>?.</c>, which puts the receiver under a
+/// <c>ConditionalAccessExpression</c> and the invoked name under a member BINDING on the far side of the
+/// operator — so a walk that only climbs member accesses never sees that <c>_greetings</c> is a receiver
+/// and counts each one as own-section state. That restores the 1:1 tie the conduit rule exists to break,
+/// which is the difference between this being reported and being invisible.
+/// </summary>
+public class NullSafeGreetingReporter
+{
+    private readonly GreetingService? _greetings = new();
+
+    public async Task<string> SummarizeNullSafelyAsync(int userId)
+    {
+        var greeting = await (_greetings?.GetGreetingAsync(userId) ?? Task.FromResult(""));
+        await (_greetings?.GetRecentGreetingsAsync(userId) ?? Task.FromResult<IReadOnlyList<string>>([]));
+        await (_greetings?.RecordGreetingAsync(userId, greeting) ?? Task.CompletedTask);
+        return greeting;
+    }
+}
+
+/// <summary>
+/// Named <c>PurgeAsync</c>, which <c>AuditLogQueryService</c> in the destination section also declares —
+/// but this method leans on <see cref="GreetingService"/>, which declares no such thing. C# only forbids
+/// duplicate signatures within one containing TYPE, so an unrelated namesake elsewhere in the same
+/// assembly is not a collision and must not be reported as one. A section-wide name index could not tell
+/// the two apart, and common method names made that a frequent false claim.
+/// </summary>
+public class UnrelatedNamesakeReporter
+{
+    private readonly GreetingService _greetings = new();
+
+    public async Task<string> PurgeAsync(int userId)
+    {
+        var greeting = await _greetings.GetGreetingAsync(userId);
+        await _greetings.RecordGreetingAsync(userId, greeting);
+        await _greetings.RecordGreetingAsync(userId, greeting + "!");
+        return greeting;
+    }
+}
+
+/// <summary>
 /// Reaches three other sections — <c>Core</c>, <c>Services</c>, and <c>Camp</c> — so no single section
 /// could host it. Nothing is misplaced here; the method exists to join sections. It is reported anyway
 /// because an accidental junction drawer has exactly this shape.

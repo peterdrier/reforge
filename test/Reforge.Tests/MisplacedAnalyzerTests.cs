@@ -62,6 +62,36 @@ public class MisplacedAnalyzerTests
     }
 
     [Fact]
+    public async Task Analyze_NullSafeDelegation_IsStillReportedAsMove()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeNullSafelyAsync");
+
+        Assert.NotNull(finding);
+        Assert.Equal(MisplacedVerdict.Move, finding.Verdict);
+        Assert.Equal("Services", finding.TargetSection);
+        // `_greetings?.Get(...)` puts the receiver under a ConditionalAccessExpression and the invoked
+        // name under a member binding past the `?.`, so a member-access-only walk never recognised the
+        // receiver. Counted at home it restored the 1:1 tie that makes delegation invisible.
+        Assert.Equal(0, finding.OwnTouches);
+        Assert.Equal(3, finding.TargetBehaviorTouches);
+    }
+
+    [Fact]
+    public async Task Analyze_NamesakeOnAnUnrelatedDestinationType_IsNotACollision()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "PurgeAsync");
+
+        Assert.NotNull(finding);
+        // AuditLogQueryService.PurgeAsync exists in the destination SECTION, but this method leans on
+        // GreetingService, which declares no PurgeAsync. A duplicate signature is only prohibited within
+        // one containing type, so an assembly-wide name match is not a collision.
+        Assert.Equal(MisplacedVerdict.Move, finding.Verdict);
+        Assert.Null(finding.DuplicateOf);
+    }
+
+    [Fact]
     public async Task Analyze_PipeSharingOnlyANameWithTheTarget_SaysHowTheSignaturesDiffer()
     {
         var report = await AnalyzeAsync();

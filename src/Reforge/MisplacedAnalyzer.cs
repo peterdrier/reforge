@@ -170,31 +170,6 @@ public static class MisplacedAnalyzer
             StringComparer.Ordinal);
         var sectionByAssembly = AssemblySections.Resolve(analyzedAssemblies);
 
-        // Method names each section already declares, so a "move it there" recommendation can say
-        // whether the destination has one of these already. Built from the classified corpus (all
-        // types, every accessibility) rather than from exported surface only: a duplicate is a
-        // duplicate whether or not the existing one is public.
-        // Every method each section already declares, indexed by name, so a proposed move can be checked
-        // against what is waiting at the destination. Keyed by name and not by signature because the
-        // question at the destination is "is there already something called this", and the answer is
-        // useful whether or not the parameters line up — the SHAPE comparison happens at judging time,
-        // which is what separates a genuine collision from a namesake.
-        var methodsBySection =
-            new Dictionary<string, Dictionary<string, List<IMethodSymbol>>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var c in classified)
-        {
-            ct.ThrowIfCancellationRequested();
-            var bucket = methodsBySection.TryGetValue(c.Group, out var existing)
-                ? existing
-                : methodsBySection[c.Group] = new Dictionary<string, List<IMethodSymbol>>(StringComparer.Ordinal);
-            foreach (var m in c.Type.GetMembers())
-            {
-                if (m is not IMethodSymbol { MethodKind: MethodKind.Ordinary } method) continue;
-                if (bucket.TryGetValue(method.Name, out var sameName)) sameName.Add(method);
-                else bucket[method.Name] = [method];
-            }
-        }
-
         // Phase 1 — measure every method's touches. No verdicts yet: the section dependency graph is
         // a property of the whole solution, and a verdict that consults it cannot be reached until
         // every method has been counted.
@@ -219,7 +194,7 @@ public static class MisplacedAnalyzer
 
         // Phase 2 — verdicts, now that "is this target a foundation?" is answerable.
         var findings = measured
-            .Select(m => Judge(m, sections, methodsBySection, foundationRatio))
+            .Select(m => Judge(m, sections, foundationRatio))
             .OfType<MisplacedMethod>()
             .OrderByDescending(f => f.TargetBehaviorTouches + f.TargetDataTouches)
             .ThenBy(f => f.File, StringComparer.Ordinal)
@@ -239,6 +214,10 @@ public static class MisplacedAnalyzer
         int OwnTouches,
         Dictionary<string, int> Behavior,
         Dictionary<string, int> Data,
+        // Behavior touches broken down by the TYPE called, per section. The most-called type in the
+        // winning section is the concrete destination — which is what makes a collision claim sayable,
+        // since C# only forbids duplicate signatures within one containing type.
+        Dictionary<string, Dictionary<INamedTypeSymbol, int>> BehaviorTypes,
         List<string> TouchedSections);
 
     /// <summary>
@@ -285,8 +264,17 @@ public static class MisplacedAnalyzer
     /// into the foundation" is not advice — it is a description of what shared infrastructure looks
     /// like from the outside.
     /// </summary>
+    /// <summary>
+    /// Whether a section is shared infrastructure: depended on by many, depending on few.
+    /// </summary>
+    /// <remarks>
+    /// A ratio of zero or less turns the category OFF. Without that guard <c>FanOut * 0</c> is zero and
+    /// every section with enough fan-in compares true, so <c>--foundation-ratio 0</c> would mark
+    /// everything as foundation and suppress the actionable findings — the exact opposite of what asking
+    /// for no foundation detection means.
+    /// </remarks>
     private static bool IsFoundation(SectionDependencyProfile p, int ratio) =>
-        p.FanIn >= FoundationMinimumFanIn && p.FanIn >= p.FanOut * ratio;
+        ratio > 0 && p.FanIn >= FoundationMinimumFanIn && p.FanIn >= p.FanOut * ratio;
 
     private static MethodTouches? Measure(
         IMethodSymbol symbol,
@@ -300,6 +288,8 @@ public static class MisplacedAnalyzer
         int ownTouches = 0;
         var behavior = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var data = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var behaviorTypes =
+            new Dictionary<string, Dictionary<INamedTypeSymbol, int>>(StringComparer.OrdinalIgnoreCase);
 
         SyntaxNode body = declaration.Body ?? (SyntaxNode)declaration.ExpressionBody!;
         foreach (var node in body.DescendantNodesAndSelf())
@@ -308,7 +298,11 @@ public static class MisplacedAnalyzer
 
             // `nameof(Foo.Bar)` binds to Bar but executes nothing. Counting it as a touch would make
             // a logging statement look like a call into the section it names.
-            if (node is not (IdentifierNameSyntax or GenericNameSyntax or MemberBindingExpressionSyntax)) continue;
+            // Names only, and each name once. A MemberBindingExpression (the `Method` in `x?.Method()`)
+            // is NOT listed: its own `.Name` is an identifier that this walk already visits, so counting
+            // the binding too scored every null-conditional call twice — inflating the target's side of
+            // a comparison whose whole job is to weigh one section against another.
+            if (node is not (IdentifierNameSyntax or GenericNameSyntax)) continue;
             if (IsInsideNameOf(node)) continue;
 
             var touched = doc.Model.GetSymbolInfo(node, ct).Symbol;
@@ -338,8 +332,19 @@ public static class MisplacedAnalyzer
                 continue;
             }
 
-            var bucket = CanonicalReadDtoSet.IsDataCarrier(owner.OriginalDefinition) ? data : behavior;
-            bucket[section] = bucket.TryGetValue(section, out var n) ? n + 1 : 1;
+            if (CanonicalReadDtoSet.IsDataCarrier(owner.OriginalDefinition))
+            {
+                data[section] = data.TryGetValue(section, out var d) ? d + 1 : 1;
+                continue;
+            }
+
+            behavior[section] = behavior.TryGetValue(section, out var n) ? n + 1 : 1;
+
+            var byType = behaviorTypes.TryGetValue(section, out var existing)
+                ? existing
+                : behaviorTypes[section] = new Dictionary<INamedTypeSymbol, int>(SymbolEqualityComparer.Default);
+            var definition = owner.OriginalDefinition;
+            byType[definition] = byType.TryGetValue(definition, out var t) ? t + 1 : 1;
         }
 
         var touchedSections = behavior.Keys.Concat(data.Keys)
@@ -358,13 +363,13 @@ public static class MisplacedAnalyzer
             ownTouches,
             behavior,
             data,
+            behaviorTypes,
             touchedSections);
     }
 
     private static MisplacedMethod? Judge(
         MethodTouches m,
         Dictionary<string, SectionDependencyProfile> sections,
-        Dictionary<string, Dictionary<string, List<IMethodSymbol>>> methodsBySection,
         int foundationRatio)
     {
         if (m.TouchedSections.Count >= OrchestratorFanOut)
@@ -420,8 +425,11 @@ public static class MisplacedAnalyzer
             return Finding(m, target, behaviorTouches, dataTouches, MisplacedVerdict.Blocked, evidence,
                 blockedBy: blockedBy);
 
-        // What is already at the destination under this name, and how close it is.
-        var collision = Collision(m.Symbol, target, methodsBySection);
+        // The concrete type the method leans on hardest in the winning section. This is what makes a
+        // collision claim sayable at all: a duplicate signature is only prohibited within one containing
+        // type, so "the destination cannot take both" needs a destination narrower than an assembly.
+        var destination = DestinationType(m, target);
+        var collision = destination is null ? null : Collision(m.Symbol, destination);
 
         return Finding(m, target, behaviorTouches, dataTouches,
             collision is null ? MisplacedVerdict.Move : MisplacedVerdict.MoveWouldDuplicate,
@@ -439,24 +447,55 @@ public static class MisplacedAnalyzer
     /// be a straight relocation, because the destination will not compile with both. A namesake with
     /// different parameters is a weaker signal, reported as such rather than as the same finding.
     /// </remarks>
-    private static string? Collision(
-        IMethodSymbol moving, string target,
-        Dictionary<string, Dictionary<string, List<IMethodSymbol>>> methodsBySection)
+    private static string? Collision(IMethodSymbol moving, INamedTypeSymbol destination)
     {
-        if (!methodsBySection.TryGetValue(target, out var byName)) return null;
-        if (!byName.TryGetValue(moving.Name, out var candidates)) return null;
+        var candidates = destination.GetMembers(moving.Name)
+            .OfType<IMethodSymbol>()
+            .Where(m => m.MethodKind == MethodKind.Ordinary)
+            .ToList();
+        if (candidates.Count == 0) return null;
 
-        // An exact signature match first: that one is decisive, so it should not be hidden behind a
+        // An exact signature match first: that one is decisive, so it must not be hidden behind a
         // near-miss that happens to be enumerated earlier.
         foreach (var candidate in candidates)
             if (SameSignature(moving, candidate))
-                return $"{Describe(candidate)} — same signature, so the destination cannot take both";
+                return $"{Describe(candidate)} — same signature, so {destination.Name} cannot declare both";
 
         var namesake = candidates[0];
         var difference = moving.Parameters.Length == namesake.Parameters.Length
             ? "same arity, different parameter types"
             : $"{namesake.Parameters.Length} parameter(s) against this method's {moving.Parameters.Length}";
         return $"{Describe(namesake)} — {difference}, so reconcile the two rather than copying either";
+    }
+
+    /// <summary>
+    /// The type in <paramref name="target"/> this method calls most — the natural host if it moves.
+    /// </summary>
+    /// <remarks>
+    /// Only called types count, never data carriers: a method that reads another section's DTOs is a
+    /// mapper and is judged as one before this is reached. The answer may be an INTERFACE, which cannot
+    /// host a body — but the collision question is still well posed against it, since an interface cannot
+    /// declare two members of the same signature either, and naming it tells the reader exactly which
+    /// contract the move would run into.
+    /// </remarks>
+    private static INamedTypeSymbol? DestinationType(MethodTouches m, string target)
+    {
+        if (!m.BehaviorTypes.TryGetValue(target, out var byType) || byType.Count == 0) return null;
+
+        INamedTypeSymbol? best = null;
+        int bestCount = 0;
+        foreach (var (type, count) in byType)
+        {
+            // Ties break on name so the same solution always reports the same destination: iteration
+            // order over a symbol-keyed dictionary is not something to build output on.
+            if (count > bestCount ||
+                (count == bestCount && best is not null &&
+                 string.CompareOrdinal(type.Name, best.Name) < 0))
+            {
+                (best, bestCount) = (type, count);
+            }
+        }
+        return best;
     }
 
     private static bool SameSignature(IMethodSymbol a, IMethodSymbol b)
@@ -498,22 +537,45 @@ public static class MisplacedAnalyzer
         Dictionary<string, string> sectionByAssembly, CancellationToken ct)
     {
         var current = node;
-        while (current.Parent is MemberAccessExpressionSyntax parent)
+        while (true)
         {
-            // On the name side, not the receiver side: climb, so a qualified receiver still resolves.
-            if (parent.Expression != current)
+            SyntaxNode? reached = current.Parent switch
             {
-                current = parent;
-                continue;
+                // On the name side of a member access, not the receiver side: climb, so a qualified
+                // receiver such as `this._dep` still resolves to the access it is the receiver of.
+                MemberAccessExpressionSyntax parent when parent.Expression != current => null,
+                MemberAccessExpressionSyntax parent => parent.Name,
+
+                // `_dep?.Method()` puts the receiver under a conditional access and the invoked name
+                // under a member BINDING on the other side of the `?.`, so the member-access walk never
+                // reaches it. Null-safe delegation is common enough that missing it left the same 1:1 tie
+                // the conduit rule exists to break.
+                ConditionalAccessExpressionSyntax conditional when conditional.Expression == current =>
+                    conditional.WhenNotNull
+                        .DescendantNodesAndSelf()
+                        .OfType<MemberBindingExpressionSyntax>()
+                        .FirstOrDefault()?.Name,
+
+                _ => null
+            };
+
+            if (reached is not null)
+            {
+                var accessed = doc.Model.GetSymbolInfo(reached, ct).Symbol;
+                if (accessed?.ContainingType is not { } owner) return false;
+                var section = SectionOf(owner, sectionByAssembly);
+                return section is not null
+                    && !string.Equals(section, ownSection, StringComparison.OrdinalIgnoreCase);
             }
 
-            var accessed = doc.Model.GetSymbolInfo(parent.Name, ct).Symbol;
-            if (accessed?.ContainingType is not { } owner) return false;
-            var section = SectionOf(owner, sectionByAssembly);
-            return section is not null
-                && !string.Equals(section, ownSection, StringComparison.OrdinalIgnoreCase);
+            // Only keep climbing while there is a wrapper that leaves this node the receiver.
+            if (current.Parent is MemberAccessExpressionSyntax or ParenthesizedExpressionSyntax)
+            {
+                current = current.Parent;
+                continue;
+            }
+            return false;
         }
-        return false;
     }
 
     /// <summary>
