@@ -31,7 +31,15 @@ public sealed record SectionMetrics(
     int Methods,
     MetricDistribution Cognitive,
     MetricDistribution Cyclomatic,
-    /// <summary>Largest class or struct, summed across partial declarations — the set `largeClass` scores.</summary>
+    /// <summary>
+    /// Largest class or struct in the section, summed across partial declarations. This is the set
+    /// <see cref="Classes"/> counts — deliberately <b>wider</b> than the set the <c>largeClass</c>
+    /// rule scores, which is only the size-tracked roles (application service, repository
+    /// implementation, controller, background job). A metric that mirrored the rule would, on 6 of
+    /// Humans' 44 sections, report a smaller class than the section's real maximum and hide things
+    /// like a 557-line API client or a 502-line content holder — which is size the section carries
+    /// whether or not a rule currently charges for it.
+    /// </summary>
     int MaxClassLoc,
     string MaxClassLocName)
 {
@@ -267,10 +275,13 @@ public static class SectionMetricsAnalyzer
             if (f.IsClass) _classes++;
             else if (f.IsInterface) _interfaces++;
 
-            // Classes and structs only. `snapshot`'s solution-wide MaxClassLoc measures every type
-            // declaration, interfaces included, which is how a section whose largest declaration is
-            // an interface ends up reporting it under a field called maxClassLoc. Here the field
-            // describes the same set as `classes` and as the largeClass rule, so the three agree.
+            // Classes and structs only — the same set `classes` counts. `snapshot`'s solution-wide
+            // MaxClassLoc measures every type declaration, interfaces included, which is how a
+            // section whose largest declaration is an interface ends up reporting it under a field
+            // called maxClassLoc. Note this is wider than the largeClass rule's own set (size-tracked
+            // roles only): the block describes the section's size, and every other field in it is
+            // corpus-wide, so narrowing this one to a rule's scope would make it the odd one out
+            // and would hide a section's largest class whenever that class is not a tracked role.
             if (f.IsClass && f.ClassLoc > _maxClassLoc)
             {
                 _maxClassLoc = f.ClassLoc;
