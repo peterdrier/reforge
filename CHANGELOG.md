@@ -2,6 +2,113 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Gate 2 measurements for the internal-axis candidate signals
+
+`docs/superpowers/specs/2026-08-19-internal-axis-signal-measurements.md`. Discharges the
+measure-before-weighting obligation the 2026-08-15 scoring-alignment spec sets for the two candidate
+signals #19 proposes, and answers both open questions #35 flags for the `publicWriteSurface`
+transform. Measured against Humans: 45 configured sections (44 score anything), 3,448 types,
+157,860 prod LOC.
+
+**All three signals are recommended against in the form they were proposed**, which is the gate
+working rather than failing. One deletion is recommended, with its real cost stated below.
+
+The gate's manual top-hit reads did work the aggregates could not, in both directions: **0 of the top
+15 single-caller private helpers** is the extraction artifact that signal exists to detect (they are
+66-to-210-line named operations, and charging them would point an agent at inlining them), and **10 of
+the 47 `fullServiceInterface` classifications publish no write capability at all** — `IAuditViewerService`,
+`IDashboardService`, `IGdprExportService` and seven more are all-`Get*` interfaces classified as write
+surface because they are named `I*Service`. That second one is a live scoring inaccuracy worth 216
+points (5.2% of `fullServiceInterfaceMethod`), filed as #54; the report-side ambiguity that hid it is
+#53.
+
+- **Single-caller private helper.** 762 of 1,288 private methods have exactly one caller — a
+  **59.2% base rate** (explicit interface implementations excluded: Roslyn reports them as `private`
+  but they are externally callable and calls bind to the interface member, so all 31 of them sat in
+  the zero-caller bucket). As a stock this is not a smell detector, it is a tax on decomposition, and it
+  would point an agent at inlining private methods back into their callers. Confirms the spec's
+  existing position that the signal is meaningful only as a net-new delta, and supplies the evidence
+  for why: the stock is the majority of the population. The **delta form has not itself been gated** —
+  it is a different rule over a different population (helpers appearing in a diff), and a stock base
+  rate says nothing about its precision, so it needs its own Gate 2 read before it earns a weight.
+- **Feature envy.** 360 candidates as specified, of which **169 (46.9%) are mappers** — and for a
+  mapper, the refactor the rule implies (move it onto the type it reads) is a dependency inversion:
+  the entity would depend on its own projection. A manual read of the non-mapper top 15 finds five
+  more mappers the structural test missed. A refinement does work — non-mapper, returns a
+  any primitive or enum (including nullable), synchronous — landing at **25 candidates at roughly 72%
+  precision**, with
+  the residue a nameable class (`Render*` / `Format*` / `Display*`). Recommended for one more round,
+  not for a weight. Two of #19's own scope conditions are not in the firing test and were measured
+  separately. The entity/DTO condition is **not established**: 23 of the 25 pass a data-carrier proxy,
+  but that proxy rejects entities carrying domain methods (`Shift`, `EventSettings`) and accepts
+  property-only contexts (`GateScanContext`), so it cannot be adopted as the gate without a real
+  classification — which reforge lacks, and whose name-pattern version is itself unmeasured, so it would
+  substitute one unquantified proxy for another. (#54's 79% is for the `I*Service` write-surface
+  classifier, a different rule over a different population; an earlier revision of the document
+  transferred that figure to the DTO patterns, which it does not support.) And
+  **"touch only that type's members" read literally leaves 2 of the 25** — everything else does some
+  work through another receiver, the worst at 33 other-receiver touches against 18 on the parameter it
+  supposedly envies. So the 25-hit, ~72%-precision figure is a *looser* rule than #19 specifies, and
+  the next round has to pick a reading first: 2 hits, 22, or 25.
+
+  Two further predicate corrections landed in the same area and both moved the population: the firing
+  ratio used strict `>` where the prose says "at least twice as often", and an **extension call on the
+  parameter** (`p.Normalize()`) was counted as a target touch even though the member lives on an
+  unrelated static class. Fixing both took raw 361 → 363 and refined 26 → **25**, and dropped
+  `CalendarOccurrenceViewExtensions.ShouldHideTimeLabel` out of the population — the same candidate an
+  earlier round cited as evidence that scored rules must exclude extension methods.
+
+  That prompted a claim that the exclusion had become structural, which was **wrong and was caught in
+  the next round**: reclassifying extension *calls* is not excluding extension *declarations*, and an
+  extension like `IsValid(this Entity p)` reading ordinary properties of `p` has genuine target touches
+  and fires anyway. **7 such declarations were still in the population**, all mappers; only the refined
+  set happened to be clean, which made the wrong conclusion look confirmed. The candidate test now
+  checks `sym.IsExtensionMethod` directly: raw 363 → **360**, mapper share → **46.9%**, refined
+  unchanged. Also added `nint` / `nuint` (`System_IntPtr` / `System_UIntPtr`) to the scalar predicate,
+  which a second "every primitive" attempt had still missed; no effect on this corpus.
+- **`publicWriteSurface`.** **37 genuine exported write interfaces across 18 of the 44 scored
+  sections** — 47 across 24 sections as classified, before the manual audit removed 10 read-only
+  `I*Service` interfaces. The audited population is what the rule is meant to price and what the
+  modelled costs use. Distribution: 15 sections at exactly one interface, then 2, 4, and Users at 16.
+  **Per section, not per interface** — a per-interface charge would give Users 16 of 37 charges (**43%**
+  of the rule's output) for one architectural decision, and would be a near-constant for the 83% of
+  positive sections that have exactly one interface. Reporting it is **blocked behind #54 in either
+  form**: implemented off `fullServiceInterfaces` today it would report 24 of 44 sections rather than
+  18, shipping that defect into a new metric and calibrating a future weight against an inflated
+  denominator. Recommended as reported-before-scored pending a second corpus.
+
+  The interface count took three passes and the recommendation flipped in the middle: counting
+  declaring *files* (47) was a proxy that happened to be right; counting every classified interface
+  symbol (93 across 37 of 45 configured sections) fixed the proxy but included 46 `internal`
+  interfaces that export nothing and score nothing, and on that population per-interface looked like
+  the discriminating reading; filtering to `IsExported` returns 47 across 24, verified a second way by
+  mapping every charged `fullServiceInterfaceMethod` entry back to its interface; the audit then took
+  it to 37 across 18. Note for anyone measuring off these reports:
+  `SectionShapeAnalyzer.FullServiceInterfaces` is unfiltered while `SurfaceScoreEngine` charges only
+  exported types, and neither output says so.
+- **Retiring `crossSectionWriteSurface`.** It scores 0 across all 44 scored sections of Humans, so the
+  deletion is a no-op *there* — but not on the sample solution, which scores it 30 across two
+  purpose-built fixtures, and whose suppression set is correspondingly non-empty. The retirement
+  carries fixture work and a `NotYetCovered` entry with it. Worth doing; not free.
+
+  The scored zero also hid a second population, which the first version of the document claimed to
+  answer without counting: `crossSectionWriteSurfaceUnverified` advisories, emitted where a dependency
+  escapes analysis. There are **2 on Humans** (`AccountController` and `HomeController`, both against
+  `IUserService`), and **both audit to write users** — `RecordLoginAsync`, `DeclareNotAttendingAsync`,
+  `UndoNotAttendingAsync`. Since the rule fires on *read-only* use of a write-capable interface, the
+  zero is 0-because-checked rather than 0-because-unevaluated, which strengthens the retirement case.
+  Both escaped analysis for the same narrow reason: the interface arrives as a primary-constructor
+  parameter forwarded to a base-class constructor, and the cross-section walk does not follow that. Recorded that way
+  because an earlier draft of the document generalised "0/44" into "free", which is the exact
+  mistake the measure-before-weighting gate exists to catch.
+
+Two standing figures also moved and are recorded: the internal axis is still **87% size rules**
+(reproducing #19's 88% at a newer commit with a newer reforge), and the six read-surface rules #19
+proposes retiring have **grown** from 7% to **11.8% of surface**.
+
+The spec's Gate 2 section now points at the measurements, and its cleanup-loop requirement for a
+per-section size denominator is marked delivered — #44/#45 added exactly that.
+
 ## Unreleased - Extract the production-document walk
 
 #31 finding 4. Fifteen files walk `solution.Projects` by hand, and four of them — `audit-auth`,

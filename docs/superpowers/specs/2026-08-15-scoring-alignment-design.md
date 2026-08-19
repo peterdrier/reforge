@@ -92,6 +92,15 @@ per context. A rule at 1.7% coverage whose top hits are boilerplate trains reade
 **Duplication is investigated-and-rejected; do not re-propose it as a scored rule.** If wanted at
 all it is a `reforge clones` diagnostic, not an axis.
 
+**Gate 2 has since been discharged for both candidate signals below** — feature envy and the
+single-caller private helper — plus the `publicWriteSurface` transform proposed in #35. Results,
+distributions and the required manual top-10 reads are recorded in
+[`2026-08-19-internal-axis-signal-measurements.md`](2026-08-19-internal-axis-signal-measurements.md).
+All three are recommended *against* in the form they were proposed, which is what the gate is for. The
+manual reads did work the aggregates could not: 0 of the top 15 single-caller helpers is the artifact
+that signal is meant to detect, and 10 of the 47 `fullServiceInterface` classifications publish no
+write capability at all. Read that file before writing any of these rules.
+
 ## Prerequisites
 
 None of this is safe to build on, and the cleanup loop is not safe to run at all, until three
@@ -392,7 +401,10 @@ requirements rather than nice-to-haves:
 
 - **Per-section density, not absolute points**, must be derivable from the report — otherwise no
   consumer can rank sections fairly. `typesAnalyzed` exists; a per-section size denominator does
-  not.
+  not. **Delivered since (#44/#45):** every group now carries a `metrics` block with `locProd`,
+  `files`, `classes`, `interfaces`, `methods` and both complexity distributions, plus a
+  solution-level rollup, and `--list-groups` carries `locProd` for every section. This requirement
+  is met.
 - **A named-rule-family view** must be reportable, so a consumer can target one family per run
   rather than "reduce the total". `byRule` already carries this; the family grouping does not exist.
 
