@@ -146,6 +146,51 @@ public class MisplacedAnalyzerTests
     }
 
     [Fact]
+    public async Task Analyze_PartialMethodImplementation_IsBlocked()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizePartiallyAsync");
+
+        Assert.NotNull(finding);
+        // Only the implementation half is ever measured — the defining half has no body — and it cannot
+        // move alone, because C# requires both halves in the same containing type. Neither the override
+        // nor the interface branch catches it, so it was reported as a plain move.
+        Assert.Equal(MisplacedVerdict.Blocked, finding.Verdict);
+        Assert.Contains("partial", finding.BlockedBy!, StringComparison.Ordinal);
+        Assert.Contains("SummarizePartiallyAsync", finding.BlockedBy!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Analyze_EquivalentGenericSignatures_IsADecisiveCollision()
+    {
+        var report = await AnalyzeAsync();
+        var finding = report.Findings.FirstOrDefault(f =>
+            f.Method.Contains("GenericClashReporter", StringComparison.Ordinal));
+
+        Assert.NotNull(finding);
+        Assert.Equal(MisplacedVerdict.MoveWouldDuplicate, finding.Verdict);
+        // `Passthrough<T>(T)` and `Passthrough<U>(U)` are one signature to C#. The type parameters are
+        // different symbols, so identity comparison rejected the match and then reported the collision
+        // as "different parameter types" — the right verdict for the wrong, and false, reason.
+        Assert.Contains("same signature", finding.DuplicateOf!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Analyze_ReadsOfAConfiguredDto_IsAMapperNotAMove()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "MapConfiguredSummary");
+
+        Assert.NotNull(finding);
+        // RelocationSummaryResult is a DTO by config rule and not by shape: it declares a method, which
+        // the structural test treats as behavior. Reading its properties is still reading data, and
+        // counting those four reads as behavior calls turned a mapper into a move with a destination.
+        Assert.Equal(MisplacedVerdict.Mapper, finding.Verdict);
+        Assert.Equal(0, finding.TargetBehaviorTouches);
+        Assert.Equal(4, finding.TargetDataTouches);
+    }
+
+    [Fact]
     public async Task Analyze_MethodSpanningThreeSections_IsAnOrchestratorNotAMove()
     {
         var report = await AnalyzeAsync();

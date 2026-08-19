@@ -171,6 +171,17 @@ public static class MisplacedAnalyzer
             StringComparer.Ordinal);
         var sectionByAssembly = AssemblySections.Resolve(analyzedAssemblies);
 
+        // Types the active config calls a DTO. The structural test below (IsDataCarrier) recognises the
+        // shape of a data carrier, but a project can declare one by rule — and a configured DTO whose
+        // shape the heuristic does not recognise had its property reads counted as behavior, which is
+        // how a method reading three of them was reported as a `move` rather than the `mapper` it is.
+        // Keyed by assembly + display name rather than by symbol: `classified` is collected from each
+        // project's own compilation, so the same type reached from a referencing project is a different
+        // symbol instance and SymbolEqualityComparer would miss it.
+        var configuredDtos = new HashSet<string>(
+            classified.Where(c => c.Tags.Contains("dto")).Select(c => SolutionClassifier.TypeKey(c.Type)),
+            StringComparer.Ordinal);
+
         // Phase 1 — measure every method's touches. No verdicts yet: the section dependency graph is
         // a property of the whole solution, and a verdict that consults it cannot be reached until
         // every method has been counted.
@@ -186,7 +197,8 @@ public static class MisplacedAnalyzer
                 var ownSection = SectionOf(symbol.ContainingType, sectionByAssembly);
                 if (ownSection is null) continue;
 
-                var touches = Measure(symbol, declaration, doc, ownSection, sectionByAssembly, solutionDirectory, ct);
+                var touches = Measure(
+                    symbol, declaration, doc, ownSection, sectionByAssembly, configuredDtos, solutionDirectory, ct);
                 if (touches is not null) measured.Add(touches);
             }
         }
@@ -283,6 +295,7 @@ public static class MisplacedAnalyzer
         SolutionDocument doc,
         string ownSection,
         Dictionary<string, string> sectionByAssembly,
+        HashSet<string> configuredDtos,
         string solutionDirectory,
         CancellationToken ct)
     {
@@ -333,7 +346,7 @@ public static class MisplacedAnalyzer
                 continue;
             }
 
-            if (CanonicalReadDtoSet.IsDataCarrier(owner.OriginalDefinition))
+            if (IsData(owner.OriginalDefinition, configuredDtos))
             {
                 data[section] = data.TryGetValue(section, out var d) ? d + 1 : 1;
                 continue;
@@ -500,6 +513,19 @@ public static class MisplacedAnalyzer
     }
 
     /// <summary>
+    /// Whether a touch on <paramref name="type"/> is a data read rather than a behavior call: the active
+    /// config classified it as a DTO, or its shape says it carries data and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// The union is the same one <see cref="SectionShapeAnalyzer"/> and <see cref="CanonicalReadDtoSet"/>
+    /// already take. A config rule is a deliberate statement about a type and outranks a heuristic that
+    /// did not recognise it; the structural test still stands alone, because a section-only config
+    /// carries no <c>dto</c> rule at all and the split has to work without one.
+    /// </remarks>
+    private static bool IsData(INamedTypeSymbol type, HashSet<string> configuredDtos) =>
+        configuredDtos.Contains(SolutionClassifier.TypeKey(type)) || CanonicalReadDtoSet.IsDataCarrier(type);
+
+    /// <summary>
     /// Whether two methods collide as C# declarations.
     /// </summary>
     /// <remarks>
@@ -517,9 +543,62 @@ public static class MisplacedAnalyzer
         {
             var (x, y) = (a.Parameters[i], b.Parameters[i]);
             if (x.RefKind != y.RefKind) return false;
-            if (!SymbolEqualityComparer.Default.Equals(x.Type, y.Type)) return false;
+            if (!SameParameterType(x.Type, y.Type)) return false;
         }
         return true;
+    }
+
+    /// <summary>
+    /// Whether two parameter types are the same type <i>for signature purposes</i>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A method's own type parameters are distinct symbols per method, so <c>Map&lt;T&gt;(T value)</c>
+    /// and <c>Map&lt;U&gt;(U value)</c> compare unequal under
+    /// <see cref="SymbolEqualityComparer.Default"/> — while C# reads them as the same signature and
+    /// refuses to declare both. Matched by <see cref="ITypeParameterSymbol.Ordinal"/> instead, which is
+    /// how the language identifies them.
+    /// </para>
+    /// <para>
+    /// Only <see cref="TypeParameterKind.Method"/> parameters are matched this way. A type-level
+    /// parameter belongs to the class, and the class is not moving: <c>Foo&lt;T&gt;.M(T)</c> put on
+    /// <c>Bar&lt;U&gt;</c> would not compile with <c>T</c> at all, so symbol equality — which fails
+    /// here — is the answer that keeps the collision claim true.
+    /// </para>
+    /// <para>
+    /// The walk is structural because a type parameter can be nested: <c>Map(List&lt;T&gt; values)</c>
+    /// and <c>Map(IReadOnlyList&lt;T&gt; values)</c> differ, while <c>Map&lt;T&gt;(List&lt;T&gt;)</c> and
+    /// <c>Map&lt;U&gt;(List&lt;U&gt;)</c> do not. Nullable annotation is deliberately not compared: it
+    /// is not part of a C# signature, and two members differing only in it still collide.
+    /// </para>
+    /// </remarks>
+    private static bool SameParameterType(ITypeSymbol a, ITypeSymbol b)
+    {
+        if (a is ITypeParameterSymbol { TypeParameterKind: TypeParameterKind.Method } pa)
+            return b is ITypeParameterSymbol { TypeParameterKind: TypeParameterKind.Method } pb
+                && pa.Ordinal == pb.Ordinal;
+
+        if (a is IArrayTypeSymbol arrayA)
+            return b is IArrayTypeSymbol arrayB
+                && arrayA.Rank == arrayB.Rank
+                && SameParameterType(arrayA.ElementType, arrayB.ElementType);
+
+        if (a is IPointerTypeSymbol pointerA)
+            return b is IPointerTypeSymbol pointerB
+                && SameParameterType(pointerA.PointedAtType, pointerB.PointedAtType);
+
+        if (a is INamedTypeSymbol { IsGenericType: true } namedA
+            && b is INamedTypeSymbol { IsGenericType: true } namedB)
+        {
+            if (!SymbolEqualityComparer.Default.Equals(namedA.OriginalDefinition, namedB.OriginalDefinition))
+                return false;
+            if (namedA.TypeArguments.Length != namedB.TypeArguments.Length) return false;
+            for (int i = 0; i < namedA.TypeArguments.Length; i++)
+                if (!SameParameterType(namedA.TypeArguments[i], namedB.TypeArguments[i])) return false;
+            return true;
+        }
+
+        return SymbolEqualityComparer.Default.Equals(a, b);
     }
 
     private static string Describe(IMethodSymbol method) =>
@@ -604,6 +683,13 @@ public static class MisplacedAnalyzer
         // every implementer inherits.
         if (symbol.ContainingType.TypeKind == TypeKind.Interface)
             return $"declared on the interface {symbol.ContainingType.Name}";
+
+        // The implementation half of a partial method. Only this half is ever measured — the defining
+        // half has no body, so the body check in AnalyzeAsync skips it — and it cannot travel alone:
+        // C# requires both halves in the same containing type, so relocating the body without the
+        // declaration does not compile. The pin is the declaration, exactly as for an interface member.
+        if (symbol.PartialDefinitionPart is not null)
+            return $"the implementation part of partial {symbol.ContainingType.Name}.{symbol.Name}";
 
         if (symbol.IsOverride && symbol.OverriddenMethod is { } overridden)
             return $"overrides {overridden.ContainingType.Name}.{overridden.Name}";

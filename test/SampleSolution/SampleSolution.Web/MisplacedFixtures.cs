@@ -266,3 +266,56 @@ public class BalancedReporter
         return Own(greeting) + OwnToo(greeting) + OwnAgain(greeting) + recent.Count;
     }
 }
+
+/// <summary>
+/// The plain pipe again, written as the implementation half of a partial method. The finding is true
+/// but the fix is not a relocation: C# requires both halves of a partial method in the same containing
+/// type, so the body cannot travel to another type or assembly without its declaration.
+/// </summary>
+public partial class PartialPipingReporter
+{
+    private readonly GreetingService _greetings = new();
+
+    public partial Task<string> SummarizePartiallyAsync(int userId);
+}
+
+public partial class PartialPipingReporter
+{
+    public partial async Task<string> SummarizePartiallyAsync(int userId)
+    {
+        var greeting = await _greetings.GetGreetingAsync(userId);
+        var recent = await _greetings.GetRecentGreetingsAsync(userId);
+        await _greetings.RecordGreetingAsync(userId, greeting);
+        return $"{greeting}/{recent.Count}";
+    }
+}
+
+/// <summary>
+/// A pipe whose generic signature matches one the destination type already declares
+/// (<c>GenericMappingService.Passthrough&lt;U&gt;(U)</c>). The two methods' type parameters are
+/// distinct symbols, so identity comparison read this as a namesake with different parameter types
+/// when it is a straight compile-time collision.
+/// </summary>
+public class GenericClashReporter
+{
+    private readonly GenericMappingService _mapping = new();
+
+    public T Passthrough<T>(T value)
+    {
+        var first = _mapping.Passthrough(value);
+        var second = _mapping.Passthrough(first);
+        var third = _mapping.Passthrough(second);
+        return third;
+    }
+}
+
+/// <summary>
+/// Reads four properties of a type the config classifies as a DTO but whose shape the structural test
+/// rejects. Mapping code belongs to whoever needs the mapped shape, so this is a mapper — counting the
+/// reads as behavior made it a move recommendation with a destination.
+/// </summary>
+public class ConfiguredDtoRowMapper
+{
+    public string MapConfiguredSummary(RelocationSummaryResult summary) =>
+        $"{summary.Label}|{summary.Count}|{summary.Kind}|{summary.Note}";
+}
