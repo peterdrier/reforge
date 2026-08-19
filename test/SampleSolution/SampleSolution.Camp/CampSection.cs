@@ -56,3 +56,19 @@ public static class CampReadModelProjection
     public static string BuildCampDetail(CampInfo info) => info.Name;
     public static bool IsUserCampLead(CampInfo info, Guid userId) => false;
 }
+
+// Base for a DTO declared in ANOTHER section (Reporting). The base-chain walk has to cross the
+// project boundary to charge the derived type for what it publishes — the solution boundary is
+// assembly membership, not whether the symbol happens to arrive with a source location.
+public class CrossProjectEnvelopeBase
+{
+    public Guid Id { get; set; }
+    public string Origin { get; set; } = "";
+}
+
+// Property type for the cross-project nested-DTO test: a solution type declared in a different
+// section from the DTO that references it.
+public sealed class CrossProjectNestedPayload
+{
+    public string Value { get; set; } = "";
+}
