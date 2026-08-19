@@ -74,6 +74,53 @@ public class CognitiveAttributionTests
         Assert.True(ImplementationComplexity.Cognitive(nested) > ImplementationComplexity.Cognitive(flat));
     }
 
+    [Fact]
+    public void Cognitive_LambdaInsideTheExemptTopLevelLambda_StillPaysItsLevel()
+    {
+        // The exemption is for the outermost nested function only. The exempt body is walked at
+        // nesting 0, so a lambda declared inside it would see 0 too and take the exemption again —
+        // scoring its branches at member depth though it is genuinely two functions deep.
+        var innerLambda = Parse(@"
+            void M(int[] xs)
+            {
+                Run(() =>
+                {
+                    Each(xs, x => { if (x > 0) { } });
+                });
+            }
+            void Run(System.Action a) { }
+            void Each(int[] xs, System.Action<int> a) { }");
+        var singleLambda = Parse(@"
+            void M(int[] xs)
+            {
+                Run(() => { if (xs.Length > 0) { } });
+            }
+            void Run(System.Action a) { }");
+
+        // Two functions deep costs one more than one function deep.
+        Assert.Equal(
+            ImplementationComplexity.Cognitive(singleLambda) + 1,
+            ImplementationComplexity.Cognitive(innerLambda));
+    }
+
+    [Fact]
+    public void Cognitive_SiblingTopLevelLambdas_EachGetTheExemption()
+    {
+        // The exemption tracks the path to the current node, not how many nested functions the walk
+        // has seen — so three lambdas at the member's own top level are each exempt, and the member
+        // costs exactly what the three branches cost.
+        var siblings = Parse(@"
+            void M(int[] xs)
+            {
+                Run(() => { if (xs.Length > 0) { } });
+                Run(() => { if (xs.Length > 1) { } });
+                Run(() => { if (xs.Length > 2) { } });
+            }
+            void Run(System.Action a) { }");
+
+        Assert.Equal(3, ImplementationComplexity.Cognitive(siblings));
+    }
+
     // ---------------- 3(a): attribution ----------------
 
     [Fact]

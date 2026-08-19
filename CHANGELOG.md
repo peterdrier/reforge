@@ -20,11 +20,19 @@ Measured before and after:
 
 | | cognitiveComplexity | internal axis |
 |---|---:|---:|
-| Reforge (`Reforge.slnx`) | — | 1,843 → **1,681** |
-| Humans (`Humans.slnx`, 44 sections) | 820 → **768** | 3,162 → **3,110** |
+| Reforge (`Reforge.slnx`) | — | 1,843 → **1,684** |
+| Humans (`Humans.slnx`, 44 sections) | 820 → **771** | 3,162 → **3,113** |
 
 No other rule moved on either corpus, and surface is untouched on both — this is an
 internal-axis-only change, which is what it should be.
+
+The exemption is for the **outermost** nested function only, and getting that wrong is easy: the
+exempt body is walked at nesting 0, so a lambda declared inside it sees 0 as well and would take the
+exemption a second time — a LINQ lambda inside a `SetAction` callback scoring its branches at member
+depth though it is genuinely two functions deep. "Already inside a nested function" is therefore
+tracked separately from the nesting value, saved and restored around each one, so it describes the
+path to the current node rather than how many the walk has seen. Several sibling lambdas at a
+member's own top level are each exempt; one nested inside another is not.
 
 The divergence from SonarSource is deliberate and worth stating plainly: a *top-level* LINQ lambda
 containing a branch now costs one less than Sonar would charge, because it too has no

@@ -122,6 +122,11 @@ public static class ImplementationComplexity
         /// <summary>Points accrued inside the heaviest top-level nested function, and its line.</summary>
         public int TopNestedScore;
         public int TopNestedLine;
+        /// <summary>
+        /// Whether the walk is currently inside a nested function. Saved and restored around each
+        /// one, so it reflects the path to the current node rather than how many have been seen.
+        /// </summary>
+        private bool _inNestedFunction;
 
         public void VisitChildren(SyntaxNode node, int nesting)
         {
@@ -172,19 +177,31 @@ public static class ImplementationComplexity
                      or AnonymousMethodExpressionSyntax or LocalFunctionStatementSyntax:
                 {
                     // A nested function increases the structural nesting of its body only when it
-                    // sits inside enclosing structure of its own. At nesting 0 there is no
-                    // increment-bearing node between it and its member, so the level would be
-                    // charged for the shape of an API rather than for anything a reader has to
-                    // hold: `command.SetAction(async (parse, ct) => { ... })` puts an entire member
-                    // body one level down for no structural reason, and every branch inside it then
-                    // costs 1 more than the same code written as a method body.
-                    int inner = nesting == 0 ? 0 : nesting + 1;
+                    // sits inside enclosing structure of its own. At the member's own top level
+                    // there is no increment-bearing node between it and its member, so the level
+                    // would be charged for the shape of an API rather than for anything a reader
+                    // has to hold: `command.SetAction(async (parse, ct) => { ... })` puts an entire
+                    // member body one level down for no structural reason, and every branch inside
+                    // it then costs 1 more than the same code written as a method body.
+                    //
+                    // "At the member's own top level" needs both halves. `nesting == 0` alone is
+                    // not enough once the exemption is granted: the exempt body is walked at 0, so
+                    // a lambda declared INSIDE it would see 0 as well and take the exemption a
+                    // second time — a LINQ lambda inside a SetAction callback would then score its
+                    // branches at member depth, though it is genuinely two functions deep. Tracking
+                    // "already inside a nested function" separately from the nesting value keeps
+                    // the exemption to the outermost one, while still granting it to each of
+                    // several sibling top-level lambdas.
+                    bool wasInNested = _inNestedFunction;
+                    int inner = (nesting == 0 && !wasInNested) ? 0 : nesting + 1;
                     int before = Score;
+                    _inNestedFunction = true;
                     VisitChildren(node, inner);
-                    // Attribution (issue #31 3a): remember the heaviest nested function that is the
+                    _inNestedFunction = wasInNested;
+                    // Attribution (issue #31 3a): remember the heaviest nested function at the
                     // member's own top level, so a caller can point at the code instead of at a
                     // signature the complexity is not in.
-                    if (nesting == 0 && Score - before > TopNestedScore)
+                    if (nesting == 0 && !wasInNested && Score - before > TopNestedScore)
                     {
                         TopNestedScore = Score - before;
                         TopNestedLine = node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
