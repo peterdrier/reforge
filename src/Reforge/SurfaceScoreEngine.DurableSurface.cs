@@ -13,7 +13,7 @@ public sealed partial class SurfaceScoreEngine
         var scoredDtos = new HashSet<string>(
             classified
                 .Where(x => x.IsExported && x.Tags.Contains("dto") && LooksLikeDataCarrier(x.Type))
-                .Select(x => SolutionClassifier.TypeKey(x.Type)),
+                .Select(x => SolutionClassifier.TypeKey(x.Type.OriginalDefinition)),
             StringComparer.Ordinal);
 
         foreach (var c in classified)
@@ -79,14 +79,22 @@ public sealed partial class SurfaceScoreEngine
             {
                 if (t.SpecialType == SpecialType.System_Object) break;
                 if (!t.Locations.Any(l => l.IsInSource)) break;
-                if (scoredDtos.Contains(SolutionClassifier.TypeKey(t))) break;
+                // OriginalDefinition: a constructed generic base (`BaseResponse<int>`) has a
+                // different display string from the declaration the set was built from
+                // (`BaseResponse<T>`), so querying with the constructed form misses and the
+                // derived DTO pays a second time for properties the base already paid for.
+                if (scoredDtos.Contains(SolutionClassifier.TypeKey(t.OriginalDefinition))) break;
             }
 
             foreach (var member in t.GetMembers())
             {
                 if (member is not IPropertySymbol prop) continue;
                 if (prop.DeclaredAccessibility != Accessibility.Public) continue;
-                if (!seen.Add(prop.Name)) continue;
+                // Keyed on the signature, not the name. Indexer overloads (`this[int]`,
+                // `this[string]`) are all named `Item`, and they are distinct published
+                // properties — a name-only key would charge only the first. Ordinary properties
+                // have no parameters, so an override or `new` declaration still collapses.
+                if (!seen.Add(PropertyKey(prop))) continue;
 
                 var loc = prop.Locations.FirstOrDefault(l => l.IsInSource);
                 var (file, line) = LocateMember(loc, c);
@@ -100,6 +108,16 @@ public sealed partial class SurfaceScoreEngine
             }
         }
     }
+
+    /// <summary>
+    /// Identity of a published property for de-duplication across a base chain: its name plus, for
+    /// an indexer, its parameter types. A derived declaration shadowing or overriding a base one
+    /// collapses; two indexer overloads do not.
+    /// </summary>
+    private static string PropertyKey(IPropertySymbol prop) =>
+        prop.Parameters.Length == 0
+            ? prop.Name
+            : $"{prop.Name}({string.Join(",", prop.Parameters.Select(p => p.Type.ToDisplayString()))})";
 
     private (string Rule, int Weight) ClassifyDtoProperty(IPropertySymbol prop)
     {

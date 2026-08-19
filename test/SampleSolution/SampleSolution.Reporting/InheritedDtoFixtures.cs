@@ -47,3 +47,27 @@ public sealed class NotADataCarrierInfo : ReportBehaviourBase
 {
     public string Title { get; set; } = "";
 }
+
+// A constructed generic base: the base is itself a scored DTO, so the derived type must NOT be
+// charged again for its properties. The key the scored-DTO set is built from is the declaration
+// (`GenericEnvelopeInfo<T>`), while the base seen from here is the constructed `GenericEnvelopeInfo<int>` —
+// different display strings, so querying with the constructed form silently misses.
+public class GenericEnvelopeInfo<T>
+{
+    public Guid Id { get; set; }
+    public string Label { get; set; } = "";
+}
+
+public sealed class ConstructedGenericReportInfo : GenericEnvelopeInfo<int>
+{
+    public string Extra { get; set; } = "";
+}
+
+// Indexer overloads share the name `Item`. They are distinct published properties, so a name-only
+// de-duplication key would charge only the first.
+public sealed class IndexedReportInfo
+{
+    public string Title { get; set; } = "";
+    public string this[int index] => "";
+    public string this[string key] => "";
+}

@@ -85,4 +85,38 @@ public class DtoInheritedPropertyTests
 
         Assert.Equal(keys.Count, keys.Distinct().Count());
     }
+
+    [Fact]
+    public async Task AConstructedGenericBaseThatIsItselfADto_IsNotChargedTwice()
+    {
+        var report = await ScoreDefaultAsync();
+
+        // GenericEnvelopeInfo<T> is a scored DTO in its own right. The derived type sees it as the
+        // constructed GenericEnvelopeInfo<int>, whose display string differs from the declaration's —
+        // so a key built from one and queried with the other misses, and the base's properties are
+        // charged a second time against the derived type.
+        var doubleCharged = Entries(report)
+            .Where(e => e.File.Contains("InheritedDtoFixtures"))
+            .Where(e => e.Symbol is "Id" or "Label")
+            .Where(e => e.Detail is not null && e.Detail.Contains("inherited from GenericEnvelopeInfo"))
+            .ToList();
+
+        Assert.Empty(doubleCharged);
+        // The base still pays for its own.
+        Assert.Contains(Entries(report), e => e.Symbol == "Label" && e.Rule == "dtoScalarProperty");
+    }
+
+    [Fact]
+    public async Task IndexerOverloads_AreEachCharged()
+    {
+        var report = await ScoreDefaultAsync();
+
+        // Both indexers are named `Item`, so a name-only de-duplication key charges only the first.
+        var indexers = Entries(report)
+            .Where(e => e.File.Contains("InheritedDtoFixtures"))
+            .Where(e => e.Symbol == "this[]")
+            .ToList();
+
+        Assert.Equal(2, indexers.Count);
+    }
 }
