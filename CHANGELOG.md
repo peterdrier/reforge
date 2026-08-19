@@ -30,16 +30,26 @@ inherited public **events** (subscribing is calling), and non-abstract **default
 methods** — behaviour the type never declares anywhere, so no walk over declarations can see it.
 Declared behaviour has always disqualified a type; inherited behaviour is not different.
 
-This predicate is deliberately **not** delegated to `CanonicalReadDtoSet.IsDataCarrier`, which
-answers nearly the same question with a better-designed allowlist. That one walks base types
-without stopping at the solution boundary, and delegating measured **+5 points on Humans** — all of
-it a single EF migration class, `ExpenseLineProofRows : Migration`, admitted as published DTO
-surface because EF's `Migration` base declares public properties. A framework base's members are
-not this section's surface to withdraw. That the other predicate walks into framework bases at all
-is arguably its own bug; it belongs to the canonical-read-DTO subsystem and is filed separately
-rather than changed from here.
+**The predicate is now an allowlist**, and that change is the substantive one. It used to ask "which
+member shapes are behaviour?" and reject those — a framing that lost four times in a row under
+review: ordinary methods, then inherited events, then non-abstract default interface methods, then
+explicit interface implementations (which Roslyn reports as `private` while anyone who casts can call
+them, so both an accessibility filter and an interface scan miss them). Each miss silently published
+a behavioural type as DTO surface. It now asks the closed question instead — is every member carried
+data, or invisible to a consumer? — reusing `CanonicalReadDtoSet`'s `IsCarriedData` and
+`IsInvisibleToConsumers`, so an unrecognised member shape disqualifies by default and the next shape
+nobody thought of fails safe.
 
-**Measured on Humans: no change at all** — surface 17,379 and internal 3,162 before and after. The
+One deliberate difference from `CanonicalReadDtoSet.IsDataCarrier` survives: this walk **stops at the
+solution boundary**. Delegating wholesale measured **+5 points on Humans**, all of it one EF
+migration class — `ExpenseLineProofRows : Migration` — admitted as published DTO surface because EF's
+`Migration` base declares public properties. A framework base's members are not this section's
+surface to withdraw. That the other predicate has no such stop is filed as #49 rather than changed
+from here, because it decides canonical read DTOs and reopens a judgment call the fix would have to
+settle.
+
+**Measured on Humans: no change at all** — surface 17,379 and internal 3,113 before and after, with
+no type changing classification in either direction, including after the allowlist rebuild. The
 corpus contains zero DTO-shaped types with a base class, so nobody has taken this path. That is the
 useful reading: the fix is preventive, it closes a Gate 1 hole before it is walked through, and it
 costs no score churn to adopt. The sample solution carries the fixtures that do move

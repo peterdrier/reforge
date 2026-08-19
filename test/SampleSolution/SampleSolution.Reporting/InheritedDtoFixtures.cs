@@ -96,3 +96,17 @@ public sealed class DefaultMethodReportInfo : IHasDefaultBehaviour
 {
     public string Title { get; set; } = "";
 }
+
+// An explicit interface implementation is `private` on the symbol and callable by anyone who casts.
+// An accessibility filter therefore skips it, and the interface scan skips it too because the
+// interface declaration is abstract — so a reject-list predicate misses it from both directions.
+public interface IExplicitBehaviour
+{
+    string Describe();
+}
+
+public sealed class ExplicitlyImplementedReportInfo : IExplicitBehaviour
+{
+    public string Title { get; set; } = "";
+    string IExplicitBehaviour.Describe() => "";
+}

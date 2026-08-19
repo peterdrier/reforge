@@ -157,81 +157,63 @@ public sealed partial class SurfaceScoreEngine
     /// service classes that happen to match a name pattern, etc. from inflating the DTO score.
     /// </summary>
     /// <summary>
-    /// Whether a type is a pure data carrier: public properties and no behaviour.
+    /// Whether a type is a pure data carrier: carried data, and nothing a consumer can invoke.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Not</b> delegated to <see cref="CanonicalReadDtoSet.IsDataCarrier"/>, despite the two
-    /// answering nearly the same question, and the difference is load-bearing: that one walks base
-    /// types without stopping at the solution boundary. Delegating measured +5 points on Humans,
-    /// all of it one EF migration class — <c>ExpenseLineProofRows : Migration</c> — admitted as
-    /// published DTO surface because EF's <c>Migration</c> base declares public properties. A
-    /// framework base's members are not this section's surface to withdraw. (That the other
-    /// predicate walks into framework bases at all is arguably its own bug; it belongs to the
-    /// canonical-read-DTO subsystem and is filed separately rather than changed from here.)
+    /// Stated as an <b>allowlist</b> — is every member carried data, or invisible to a consumer? —
+    /// rather than as a list of behaviour shapes to reject. The reject-list framing loses, and lost
+    /// here four times in a row: ordinary methods, then inherited events, then non-abstract default
+    /// interface methods, then explicit interface implementations (which Roslyn reports as
+    /// <c>private</c> while anyone who casts can call them). Each miss silently published a
+    /// behavioural type as DTO surface. Asking the closed question instead means an unrecognised
+    /// member shape disqualifies by default, so the next one nobody thought of fails safe.
+    /// <see cref="CanonicalReadDtoSet.IsCarriedData"/> and
+    /// <see cref="CanonicalReadDtoSet.IsInvisibleToConsumers"/> are the shared answer.
     /// </para>
-    /// </remarks>
-    /// Counted over the type <b>and its solution-declared base chain</b>. Counting only the type's
-    /// own members left a cheaper version of the hole #29 (3b) describes: hoisting every property
-    /// to a base drops the type's own property count to zero, it stops looking like a data carrier
-    /// at all, and the <c>publicDtoType</c> charge disappears along with the per-property ones —
-    /// while the published shape is identical. Inherited behaviour disqualifies a type for the same
-    /// reason declared behaviour does: a consumer can call it.
+    /// <para>
+    /// The one deliberate difference from <see cref="CanonicalReadDtoSet.IsDataCarrier"/>: this walk
+    /// <b>stops at the solution boundary</b>. Letting it climb into framework bases measured +5
+    /// points on Humans, all of it one EF migration class — <c>ExpenseLineProofRows : Migration</c> —
+    /// admitted as published DTO surface because EF's <c>Migration</c> base declares public
+    /// properties. A framework base's members are not this section's surface to withdraw. That the
+    /// other predicate has no such stop is filed as its own issue rather than changed from here.
+    /// </para>
     /// </remarks>
     private static bool LooksLikeDataCarrier(INamedTypeSymbol type)
     {
         if (type.IsStatic) return false;
         if (type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
 
-        int publicProps = 0;
-        int publicBehaviour = 0;
+        int props = 0;
         for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
         {
             if (!ReferenceEquals(t, type))
             {
-                // Object and ValueType carry universal members rather than a published API choice,
-                // and a base outside the solution is not this section's surface either way.
+                // Object and ValueType carry universal members rather than a published API choice.
                 if (t.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType) break;
                 if (!t.Locations.Any(l => l.IsInSource)) break;
             }
 
             foreach (var m in t.GetMembers())
             {
-                if (m.IsImplicitlyDeclared) continue;
-                if (m.DeclaredAccessibility != Accessibility.Public) continue;
-
-                switch (m)
-                {
-                    case IPropertySymbol:
-                        publicProps++;
-                        break;
-                    // An event is behaviour a consumer can subscribe to, exactly as a method is
-                    // behaviour a consumer can call. `CanonicalReadDtoSet.IsDataCarrier` has always
-                    // treated it that way; this predicate did not, and once the walk climbs base
-                    // types that gap admits an empty DTO-named class whose base publishes an event.
-                    case IEventSymbol:
-                        publicBehaviour++;
-                        break;
-                    case IMethodSymbol method
-                        when method.MethodKind == MethodKind.Ordinary
-                          && method.AssociatedSymbol is null:
-                        publicBehaviour++;
-                        break;
-                }
+                if (CanonicalReadDtoSet.IsCarriedData(m)) { props++; continue; }
+                if (CanonicalReadDtoSet.IsInvisibleToConsumers(m)) continue;
+                return false;
             }
         }
+
         // A default interface method is behaviour the type never declares anywhere, so no walk over
         // declarations can see it. Only NON-abstract members count: an abstract one is either
-        // implemented on the type (already judged above) or unimplementable, and every record
-        // implements IEquatable<T>, so counting abstract interface members would disqualify every
-        // record in the solution.
+        // implemented on the type (judged above) or unimplementable, and every record implements
+        // IEquatable<T>, so counting abstract interface members would disqualify every record.
         foreach (var iface in type.AllInterfaces)
             foreach (var m in iface.GetMembers())
                 if (m is { IsAbstract: false, IsStatic: false, DeclaredAccessibility: Accessibility.Public }
                     and (IMethodSymbol or IEventSymbol))
                     return false;
 
-        return publicProps >= 1 && publicBehaviour == 0;
+        return props >= 1;
     }
 
     private void ScoreInterfaceMethods(ClassifiedType c, string ruleKey, ScoreReport report)

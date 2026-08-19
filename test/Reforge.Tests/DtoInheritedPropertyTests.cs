@@ -142,4 +142,15 @@ public class DtoInheritedPropertyTests
             e.Rule == "publicDtoType" && e.Symbol == "DefaultMethodReportInfo");
     }
 
+    [Fact]
+    public async Task AnExplicitInterfaceImplementation_DisqualifiesTheTypeAsADataCarrier()
+    {
+        var report = await ScoreDefaultAsync();
+
+        // Private on the symbol, callable by anyone who casts. An accessibility filter skips it and
+        // the interface scan skips it too (the interface declaration is abstract), so a reject-list
+        // predicate misses it from both directions — which is why this one is an allowlist.
+        Assert.DoesNotContain(Entries(report), e =>
+            e.Rule == "publicDtoType" && e.Symbol == "ExplicitlyImplementedReportInfo");
+    }
 }
