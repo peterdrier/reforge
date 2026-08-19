@@ -8,6 +8,14 @@ public sealed partial class SurfaceScoreEngine
 {
     private void ScoreDurableSurface(List<ClassifiedType> classified, ScoreReport report)
     {
+        // Types that get their own ScoreDtoSurface call. A DTO deriving from another scored DTO
+        // must not be charged for the base's properties as well — the base already pays for them.
+        var scoredDtos = new HashSet<string>(
+            classified
+                .Where(x => x.IsExported && x.Tags.Contains("dto") && LooksLikeDataCarrier(x.Type))
+                .Select(x => SolutionClassifier.TypeKey(x.Type)),
+            StringComparer.Ordinal);
+
         foreach (var c in classified)
         {
             // Durable surface is what the assembly exports. An internal type's members cannot be
@@ -16,7 +24,7 @@ public sealed partial class SurfaceScoreEngine
             if (!c.IsExported) continue;
 
             if (c.Tags.Contains("dto") && LooksLikeDataCarrier(c.Type))
-                ScoreDtoSurface(c, report);
+                ScoreDtoSurface(c, report, scoredDtos);
 
             if (c.Tags.Contains("readServiceInterface"))
                 ScoreInterfaceMethods(c, "readServiceInterfaceMethod", report);
@@ -44,20 +52,52 @@ public sealed partial class SurfaceScoreEngine
         }
     }
 
-    private void ScoreDtoSurface(ClassifiedType c, ScoreReport report)
+    /// <summary>
+    /// Charges a DTO's published shape: the type itself, and every public property a consumer can
+    /// read off it — declared on the type or <b>inherited</b>.
+    /// </summary>
+    /// <remarks>
+    /// Inherited properties are charged because they are published just as surely as declared ones,
+    /// and scoring only <c>GetMembers()</c> (which does not return inherited members) made the
+    /// charge avoidable by moving the properties up to a base class whose name matches no DTO
+    /// pattern. Nothing about the exported shape changes under that edit — see issue #29 (3b).
+    /// <para>
+    /// The walk stops at three places, each for its own reason: at <c>object</c>; at the first base
+    /// declared outside the solution, because a framework base's properties are not this section's
+    /// surface to withdraw; and at a base that is itself a separately scored DTO, which already
+    /// pays for its own properties. A property redeclared in a derived type is charged once.
+    /// </para>
+    /// </remarks>
+    private void ScoreDtoSurface(ClassifiedType c, ScoreReport report, HashSet<string> scoredDtos)
     {
         AddEntry(report, c.Group, "publicDtoType", _config.Weight("publicDtoType"), c.Type, c.File, c.Line, null);
 
-        foreach (var member in c.Type.GetMembers())
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (INamedTypeSymbol? t = c.Type; t is not null; t = t.BaseType)
         {
-            if (member is not IPropertySymbol prop) continue;
-            if (prop.DeclaredAccessibility != Accessibility.Public) continue;
+            if (!ReferenceEquals(t, c.Type))
+            {
+                if (t.SpecialType == SpecialType.System_Object) break;
+                if (!t.Locations.Any(l => l.IsInSource)) break;
+                if (scoredDtos.Contains(SolutionClassifier.TypeKey(t))) break;
+            }
 
-            var loc = prop.Locations.FirstOrDefault(l => l.IsInSource);
-            var (file, line) = LocateMember(loc, c);
+            foreach (var member in t.GetMembers())
+            {
+                if (member is not IPropertySymbol prop) continue;
+                if (prop.DeclaredAccessibility != Accessibility.Public) continue;
+                if (!seen.Add(prop.Name)) continue;
 
-            var (rule, weight) = ClassifyDtoProperty(prop);
-            AddEntry(report, c.Group, rule, weight, prop, file, line, prop.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat));
+                var loc = prop.Locations.FirstOrDefault(l => l.IsInSource);
+                var (file, line) = LocateMember(loc, c);
+
+                var (rule, weight) = ClassifyDtoProperty(prop);
+                var detail = prop.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+                // Name the base so a reader is not left wondering why a type is charged for a
+                // property its own declaration does not contain.
+                if (!ReferenceEquals(t, c.Type)) detail += $" (inherited from {t.Name})";
+                AddEntry(report, c.Group, rule, weight, prop, file, line, detail);
+            }
         }
     }
 
@@ -98,6 +138,17 @@ public sealed partial class SurfaceScoreEngine
     /// no business-logic methods. This prevents static command-registration classes,
     /// service classes that happen to match a name pattern, etc. from inflating the DTO score.
     /// </summary>
+    /// <summary>
+    /// Whether a type is a pure data carrier: public properties and no behaviour.
+    /// </summary>
+    /// <remarks>
+    /// Counted over the type <b>and its solution-declared base chain</b>. Counting only the type's
+    /// own members left a cheaper version of the hole #29 (3b) describes: hoisting every property
+    /// to a base drops the type's own property count to zero, it stops looking like a data carrier
+    /// at all, and the <c>publicDtoType</c> charge disappears along with the per-property ones —
+    /// while the published shape is identical. Inherited behaviour disqualifies a type for the same
+    /// reason declared behaviour does: a consumer can call it.
+    /// </remarks>
     private static bool LooksLikeDataCarrier(INamedTypeSymbol type)
     {
         if (type.IsStatic) return false;
@@ -105,21 +156,30 @@ public sealed partial class SurfaceScoreEngine
 
         int publicProps = 0;
         int publicMethods = 0;
-        foreach (var m in type.GetMembers())
+        for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
         {
-            if (m.IsImplicitlyDeclared) continue;
-            if (m.DeclaredAccessibility != Accessibility.Public) continue;
-
-            switch (m)
+            if (!ReferenceEquals(t, type))
             {
-                case IPropertySymbol:
-                    publicProps++;
-                    break;
-                case IMethodSymbol method
-                    when method.MethodKind == MethodKind.Ordinary
-                      && method.AssociatedSymbol is null:
-                    publicMethods++;
-                    break;
+                if (t.SpecialType == SpecialType.System_Object) break;
+                if (!t.Locations.Any(l => l.IsInSource)) break;
+            }
+
+            foreach (var m in t.GetMembers())
+            {
+                if (m.IsImplicitlyDeclared) continue;
+                if (m.DeclaredAccessibility != Accessibility.Public) continue;
+
+                switch (m)
+                {
+                    case IPropertySymbol:
+                        publicProps++;
+                        break;
+                    case IMethodSymbol method
+                        when method.MethodKind == MethodKind.Ordinary
+                          && method.AssociatedSymbol is null:
+                        publicMethods++;
+                        break;
+                }
             }
         }
         return publicProps >= 1 && publicMethods == 0;
