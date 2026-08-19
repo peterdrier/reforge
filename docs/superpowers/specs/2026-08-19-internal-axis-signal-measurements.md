@@ -35,11 +35,16 @@ project, excluding `obj/`, `Migrations/`, `*.g.cs` and `*.Designer.cs`.
 The harness is not committed, so the **signal definitions are stated as predicates** below rather
 than left implicit in code that no longer exists. Each is a few lines of Roslyn over the same walk:
 
-- **Single-reference private helper.** A method declaration whose symbol is `private`, has a body,
-  and whose `OriginalDefinition` is the resolved symbol of exactly one `SimpleNameSyntax` node in its
-  declaring assembly (excluding the declaration's own name). Counting name nodes rather than
-  invocations is what makes a method group — a delegate assignment, an event subscription — count as
-  a reference; counting per assembly is exact for `private`, which nothing outside can reach.
+- **Single-caller private helper.** A method declaration whose symbol is `private` and has a body.
+  Every `SimpleNameSyntax` in the declaring assembly (excluding the declaration's own name) whose
+  resolved symbol is that method's `OriginalDefinition` is attributed to the member enclosing it —
+  the nearest `MethodDeclaration` / `ConstructorDeclaration` / `PropertyDeclaration` /
+  `AccessorDeclaration` / `LocalFunctionStatement` / `FieldDeclaration` ancestor. The method's caller
+  count is the number of **distinct** such members. Two details are load-bearing: resolving *name
+  nodes* rather than invocations is what makes a method group (a delegate assignment, an event
+  subscription) count at all, and grouping by enclosing member is what makes "called twice from one
+  method" one caller rather than two. Counting per assembly is exact for `private`, which nothing
+  outside can reach.
 - **Feature envy.** A method with at least one parameter, whose first parameter's type is a
   solution-declared class or struct other than the containing type. `targetTouches` counts
   `MemberAccessExpressionSyntax` nodes whose **receiver resolves to that first parameter**;
@@ -50,8 +55,14 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
   - *mapper* — the method's return type (unwrapped one level through `Task<T>` / `ValueTask<T>` /
     a single-type-argument generic) differs from the parameter's type, and the body contains an
     `ObjectCreationExpressionSyntax` or `ImplicitObjectCreationExpressionSyntax` of that return type.
-  - *scalar result* — return type (same unwrapping) is an enum or one of `bool`, `string`, `int`,
-    `long`, `decimal`, `double`, `float`, `DateTime`.
+  - *scalar result* — return type is an enum or one of `bool`, `string`, `int`, `long`, `decimal`,
+    `double`, `float`, `DateTime`, after unwrapping **only** `Task<T>` / `ValueTask<T>`. Not any
+    single-argument generic: unwrapping those would reduce `IEnumerable<string>`, `List<int>` or
+    `Result<MyEnum>` to their argument and call them scalar, and a method returning a container is a
+    projection — the population this refinement exists to exclude. (Correcting this moved the
+    intermediate scalar set 38 → 36 and left the refined 26 unchanged, because the container-returning
+    methods were async and the synchronous filter had already removed them. The predicate was wrong
+    even though the published number was not.)
   - *synchronous* — return type is not `Task` / `ValueTask`.
 - **Write surface.** Distinct declaring files carrying a `fullServiceInterfaceMethod` entry in
   `surface-score --format json --all`, grouped by section. No harness needed for this one; it is
@@ -346,15 +357,18 @@ not a number.
 
 ### Question 1 — does it double-charge `fullServiceInterfaceMethod`?
 
-**No, provided the charge is flat per interface.** The two price different decisions:
+**No — under the per-section reading.** The two then price different decisions:
 
 - `fullServiceInterfaceMethod` scales with **width** — how much write API a section published.
-- `publicWriteSurface` would price the **decision to publish a write API at all**, which is a
-  separate architectural fact: a section with one write method and a section with thirty have both
-  crossed the same line once.
+- `publicWriteSurface` prices the **decision to publish a write API at all**, which is a separate
+  architectural fact: a section with one write method and a section with thirty have both crossed the
+  same line once.
 
-The distinction is only real if the new rule is flat. A per-method or size-scaled charge would be a
-weight change on `fullServiceInterfaceMethod` wearing a new name, exactly as #35 suspects.
+**Yes — under the per-interface reading**, which is why the distribution above matters for more than
+calibration. Charging per interface charges Users sixteen times for one decision, which is not
+"crossed the line once" in any sense; and counting interfaces is the same dimension
+`fullServiceInterfaceMethod` already counts by method, only coarser. That is a weight change on the
+existing rule wearing a new name, exactly as #35 suspects.
 
 Modelled cost of each reading:
 

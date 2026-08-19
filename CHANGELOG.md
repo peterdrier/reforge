@@ -10,7 +10,7 @@ signals #19 proposes, and answers both open questions #35 flags for the `publicW
 transform. Measured against Humans: 44 sections, 3,448 types, 157,860 prod LOC.
 
 **All three signals are recommended against in the form they were proposed**, which is the gate
-working rather than failing. One deletion is recommended and is free.
+working rather than failing. One deletion is recommended, with its real cost stated below.
 
 - **Single-caller private helper.** 760 of 1,319 private methods have exactly one caller — a
   **57.6% base rate**. As a stock this is not a smell detector, it is a tax on decomposition, and it
