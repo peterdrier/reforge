@@ -42,7 +42,10 @@ points (5.2% of `fullServiceInterfaceMethod`), filed as #54; the report-side amb
   separately. The entity/DTO condition is **not established**: 23 of the 25 pass a data-carrier proxy,
   but that proxy rejects entities carrying domain methods (`Shift`, `EventSettings`) and accepts
   property-only contexts (`GateScanContext`), so it cannot be adopted as the gate without a real
-  classification — which reforge lacks, its name-pattern version being what #54 measures at 79%. And
+  classification — which reforge lacks, and whose name-pattern version is itself unmeasured, so it would
+  substitute one unquantified proxy for another. (#54's 79% is for the `I*Service` write-surface
+  classifier, a different rule over a different population; an earlier revision of the document
+  transferred that figure to the DTO patterns, which it does not support.) And
   **"touch only that type's members" read literally leaves 2 of the 25** — everything else does some
   work through another receiver, the worst at 33 other-receiver touches against 18 on the parameter it
   supposedly envies. So the 25-hit, ~72%-precision figure is a *looser* rule than #19 specifies, and

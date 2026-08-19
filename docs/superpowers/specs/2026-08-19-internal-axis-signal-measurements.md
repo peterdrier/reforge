@@ -82,10 +82,13 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
     bidirectional. The proxy is "declares no ordinary methods of its own beyond object overrides and
     `Deconstruct`". It rejects real entities that carry domain methods (`Shift`, `EventSettings` — see
     below) and accepts property-only contexts and view models, which are not entities or DTOs. It is
-    deliberately not reforge's `*Dto` / `*Info` / `*Request` name patterns either, since this same
-    document measures that style of classification at 79% precision on this corpus, so scoping a
-    precision measurement with it would be circular. **Neither available test is the stated one**, so
-    the entity/DTO condition is reported as unmeasured rather than as satisfied.
+    deliberately not reforge's `*Dto` / `*Info` / `*Request` name patterns either: those are themselves
+    **unmeasured**, and scoping a precision measurement with an unquantified classifier would be
+    circular. (The 79% figure under Signal C is `37/47` for the `I*Service` **write-surface**
+    classifier — a different rule over a different population. An earlier revision of this document
+    transferred that number to the DTO patterns, which is exactly the kind of unearned attribution the
+    rest of this document warns about.) **Neither available test is the stated one**, so the entity/DTO
+    condition is reported as unmeasured rather than as satisfied.
   - *mapper* — the method's return type (unwrapped one level through `Task<T>` / `ValueTask<T>` /
     a single-type-argument generic) differs from the parameter's type, and the body contains an
     `ObjectCreationExpressionSyntax` or `ImplicitObjectCreationExpressionSyntax` of that return type.
@@ -451,8 +454,8 @@ So "23 of 25" measures agreement with a proxy, not compliance with #19's scope, 
 "this condition is free". What it does establish is narrower and still useful: the refined population
 is not dominated by service or dependency parameters, which was the specific failure mode worth ruling
 out. **Adopting the entity/DTO condition needs a real classification first** — and the obvious
-candidate, reforge's own DTO name patterns, is the thing #54 shows to be 79% precise, so that
-classification is itself unbuilt work rather than a lookup.
+candidate — reforge's own DTO name patterns — is **itself unmeasured**, so that classification is
+unbuilt work rather than a lookup.
 
 **The exclusivity condition is not free at all — it is the whole finding.** Read literally, "touch
 only that type's members" leaves **2 of the 25**: `GateAdmissionRules.Evaluate(GateScanContext)` and
@@ -497,7 +500,8 @@ Concretely:
   but that proxy rejects entities with domain methods (`Shift`, `EventSettings`) and accepts
   property-only contexts (`GateScanContext`), so adopting it would discard true hits while keeping
   out-of-scope ones. It needs a real entity/DTO classification, which reforge does not currently have
-  — its name-pattern version is what #54 measures at 79%.
+  — and its name-pattern version is unmeasured, so adopting that would swap one unquantified proxy for
+  another.
 - If it lands as a **credit** rather than a penalty, precision matters more, not less — a credit
   firing on a mapper pays for a dependency inversion. The refined form is the only version safe to
   consider as a credit.
@@ -786,7 +790,13 @@ it is listing. That is a real gap in reforge's own output, not just a mistake in
    form: two on precision, the third because its distribution on this corpus is 19 sections at one
    interface plus a single 16-interface outlier, so any per-interface weight would be fitted to that
    one section. Each has a stated next step; none of them is "pick a number now".
-5. **Gate 2 needs a stated population, not just a stated predicate.** The spec requires measuring a
+5. **A measured figure belongs to the classifier it was measured on.** This document at one point
+   cited the 79% precision of the `I*Service` write-surface classifier as evidence about reforge's
+   `*Dto`/`*Info`/`*Request` DTO patterns — a different rule over a different population, never
+   measured. The number looked like evidence and was not, which is worse than an admitted gap because
+   it would have justified a follow-up predicate on borrowed authority. When a document carries several
+   precision figures, each needs its subject attached to it.
+6. **Gate 2 needs a stated population, not just a stated predicate.** The spec requires measuring a
    candidate against a real corpus before weighting it. Three of the eleven defects review found in
    this round were predicates that were correct about *how* to count and wrong about *what* was in the
    population — `internal` methods, explicit interface implementations, non-exported interfaces. Two
