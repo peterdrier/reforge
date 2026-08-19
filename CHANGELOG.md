@@ -2,6 +2,29 @@
 
 What changed and why. Newest first.
 
+## Unreleased - The solution boundary is assembly membership, not source location
+
+The base-chain walks added for #29 (3b) stopped at the first base with no source location, as a
+proxy for "outside the solution". That proxy holds only for the common project layout. When one
+project references another through a compiled DLL rather than a `ProjectReference`, the base arrives
+as a metadata symbol with no source location while its declaring assembly is very much part of the
+analysed solution — so the walk stopped early, and the hole #29 (3b) closed quietly reopened for
+that shape: inherited properties uncharged, and a fully hoisted DTO disappearing altogether.
+
+`SolutionClassifier` has always answered this question a different way — an assembly name is in the
+analysed set or it is not — and that answer does not depend on how a reference is wired. The engine
+now reuses it, so there is one definition of the boundary rather than two that agree only on the
+layout everyone happens to use.
+
+Three sites used the proxy, not two: the DTO property walk, the data-carrier check, and
+`IsNestedDtoType`, which decides whether a property's *type* is one of ours. The third mispriced
+rather than skipped — a nested DTO property (weight 3) charged as a scalar one (weight 1) — which is
+the quieter failure of the three.
+
+No change on Humans (surface 17,379, internal 3,113): its projects reference each other the ordinary
+way, which is exactly why the gap was invisible without looking for it. The sample solution now
+carries a DTO deriving from a base in a different project, pinning the cross-project case.
+
 ## Unreleased - A DTO's published shape includes what it inherits
 
 #29 (3b). `ScoreDtoSurface` iterated `c.Type.GetMembers()`, which does not return inherited
