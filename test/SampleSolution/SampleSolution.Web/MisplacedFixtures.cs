@@ -319,3 +319,37 @@ public class ConfiguredDtoRowMapper
     public string MapConfiguredSummary(RelocationSummaryResult summary) =>
         $"{summary.Label}|{summary.Count}|{summary.Kind}|{summary.Note}";
 }
+
+/// <summary>
+/// Calls three methods on a type the config labels a DTO. A config rule states a type's role, not the
+/// shape of its members, so these are behavior calls and the method is doing the other section's work.
+/// Classifying every touch on a configured DTO as data reported this as a mapper.
+/// </summary>
+public class ConfiguredDtoBehaviorCaller
+{
+    public string ShoutSummary(VerboseSummaryResult summary) =>
+        $"{summary.Describe()}{summary.Shout()}{summary.Whisper()}";
+}
+
+/// <summary>
+/// A method whose work sits in a local function. The touches are charged to the enclosing method
+/// deliberately: a local function cannot be relocated on its own — it moves with the method that
+/// declares it — so its calls are part of what moving that method would move.
+/// </summary>
+public class LocalFunctionReporter
+{
+    private readonly GreetingService _greetings = new();
+
+    public async Task<string> SummarizeViaLocalFunctionAsync(int userId)
+    {
+        return await CollectAsync();
+
+        async Task<string> CollectAsync()
+        {
+            var greeting = await _greetings.GetGreetingAsync(userId);
+            var recent = await _greetings.GetRecentGreetingsAsync(userId);
+            await _greetings.RecordGreetingAsync(userId, greeting);
+            return $"{greeting}/{recent.Count}";
+        }
+    }
+}

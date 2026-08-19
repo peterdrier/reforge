@@ -25,3 +25,16 @@ public class RelocationSummaryResult
 
     public string Describe() => $"{Label} ({Count})";
 }
+
+/// <summary>
+/// A second configured-only DTO, used to check that <b>calling</b> a method on such a type is a
+/// behavior call. The config rule labels the type's role; it says nothing about its members.
+/// </summary>
+public class VerboseSummaryResult
+{
+    public string Label { get; init; } = "";
+
+    public string Describe() => $"[{Label}]";
+    public string Shout() => Label.ToUpperInvariant();
+    public string Whisper() => Label.ToLowerInvariant();
+}

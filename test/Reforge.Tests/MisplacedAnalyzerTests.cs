@@ -191,6 +191,37 @@ public class MisplacedAnalyzerTests
     }
 
     [Fact]
+    public async Task Analyze_CallsOnAConfiguredDto_AreBehaviorNotData()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "ShoutSummary");
+
+        Assert.NotNull(finding);
+        // A config rule states a type's ROLE and says nothing about its members, so a configured DTO can
+        // declare methods. Calling three of them is three behavior calls; classifying every touch on such
+        // a type as a data read reported this as a mapper.
+        Assert.Equal(MisplacedVerdict.Move, finding.Verdict);
+        Assert.Equal(3, finding.TargetBehaviorTouches);
+        Assert.Equal(0, finding.TargetDataTouches);
+    }
+
+    [Fact]
+    public async Task Analyze_WorkInsideALocalFunction_IsChargedToTheEnclosingMethod()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeViaLocalFunctionAsync");
+
+        Assert.NotNull(finding);
+        // Deliberate, and pinned here so it is not "fixed" by accident. A local function cannot be
+        // relocated on its own: it moves with the method that declares it. Its calls are therefore part
+        // of what moving the enclosing method would move, and excluding them would report a method whose
+        // entire body delegates to a local helper as touching nothing at all.
+        Assert.Equal(MisplacedVerdict.Move, finding.Verdict);
+        Assert.Equal("Services", finding.TargetSection);
+        Assert.Equal(3, finding.TargetBehaviorTouches);
+    }
+
+    [Fact]
     public async Task Analyze_MethodSpanningThreeSections_IsAnOrchestratorNotAMove()
     {
         var report = await AnalyzeAsync();

@@ -346,7 +346,7 @@ public static class MisplacedAnalyzer
                 continue;
             }
 
-            if (IsData(owner.OriginalDefinition, configuredDtos))
+            if (IsData(owner.OriginalDefinition, touched, configuredDtos))
             {
                 data[section] = data.TryGetValue(section, out var d) ? d + 1 : 1;
                 continue;
@@ -513,17 +513,30 @@ public static class MisplacedAnalyzer
     }
 
     /// <summary>
-    /// Whether a touch on <paramref name="type"/> is a data read rather than a behavior call: the active
-    /// config classified it as a DTO, or its shape says it carries data and nothing else.
+    /// Whether this touch is a data read rather than a behavior call: the touched member carries data on
+    /// a type the active config classifies as a DTO, or the type's shape says it carries data and
+    /// nothing else.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The union is the same one <see cref="SectionShapeAnalyzer"/> and <see cref="CanonicalReadDtoSet"/>
     /// already take. A config rule is a deliberate statement about a type and outranks a heuristic that
     /// did not recognise it; the structural test still stands alone, because a section-only config
     /// carries no <c>dto</c> rule at all and the split has to work without one.
+    /// </para>
+    /// <para>
+    /// The <paramref name="touched"/> member only matters on the <b>configured</b> side, and it matters
+    /// there because the two tests establish different things. A config rule labels a type's role and
+    /// says nothing about its members, so a configured DTO can declare methods — calling one is a
+    /// behavior call however the type is labelled, and treating it as a read reported a method calling
+    /// three of them as a mapper. The structural test needs no such guard: it rejects any type exposing
+    /// behavior at all, so on a type that passes it there is no behavior to miscount.
+    /// </para>
     /// </remarks>
-    private static bool IsData(INamedTypeSymbol type, HashSet<string> configuredDtos) =>
-        configuredDtos.Contains(SolutionClassifier.TypeKey(type)) || CanonicalReadDtoSet.IsDataCarrier(type);
+    private static bool IsData(INamedTypeSymbol type, ISymbol touched, HashSet<string> configuredDtos) =>
+        CanonicalReadDtoSet.IsDataCarrier(type)
+        || (touched is IPropertySymbol or IFieldSymbol
+            && configuredDtos.Contains(SolutionClassifier.TypeKey(type)));
 
     /// <summary>
     /// Whether two methods collide as C# declarations.
