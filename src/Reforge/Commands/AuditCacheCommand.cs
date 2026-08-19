@@ -43,71 +43,57 @@ public static class AuditCacheCommand
                 var solutionDir = LocationHelper.GetSolutionDirectory(solution);
                 var results = new List<ResultEntry>();
 
-                foreach (var project in solution.Projects)
+                await foreach (var (project, document, root, semanticModel) in
+                    SolutionWalker.ProductionDocumentsAsync(solution, cancellationToken))
                 {
-                    if (project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
-                        continue;
+                    var classes = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
 
-                    var compilation = await project.GetCompilationAsync(cancellationToken);
-                    if (compilation is null)
-                        continue;
-
-                    foreach (var document in project.Documents)
+                    foreach (var classDecl in classes)
                     {
-                        var root = await document.GetSyntaxRootAsync(cancellationToken);
-                        var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
-                        if (root is null || semanticModel is null)
+                        var classSymbol = semanticModel.GetDeclaredSymbol(classDecl, cancellationToken) as INamedTypeSymbol;
+                        if (classSymbol is null)
                             continue;
 
-                        var classes = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
+                        // Find constructor fields/params
+                        var (hasDbContext, cacheFieldNames) = AnalyzeClassDependencies(classSymbol);
 
-                        foreach (var classDecl in classes)
+                        if (!hasDbContext || cacheFieldNames.Count == 0)
+                            continue;
+
+                        // Build a set of method names in this class that touch the cache
+                        var methodsThatTouchCache = new HashSet<string>(StringComparer.Ordinal);
+                        foreach (var method in classDecl.Members.OfType<MethodDeclarationSyntax>())
                         {
-                            var classSymbol = semanticModel.GetDeclaredSymbol(classDecl, cancellationToken) as INamedTypeSymbol;
-                            if (classSymbol is null)
-                                continue;
-
-                            // Find constructor fields/params
-                            var (hasDbContext, cacheFieldNames) = AnalyzeClassDependencies(classSymbol);
-
-                            if (!hasDbContext || cacheFieldNames.Count == 0)
-                                continue;
-
-                            // Build a set of method names in this class that touch the cache
-                            var methodsThatTouchCache = new HashSet<string>(StringComparer.Ordinal);
-                            foreach (var method in classDecl.Members.OfType<MethodDeclarationSyntax>())
+                            if (MethodTouchesCache(method, cacheFieldNames, cacheMethodNames))
                             {
-                                if (MethodTouchesCache(method, cacheFieldNames, cacheMethodNames))
-                                {
-                                    var name = method.Identifier.Text;
-                                    methodsThatTouchCache.Add(name);
-                                }
+                                var name = method.Identifier.Text;
+                                methodsThatTouchCache.Add(name);
+                            }
+                        }
+
+                        // Now find methods that call SaveChanges but don't touch cache
+                        foreach (var method in classDecl.Members.OfType<MethodDeclarationSyntax>())
+                        {
+                            if (!MethodCallsSaveChanges(method))
+                                continue;
+
+                            bool touchesCache = MethodTouchesCache(method, cacheFieldNames, cacheMethodNames);
+
+                            // One-level-deep: check if any same-class method call touches cache
+                            if (!touchesCache)
+                            {
+                                touchesCache = CallsSameClassMethodThatTouchesCache(
+                                    method, semanticModel, classSymbol, methodsThatTouchCache, cancellationToken);
                             }
 
-                            // Now find methods that call SaveChanges but don't touch cache
-                            foreach (var method in classDecl.Members.OfType<MethodDeclarationSyntax>())
+                            if (!touchesCache)
                             {
-                                if (!MethodCallsSaveChanges(method))
-                                    continue;
-
-                                bool touchesCache = MethodTouchesCache(method, cacheFieldNames, cacheMethodNames);
-
-                                // One-level-deep: check if any same-class method call touches cache
-                                if (!touchesCache)
-                                {
-                                    touchesCache = CallsSameClassMethodThatTouchesCache(
-                                        method, semanticModel, classSymbol, methodsThatTouchCache, cancellationToken);
-                                }
-
-                                if (!touchesCache)
-                                {
-                                    var lineSpan = method.Identifier.GetLocation().GetLineSpan();
-                                    var filePath = LocationHelper.NormalizePath(lineSpan.Path, solutionDir);
-                                    var line = lineSpan.StartLinePosition.Line + 1;
-                                    var column = lineSpan.StartLinePosition.Character + 1;
-                                    var context = $"{method.Identifier.Text} — SaveChangesAsync without cache eviction";
-                                    results.Add(new ResultEntry(filePath, line, column, context, classSymbol.Name));
-                                }
+                                var lineSpan = method.Identifier.GetLocation().GetLineSpan();
+                                var filePath = LocationHelper.NormalizePath(lineSpan.Path, solutionDir);
+                                var line = lineSpan.StartLinePosition.Line + 1;
+                                var column = lineSpan.StartLinePosition.Character + 1;
+                                var context = $"{method.Identifier.Text} — SaveChangesAsync without cache eviction";
+                                results.Add(new ResultEntry(filePath, line, column, context, classSymbol.Name));
                             }
                         }
                     }

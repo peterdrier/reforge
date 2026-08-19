@@ -2,6 +2,48 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Extract the production-document walk
+
+#31 finding 4. Fifteen files walk `solution.Projects` by hand, and four of them — `audit-auth`,
+`audit-cache`, `audit-ef`, `audit-immutable` — re-implement the identical preamble: iterate projects,
+skip anything named like a test, get the compilation, iterate documents, get root and semantic model,
+null-guard both, then descend. #31's reading was that reforge's own top-scoring symbols are
+structurally copies of one loop with different innermost bodies, and that no rule charges for it
+because the copies share a *shape* rather than lines.
+
+`SolutionWalker.ProductionDocumentsAsync` is that loop, once. The four commands keep only their
+innermost body and lose a nesting level each.
+
+**The interesting part is what it did to reforge's own score**, because #31 proposed this as "the
+first honest test of whether the score responds to a change that genuinely improves the code":
+
+| | before | after |
+|---|---:|---:|
+| `internalComplexityTotal` | 1,709 | **1,617** |
+| `cognitiveComplexity` | 1,268 | **1,191** |
+| `longMethod` | 441 | **426** |
+| `locProd` | 13,258 | 13,274 |
+
+The score fell **92 points (5.4%) while the line count rose by 16** — the extracted walker carries its
+own documentation, so this removed duplicated structure without removing text. That is the right
+direction, and it is a real answer to the question #31 asked.
+
+**With a caveat worth recording for #19.** Every one of those 92 points came from
+`cognitiveComplexity` and `longMethod` — the two rules #19 proposes retiring as extract-method-
+gameable. No design-smell rule moved, because none of them can see "these four loops are the same
+loop". Neither could either candidate signal in the 2026-08-19 measurements: a shared preamble is not
+feature envy and not a single-caller helper.
+
+So the tool noticed this improvement *only* through the rules slated for removal. That is not an
+argument for keeping them — they are gameable in the other direction, which is why they are slated —
+but it does say the replacement set has a gap where duplicated structure should be, and that the gap
+is not hypothetical: it is the largest real cleanup available in this repo.
+
+The eleven other hand-rolled walks are deliberately left alone. `FileDependencyGraph` counts test LOC
+separately, `SnapshotAnalyzer` excludes generated paths, `BuildInspector` wants diagnostics rather
+than syntax — sharing a preamble is worth it where the preamble is genuinely the same, and forcing
+the others through one signature would be the abstraction this repo's guidelines warn against.
+
 ## Unreleased - A DTO's published shape includes what it inherits
 
 #29 (3b). `ScoreDtoSurface` iterated `c.Type.GetMembers()`, which does not return inherited
