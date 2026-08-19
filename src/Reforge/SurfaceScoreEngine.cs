@@ -19,6 +19,20 @@ public sealed partial class SurfaceScoreEngine
     private readonly SurfaceScoreConfig _config;
     private readonly string _solutionDirectory;
 
+    /// <summary>
+    /// Assembly names the classifier admitted — what "inside the solution" means for this run.
+    /// Set once per <see cref="ScoreAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// Rules that walk a base chain need a solution boundary, and <c>Location.IsInSource</c> is the
+    /// wrong test for it: when one project references another through a compiled DLL rather than a
+    /// <c>ProjectReference</c>, the base arrives as a metadata symbol with no source location even
+    /// though its declaring assembly is part of the analysed solution. Membership by assembly name
+    /// is the definition <see cref="SolutionClassifier"/> itself uses, so reusing it keeps one
+    /// answer to the question instead of two that agree only on the common project layout.
+    /// </remarks>
+    private HashSet<string> _analyzedAssemblies = new(StringComparer.Ordinal);
+
     public SurfaceScoreEngine(SurfaceScoreConfig config, string solutionDirectory)
     {
         _config = config;
@@ -30,6 +44,9 @@ public sealed partial class SurfaceScoreEngine
         var report = new ScoreReport();
         var classified = (await SolutionClassifier.ClassifyAsync(solution, _config, _solutionDirectory, ct)).ToList();
         report.TypesAnalyzed = classified.Count;
+        _analyzedAssemblies = new HashSet<string>(
+            classified.Select(c => c.Type.ContainingAssembly?.Name).OfType<string>(),
+            StringComparer.Ordinal);
         report.ConfiguredSections.AddRange(classified
             .Select(c => c.Group).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.Ordinal));
 

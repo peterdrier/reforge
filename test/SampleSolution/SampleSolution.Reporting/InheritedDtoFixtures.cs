@@ -117,3 +117,10 @@ public sealed class IndexerOnlyReportInfo
 {
     public string this[int index] => "";
 }
+
+// Derives from a base declared in a different project of the same solution. Its inherited
+// properties are published by THIS section and must be charged to it.
+public sealed class CrossProjectReportInfo : SampleSolution.Camp.CrossProjectEnvelopeBase
+{
+    public string Summary { get; set; } = "";
+}

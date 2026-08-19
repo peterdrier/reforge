@@ -169,4 +169,24 @@ public class DtoInheritedPropertyTests
         Assert.Contains(Entries(report), e =>
             e.Rule == "publicDtoType" && e.Symbol == "IndexerOnlyReportInfo");
     }
+
+    [Fact]
+    public async Task ABaseInAnotherProjectOfTheSolution_IsStillInsideTheBoundary()
+    {
+        var report = await ScoreDefaultAsync();
+
+        // The walk stops at the solution boundary, and that boundary is assembly membership — the
+        // definition SolutionClassifier itself uses — not whether the base symbol arrives with a
+        // source location. A project referenced as a compiled DLL rather than a ProjectReference
+        // yields a metadata symbol with no source location while being just as much part of the
+        // solution, and testing IsInSource would silently stop the walk there.
+        var inherited = Entries(report)
+            .Where(e => e.Symbol is "Id" or "Origin")
+            .Where(e => e.Detail is not null && e.Detail.Contains("inherited from CrossProjectEnvelopeBase"))
+            .ToList();
+
+        Assert.Equal(2, inherited.Count);
+        // Charged to the publishing section, not the declaring one.
+        Assert.All(inherited, e => Assert.Equal("Reporting", e.Group));
+    }
 }

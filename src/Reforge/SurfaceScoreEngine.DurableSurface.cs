@@ -78,7 +78,7 @@ public sealed partial class SurfaceScoreEngine
             if (!ReferenceEquals(t, c.Type))
             {
                 if (t.SpecialType == SpecialType.System_Object) break;
-                if (!t.Locations.Any(l => l.IsInSource)) break;
+                if (!IsInAnalyzedSolution(t)) break;
                 // OriginalDefinition: a constructed generic base (`BaseResponse<int>`) has a
                 // different display string from the declaration the set was built from
                 // (`BaseResponse<T>`), so querying with the constructed form misses and the
@@ -108,6 +108,13 @@ public sealed partial class SurfaceScoreEngine
             }
         }
     }
+
+    /// <summary>
+    /// Whether a type belongs to the analysed solution, decided by declaring assembly rather than
+    /// by source location — see <c>_analyzedAssemblies</c> for why the two differ.
+    /// </summary>
+    private bool IsInAnalyzedSolution(INamedTypeSymbol t) =>
+        t.ContainingAssembly?.Name is { } name && _analyzedAssemblies.Contains(name);
 
     /// <summary>
     /// A public instance indexer. <see cref="CanonicalReadDtoSet.IsCarriedData"/> excludes these on
@@ -195,7 +202,7 @@ public sealed partial class SurfaceScoreEngine
     /// other predicate has no such stop is filed as its own issue rather than changed from here.
     /// </para>
     /// </remarks>
-    private static bool LooksLikeDataCarrier(INamedTypeSymbol type)
+    private bool LooksLikeDataCarrier(INamedTypeSymbol type)
     {
         if (type.IsStatic) return false;
         if (type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
@@ -207,7 +214,7 @@ public sealed partial class SurfaceScoreEngine
             {
                 // Object and ValueType carry universal members rather than a published API choice.
                 if (t.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType) break;
-                if (!t.Locations.Any(l => l.IsInSource)) break;
+                if (!IsInAnalyzedSolution(t)) break;
             }
 
             foreach (var m in t.GetMembers())
