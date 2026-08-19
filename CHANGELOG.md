@@ -131,12 +131,14 @@ type nested inside a `private` one is private in every sense that matters, and t
 admitting exactly the class of types that had never been in the corpus — and charging its section for
 them. It still counts as implementation evidence, like any private type.
 
-Every refinement above except the static-surface rules — inherited members, accessors, getter bodies,
-partial members, private and deeply nested implementers, most-derived overrides, and per-implementer
-completeness — **changes no number on Humans**: the demoted interface set is byte-identical
-with and without them, all 45 full / 68 read either way. The static-surface rules are the one group that
-*can* move a count, since a static-only or member-less interface now demotes with no implementer, and are
-measured separately below. They are correctness fixes for shapes Humans does not currently
+Every refinement above — inherited members, accessors, getter bodies, partial members, private and deeply
+nested implementers, most-derived overrides, per-implementer completeness, and the static-surface rules —
+**changes no number on Humans**: the demoted interface set is byte-identical with and without them, all
+45 full / 68 read either way. For most of them that is structural, since they can only reclassify what the
+predicate already looked at. The static-surface rules are the exception and were measured on their own
+account: an all-static or member-less interface now demotes with **no implementer at all**, which can move
+a count, and it moved none here because Humans contains no such `I*Service`. That distinction matters —
+the rest could not have changed the corpus, this one could have and did not. They are correctness fixes for shapes Humans does not currently
 contain, and the sample-solution fixtures below are what exercises them. A clean corpus is not evidence
 that a predicate is right, only that this corpus does not reach the wrong part of it.
 
