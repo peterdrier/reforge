@@ -674,3 +674,26 @@ public class AwaitedConduitReporter
         return $"{greeting}/{recent.Count}";
     }
 }
+
+/// <summary>
+/// A virtual pipe with a derived override. Nothing on the base declaration says it is overridden —
+/// <c>IsOverride</c> is false there — so it read as freely movable, and moving it would leave
+/// <c>OverridingPipe</c> with nothing to override.
+/// </summary>
+public class OverriddenPipeBase
+{
+    private readonly GreetingService _greetings = new();
+
+    public virtual string DescribeVirtually(int value)
+    {
+        var greeting = _greetings.GetGreetingAsync(value).GetAwaiter().GetResult();
+        var recent = _greetings.GetRecentGreetingsAsync(value).GetAwaiter().GetResult();
+        _greetings.RecordGreetingAsync(value, greeting).GetAwaiter().GetResult();
+        return $"{greeting}/{recent.Count}";
+    }
+}
+
+public class OverridingPipe : OverriddenPipeBase
+{
+    public override string DescribeVirtually(int value) => base.DescribeVirtually(value) + "!";
+}

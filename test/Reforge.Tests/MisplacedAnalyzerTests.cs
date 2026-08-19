@@ -601,4 +601,18 @@ public class MisplacedAnalyzerTests
         Assert.Equal(0, finding.OwnTouches);
         Assert.Equal(3, finding.TargetBehaviorTouches);
     }
+
+    [Fact]
+    public async Task Analyze_MethodOverriddenByADerivedType_IsBlocked()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "DescribeVirtually");
+
+        // The mirror of the derived-interface pin. `Contract` sees that a method IS an override; nothing
+        // on a base declaration says it IS OVERRIDDEN, and moving it leaves the override dangling.
+        Assert.NotNull(finding);
+        Assert.Equal("OverriddenPipeBase.DescribeVirtually", finding.Method);
+        Assert.Equal(MisplacedVerdict.Blocked, finding.Verdict);
+        Assert.Contains("overridden by OverridingPipe", finding.BlockedBy);
+    }
 }

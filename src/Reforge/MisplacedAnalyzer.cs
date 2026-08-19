@@ -1016,6 +1016,21 @@ public static class MisplacedAnalyzer
                             MethodKey(impl.OriginalDefinition),
                             $"implements {iface.Name}.{candidate.Name} for {type.Name}");
                     }
+
+                // The other direction of the same blindness. `Contract` sees that a method IS an
+                // override; nothing on a base declaration says it IS OVERRIDDEN, so a virtual pipe with
+                // a derived override read as freely movable — and moving it leaves the override with
+                // nothing to override. Only the immediate base needs recording here: in a three-deep
+                // chain the middle declaration is itself an override and pins its own base when its
+                // type is visited.
+                foreach (var member in type.GetMembers())
+                {
+                    if (member is not IMethodSymbol { IsOverride: true } over) continue;
+                    if (over.OverriddenMethod is not { } overridden) continue;
+                    index.TryAdd(
+                        MethodKey(overridden.OriginalDefinition),
+                        $"overridden by {type.Name}.{over.Name}");
+                }
             }
         }
 

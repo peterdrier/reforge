@@ -52,7 +52,7 @@ public static class MisplacedCommand
         };
 
         var command = new Command("misplaced",
-            "List methods whose bodies work on another section's data more than their own, with a proposed destination. Separates pipes (one other section) from orchestrators (three or more).")
+            "List methods whose bodies work on another section's data more than their own, with a proposed destination. Separates pipes (one other section) from orchestrators (two or more).")
         {
             configOption, sectionOption, toOption, verdictOption, ratioOption
         };
