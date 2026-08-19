@@ -221,3 +221,11 @@ This tool is built by an AI coding assistant, for AI coding assistants. It will 
 - **Startup time matters.** Opening an MSBuildWorkspace and compiling the semantic model takes seconds. For a CLI tool this is acceptable (it's a one-shot command, not interactive). But avoid unnecessary recompilation — open the workspace once, run the query, exit.
 - **Error messages should be actionable.** "Symbol not found" is useless. "Symbol 'Foo' not found. Did you mean: Humans.Core.Foo, Humans.Web.Foo?" is useful.
 - **Keep it simple.** This is a CLI tool, not a framework. Don't over-abstract. A command is a function that takes args, opens a workspace, queries the model, and prints results. If a command is under 100 lines, it's fine as a single file.
+
+## Review Discipline
+
+- **Scope before building.** Before implementing a "you don't measure X" finding, grep the corpus for X. Zero occurrences → reply on the thread and resolve. Don't build it.
+- **Stop when rounds stop converging.** A round that doesn't change the command's output on the corpus counts for nothing. After two, stop taking findings and reply once with what's still flagged.
+- **Diff ceiling.** Past ~1.5× the first commit's size, stop and report to the user rather than continuing.
+- **Comments explain the code, not its history.** Git holds what it used to be. No round-by-round archaeology in source, changelog, or PR body.
+- **Changelog is bullet points, max 3 per release.** Existing long entries are not precedent.
