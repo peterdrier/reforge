@@ -31,83 +31,67 @@ public static class AuditEfCommand
                 var solutionDir = LocationHelper.GetSolutionDirectory(solution);
                 var entries = new List<ResultEntry>();
 
-                foreach (var project in solution.Projects)
+                await foreach (var (project, document, root, semanticModel) in
+                    SolutionWalker.ProductionDocumentsAsync(solution, cancellationToken))
                 {
-                    if (project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    var compilation = await project.GetCompilationAsync(cancellationToken);
-                    if (compilation is null)
-                        continue;
-
-                    foreach (var document in project.Documents)
+                    foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
                     {
-                        var tree = await document.GetSyntaxTreeAsync(cancellationToken);
-                        if (tree is null)
+                        if (invocation.Expression is not MemberAccessExpressionSyntax memberAccess)
                             continue;
 
-                        var root = await tree.GetRootAsync(cancellationToken);
-                        var semanticModel = compilation.GetSemanticModel(tree);
-
-                        foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+                        var methodName = memberAccess.Name switch
                         {
-                            if (invocation.Expression is not MemberAccessExpressionSyntax memberAccess)
-                                continue;
+                            GenericNameSyntax generic => generic.Identifier.Text,
+                            SimpleNameSyntax simple => simple.Identifier.Text,
+                            _ => null
+                        };
 
-                            var methodName = memberAccess.Name switch
+                        if (methodName is null)
+                            continue;
+
+                        // 1. HasDefaultValue with CLR defaults (sentinel trap)
+                        if (methodName == "HasDefaultValue" && invocation.ArgumentList.Arguments.Count == 1)
+                        {
+                            var arg = invocation.ArgumentList.Arguments[0].Expression;
+                            if (IsCLRDefault(arg))
                             {
-                                GenericNameSyntax generic => generic.Identifier.Text,
-                                SimpleNameSyntax simple => simple.Identifier.Text,
-                                _ => null
-                            };
+                                var valueText = arg.ToString();
+                                AddViolation(entries, invocation, root.SyntaxTree, solutionDir,
+                                    $"HasDefaultValue({valueText}) uses CLR default -- EF won't send this value to DB");
+                            }
+                        }
 
-                            if (methodName is null)
-                                continue;
-
-                            // 1. HasDefaultValue with CLR defaults (sentinel trap)
-                            if (methodName == "HasDefaultValue" && invocation.ArgumentList.Arguments.Count == 1)
+                        // 2. HasConversion<string>() detection
+                        if (methodName == "HasConversion" && memberAccess.Name is GenericNameSyntax genericName)
+                        {
+                            if (genericName.TypeArgumentList.Arguments.Count == 1)
                             {
-                                var arg = invocation.ArgumentList.Arguments[0].Expression;
-                                if (IsCLRDefault(arg))
+                                var typeArg = genericName.TypeArgumentList.Arguments[0].ToString();
+                                if (typeArg == "string")
                                 {
-                                    var valueText = arg.ToString();
-                                    AddViolation(entries, invocation, tree, solutionDir,
-                                        $"HasDefaultValue({valueText}) uses CLR default -- EF won't send this value to DB");
+                                    AddViolation(entries, invocation, root.SyntaxTree, solutionDir,
+                                        "HasConversion<string>() -- comparison operators won't translate to SQL");
                                 }
                             }
+                        }
 
-                            // 2. HasConversion<string>() detection
-                            if (methodName == "HasConversion" && memberAccess.Name is GenericNameSyntax genericName)
+                        // 3. String interpolation in LINQ predicates
+                        if (LinqPredicateMethods.Contains(methodName))
+                        {
+                            foreach (var arg in invocation.ArgumentList.Arguments)
                             {
-                                if (genericName.TypeArgumentList.Arguments.Count == 1)
-                                {
-                                    var typeArg = genericName.TypeArgumentList.Arguments[0].ToString();
-                                    if (typeArg == "string")
-                                    {
-                                        AddViolation(entries, invocation, tree, solutionDir,
-                                            "HasConversion<string>() -- comparison operators won't translate to SQL");
-                                    }
-                                }
-                            }
+                                LambdaExpressionSyntax? lambda = arg.Expression as SimpleLambdaExpressionSyntax;
+                                lambda ??= arg.Expression as ParenthesizedLambdaExpressionSyntax;
 
-                            // 3. String interpolation in LINQ predicates
-                            if (LinqPredicateMethods.Contains(methodName))
-                            {
-                                foreach (var arg in invocation.ArgumentList.Arguments)
+                                if (lambda is not null)
                                 {
-                                    LambdaExpressionSyntax? lambda = arg.Expression as SimpleLambdaExpressionSyntax;
-                                    lambda ??= arg.Expression as ParenthesizedLambdaExpressionSyntax;
-
-                                    if (lambda is not null)
+                                    var hasInterpolation = lambda.DescendantNodes()
+                                        .OfType<InterpolatedStringExpressionSyntax>()
+                                        .Any();
+                                    if (hasInterpolation)
                                     {
-                                        var hasInterpolation = lambda.DescendantNodes()
-                                            .OfType<InterpolatedStringExpressionSyntax>()
-                                            .Any();
-                                        if (hasInterpolation)
-                                        {
-                                            AddViolation(entries, invocation, tree, solutionDir,
-                                                "string interpolation in LINQ predicate -- risk of client evaluation");
-                                        }
+                                        AddViolation(entries, invocation, root.SyntaxTree, solutionDir,
+                                            "string interpolation in LINQ predicate -- risk of client evaluation");
                                     }
                                 }
                             }

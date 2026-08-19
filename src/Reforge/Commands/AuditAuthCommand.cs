@@ -24,80 +24,66 @@ public static class AuditAuthCommand
                 var solutionDir = LocationHelper.GetSolutionDirectory(solution);
                 var results = new List<ResultEntry>();
 
-                foreach (var project in solution.Projects)
+                await foreach (var (project, document, root, semanticModel) in
+                    SolutionWalker.ProductionDocumentsAsync(solution, cancellationToken))
                 {
-                    if (project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
-                        continue;
+                    var classes = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
 
-                    var compilation = await project.GetCompilationAsync(cancellationToken);
-                    if (compilation is null)
-                        continue;
-
-                    foreach (var document in project.Documents)
+                    foreach (var classDecl in classes)
                     {
-                        var root = await document.GetSyntaxRootAsync(cancellationToken);
-                        var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
-                        if (root is null || semanticModel is null)
+                        var classSymbol = semanticModel.GetDeclaredSymbol(classDecl, cancellationToken) as INamedTypeSymbol;
+                        if (classSymbol is null)
                             continue;
 
-                        var classes = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
+                        if (!IsController(classDecl, classSymbol))
+                            continue;
 
-                        foreach (var classDecl in classes)
+                        var classHasAuthorize = HasAttributeOnClassOrBase(classSymbol, "Authorize");
+                        var classHasAutoValidateAntiforgery = HasAttributeOnClassOrBase(classSymbol, "AutoValidateAntiforgeryToken");
+
+                        foreach (var method in classDecl.Members.OfType<MethodDeclarationSyntax>())
                         {
-                            var classSymbol = semanticModel.GetDeclaredSymbol(classDecl, cancellationToken) as INamedTypeSymbol;
-                            if (classSymbol is null)
+                            // Only check public methods
+                            if (!method.Modifiers.Any(m => m.Text == "public"))
                                 continue;
 
-                            if (!IsController(classDecl, classSymbol))
+                            var attrs = method.AttributeLists;
+
+                            bool hasHttpPost = HasAttribute(attrs, "HttpPost");
+                            bool hasHttpPut = HasAttribute(attrs, "HttpPut");
+                            bool hasHttpDelete = HasAttribute(attrs, "HttpDelete");
+                            bool hasHttpPatch = HasAttribute(attrs, "HttpPatch");
+                            bool hasHttpGet = HasAttribute(attrs, "HttpGet");
+                            bool hasRoute = HasAttribute(attrs, "Route");
+
+                            // Skip non-actions: no HTTP verb and no [Route]
+                            if (!hasHttpPost && !hasHttpPut && !hasHttpDelete && !hasHttpPatch && !hasHttpGet && !hasRoute)
                                 continue;
 
-                            var classHasAuthorize = HasAttributeOnClassOrBase(classSymbol, "Authorize");
-                            var classHasAutoValidateAntiforgery = HasAttributeOnClassOrBase(classSymbol, "AutoValidateAntiforgeryToken");
+                            bool isMutating = hasHttpPost || hasHttpPut || hasHttpDelete || hasHttpPatch;
+                            bool hasMethodAuthorize = HasAttribute(attrs, "Authorize");
+                            bool hasMethodAllowAnonymous = HasAttribute(attrs, "AllowAnonymous");
+                            bool hasMethodValidateAntiforgeryToken = HasAttribute(attrs, "ValidateAntiForgeryToken");
+                            bool hasMethodIgnoreAntiforgeryToken = HasAttribute(attrs, "IgnoreAntiforgeryToken");
 
-                            foreach (var method in classDecl.Members.OfType<MethodDeclarationSyntax>())
+                            var lineSpan = method.Identifier.GetLocation().GetLineSpan();
+                            var filePath = LocationHelper.NormalizePath(lineSpan.Path, solutionDir);
+                            var line = lineSpan.StartLinePosition.Line + 1;
+                            var column = lineSpan.StartLinePosition.Character + 1;
+
+                            // Check 1: mutating action missing [Authorize]
+                            if (isMutating && !classHasAuthorize && !hasMethodAuthorize && !hasMethodAllowAnonymous)
                             {
-                                // Only check public methods
-                                if (!method.Modifiers.Any(m => m.Text == "public"))
-                                    continue;
+                                var verb = GetHttpVerb(hasHttpPost, hasHttpPut, hasHttpDelete, hasHttpPatch);
+                                var context = $"[{verb}] {method.Identifier.Text} — missing [Authorize]";
+                                results.Add(new ResultEntry(filePath, line, column, context, classSymbol.Name));
+                            }
 
-                                var attrs = method.AttributeLists;
-
-                                bool hasHttpPost = HasAttribute(attrs, "HttpPost");
-                                bool hasHttpPut = HasAttribute(attrs, "HttpPut");
-                                bool hasHttpDelete = HasAttribute(attrs, "HttpDelete");
-                                bool hasHttpPatch = HasAttribute(attrs, "HttpPatch");
-                                bool hasHttpGet = HasAttribute(attrs, "HttpGet");
-                                bool hasRoute = HasAttribute(attrs, "Route");
-
-                                // Skip non-actions: no HTTP verb and no [Route]
-                                if (!hasHttpPost && !hasHttpPut && !hasHttpDelete && !hasHttpPatch && !hasHttpGet && !hasRoute)
-                                    continue;
-
-                                bool isMutating = hasHttpPost || hasHttpPut || hasHttpDelete || hasHttpPatch;
-                                bool hasMethodAuthorize = HasAttribute(attrs, "Authorize");
-                                bool hasMethodAllowAnonymous = HasAttribute(attrs, "AllowAnonymous");
-                                bool hasMethodValidateAntiforgeryToken = HasAttribute(attrs, "ValidateAntiForgeryToken");
-                                bool hasMethodIgnoreAntiforgeryToken = HasAttribute(attrs, "IgnoreAntiforgeryToken");
-
-                                var lineSpan = method.Identifier.GetLocation().GetLineSpan();
-                                var filePath = LocationHelper.NormalizePath(lineSpan.Path, solutionDir);
-                                var line = lineSpan.StartLinePosition.Line + 1;
-                                var column = lineSpan.StartLinePosition.Character + 1;
-
-                                // Check 1: mutating action missing [Authorize]
-                                if (isMutating && !classHasAuthorize && !hasMethodAuthorize && !hasMethodAllowAnonymous)
-                                {
-                                    var verb = GetHttpVerb(hasHttpPost, hasHttpPut, hasHttpDelete, hasHttpPatch);
-                                    var context = $"[{verb}] {method.Identifier.Text} — missing [Authorize]";
-                                    results.Add(new ResultEntry(filePath, line, column, context, classSymbol.Name));
-                                }
-
-                                // Check 2: POST action missing [ValidateAntiForgeryToken]
-                                if (hasHttpPost && !classHasAutoValidateAntiforgery && !hasMethodValidateAntiforgeryToken && !hasMethodIgnoreAntiforgeryToken)
-                                {
-                                    var context = $"[HttpPost] {method.Identifier.Text} — missing [ValidateAntiForgeryToken]";
-                                    results.Add(new ResultEntry(filePath, line, column, context, classSymbol.Name));
-                                }
+                            // Check 2: POST action missing [ValidateAntiForgeryToken]
+                            if (hasHttpPost && !classHasAutoValidateAntiforgery && !hasMethodValidateAntiforgeryToken && !hasMethodIgnoreAntiforgeryToken)
+                            {
+                                var context = $"[HttpPost] {method.Identifier.Text} — missing [ValidateAntiForgeryToken]";
+                                results.Add(new ResultEntry(filePath, line, column, context, classSymbol.Name));
                             }
                         }
                     }
