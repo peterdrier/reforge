@@ -7,7 +7,7 @@ What changed and why. Newest first.
 `docs/superpowers/specs/2026-08-19-internal-axis-signal-measurements.md`. Discharges the
 measure-before-weighting obligation the 2026-08-15 scoring-alignment spec sets for the two candidate
 signals #19 proposes, and answers both open questions #35 flags for the `publicWriteSurface`
-transform. Measured against Humans: 44 sections, 3,448 types, 157,860 prod LOC.
+transform. Measured against Humans: 45 sections, 3,448 types, 157,860 prod LOC.
 
 **All three signals are recommended against in the form they were proposed**, which is the gate
 working rather than failing. One deletion is recommended, with its real cost stated below.
@@ -33,11 +33,11 @@ working rather than failing. One deletion is recommended, with its real cost sta
   than interface symbols, was wrong by roughly 2×, and on that bad count made the distribution look
   binary-plus-one-outlier. Weight stays policy but is now calibratable; still recommended as
   reported-before-scored pending one look at a second corpus.
-- **Retiring `crossSectionWriteSurface`.** It scores 0 across all 44 sections of Humans, so the
+- **Retiring `crossSectionWriteSurface`.** It scores 0 across all 45 sections of Humans, so the
   deletion is a no-op *there* — but not on the sample solution, which scores it 30 across two
   purpose-built fixtures, and whose suppression set is correspondingly non-empty. The retirement
   carries fixture work and a `NotYetCovered` entry with it. Worth doing; not free. Recorded that way
-  because an earlier draft of the document generalised "0/44" into "free", which is the exact
+  because an earlier draft of the document generalised "0/45" into "free", which is the exact
   mistake the measure-before-weighting gate exists to catch.
 
 Two standing figures also moved and are recorded: the internal axis is still **87% size rules**

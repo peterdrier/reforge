@@ -29,7 +29,7 @@ project, excluding `obj/`, `Migrations/`, `*.g.cs` and `*.Designer.cs`.
 | Humans | `113061bcf5f6`, committed 2026-08-19 |
 | reforge | `50ebc39faa87` (version 0.28.1, `main` after #48) |
 | SDK | .NET 10.0.111 |
-| corpus | 44 sections, 3,448 types, 157,860 prod LOC, 5,523 method bodies |
+| corpus | 45 sections, 3,448 types, 157,860 prod LOC, 5,523 method bodies |
 | score | `surfaceTotal` 17,379, `internalComplexityTotal` 3,113, `degraded: false` |
 
 The harness is not committed, so the **signal definitions are stated as predicates** below rather
@@ -88,7 +88,7 @@ Two other standing figures moved and are worth recording:
 - The six read-surface rules #19 proposes retiring now total **2,047 points, 11.8% of surface** — up
   from the 1,230 / 7% #19 measured. The share **grew**. If the argument for cutting them was
   value-per-line, that argument is now stronger, not weaker.
-- `crossSectionWriteSurface` still scores **0 across all 44 sections**, confirming #35's reading on a
+- `crossSectionWriteSurface` still scores **0 across all 45 sections**, confirming #35's reading on a
   second, larger corpus.
 
 ---
@@ -268,7 +268,7 @@ Manual read of all 26:
 | `UserService.HasRequiredNameFields(Profile)` | |
 | `CalendarOccurrenceViewExtensions.ShouldHideTimeLabel(CalendarOccurrence)` | |
 
-**≈73% precision at 26 hits across 44 sections** (19 + 7 — an earlier draft listed only 25 because
+**≈73% precision at 26 hits across 45 sections** (19 + 7 — an earlier draft listed only 25 because
 the harness table was capped at 25 rows while the count said 26, so `GetDisplayName` was measured but
 never displayed; the audit is now over all of them). `SurveyBranchingEvaluator.IsVisible(BranchCondition)`
 and `UserStateClassifier.Classify(User)` are the shape the rule was proposed for: a predicate or
@@ -308,7 +308,7 @@ Concretely:
 ## Signal C — `publicWriteSurface` (issue #35)
 
 #35 proposes retiring `crossSectionWriteSurface` — a three-condition conjunction that measures
-**0/44 sections** — and replacing it with a declaration-side rule that charges for *exporting* write
+**0/45 sections** — and replacing it with a declaration-side rule that charges for *exporting* write
 capability at all. It flags two things to decide. Both are measurable, so both are measured.
 
 ### Population
@@ -323,7 +323,7 @@ recommendation below.
 | | file proxy (wrong) | interface symbols (correct) |
 |---|---:|---:|
 | write-capable service interfaces | 47 | **93** |
-| sections declaring at least one | 24 of 44 | **37 of 45** |
+| sections declaring at least one | 24 of 45 | **37 of 45** |
 
 Methods on them: 517, already charged **4,136 points** by `fullServiceInterfaceMethod` at 8/method.
 
@@ -369,7 +369,7 @@ scores 60 points across 5 files in 3 sections regardless.
 
 **On Humans, retiring the rule and its suppression set is a measured no-op.** It is worth being
 precise about the scope of that claim, because an earlier draft of this document was not:
-"0/44, therefore free" is true of Humans and false in general.
+"0/45, therefore free" is true of Humans and false in general.
 
 The **sample solution scores it 30** — two fixtures, `ReadOnlyGreetingConsumer` in Services and
 `CampReportBuilder` in Reporting, both deliberately built to fire it. So retiring the rule is not a
