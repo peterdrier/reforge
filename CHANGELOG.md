@@ -48,13 +48,14 @@ corrections, the metrics move and the score does not:
 
 | | before | after |
 |---|---:|---:|
-| `locProd` | 160,291 | **157,860** |
-| `files` | 1,695 | **1,691** |
+| `locProd` | 160,291 | **158,049** |
+| `files` | 1,695 | **1,695** |
 | `methods` | 5,425 | **5,523** |
 | `surfaceTotal` / `internalComplexityTotal` | 17,379 / 3,162 | 17,379 / 3,162 |
 
-2,431 lines (1.5% of the corpus) were generated code leaking in through partial types whose
-handwritten half happened to be the classifier's primary file; 98 method bodies — constructors,
+2,242 net lines moved: 2,431 lines (1.5% of the corpus) of generated code were leaking in through
+partial types whose handwritten half happened to be the classifier's primary file, against 189
+lines of linked-file copies that were being dropped from the rollup; 98 method bodies — constructors,
 implemented partial methods, explicit interface implementations, operators and finalizers — were
 missing from both distributions.
 
@@ -95,6 +96,11 @@ Three corrections from review, all of which the metrics pass made newly load-bea
   with a strict comparison against a 0 seed, so a section of straight-line code — every cognitive
   score 0 — never updated the name, and reported `max: 0` held by nobody. Ties now go to the first
   method sampled, which is deterministic because the classified corpus is.
+- **A linked file counts once per section it compiles into.** The same physical source file can be
+  linked into two projects, which compiles it into two assemblies and so into two sections — two
+  real copies, each of which the sections counted. The solution rollup deduplicated by path alone,
+  so it dropped the second copy's LOC while still counting its classes and methods: the rollup
+  stopped being the sum of its sections. Humans has four such copies (locProd 157,860 → 158,049).
 - **`--list-groups` covers sections that scored nothing.** A section whose types are all unscored
   has metrics and no `GroupScore`, so enumerating only the scored groups dropped it — precisely the
   section a size-ranked listing needs to show. The listing (and a new `sections` array in the JSON)
