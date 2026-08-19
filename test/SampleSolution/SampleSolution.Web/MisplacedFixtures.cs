@@ -6,11 +6,8 @@ using SampleSolution.Services;
 namespace SampleSolution.Web;
 
 /// <summary>
-/// Fixtures for the <c>misplaced</c> command. One class per verdict, so a change to any single branch
-/// moves one test rather than several. Each method's counts are chosen against the thresholds
-/// deliberately: <c>MinimumTargetTouches</c> is 3, and the target must out-touch the method's own
-/// section by <c>DominanceFactor</c> (2), so "3 calls out, 0 or 1 at home" is the smallest shape that
-/// qualifies and is what most of these use.
+/// Fixtures for the <c>misplaced</c> command. One class per verdict, so a change to any single
+/// branch moves one test rather than several.
 /// </summary>
 internal static class MisplacedFixtureNotes
 {
@@ -18,8 +15,7 @@ internal static class MisplacedFixtureNotes
 
 /// <summary>
 /// The plain pipe. Every touch is a call into <c>Services</c> behavior and none is its own, so the
-/// method is doing Services' work from Web. The name is deliberately unique across the solution so
-/// the duplicate check finds nothing.
+/// method is doing Services' work from Web.
 /// </summary>
 public class RelocatableGreetingReporter
 {
@@ -36,9 +32,7 @@ public class RelocatableGreetingReporter
 
 /// <summary>
 /// The same pipe shape, but named for a method <c>Services</c> already declares
-/// (<c>GreetingService.GetGreetingAsync</c>). Moving this verbatim would land a second
-/// <c>GetGreetingAsync</c> in that section, which is the case a bare "move it there" recommendation
-/// gets wrong.
+/// (<c>GreetingService.GetGreetingAsync</c>).
 /// </summary>
 public class DuplicatingGreetingReporter
 {
@@ -56,10 +50,8 @@ public class DuplicatingGreetingReporter
 }
 
 /// <summary>
-/// A namesake rather than a collision: <c>Services</c> declares <c>GetGreetingAsync</c> too, but this
-/// one takes an extra parameter, so both could live there at once. Still worth reporting before the
-/// move — two methods of the same name doing nearly the same thing is how a section grows a confusing
-/// API — but it is a weaker claim than an identical signature, and the evidence says which it is.
+/// A namesake rather than a collision: <c>Services</c> declares <c>GetGreetingAsync</c> too, but
+/// this one takes an extra parameter, so both could live there at once.
 /// </summary>
 public class NamesakeGreetingReporter
 {
@@ -76,10 +68,9 @@ public class NamesakeGreetingReporter
 
 /// <summary>
 /// Null-safe delegation. Every call goes through <c>?.</c>, which puts the receiver under a
-/// <c>ConditionalAccessExpression</c> and the invoked name under a member BINDING on the far side of the
-/// operator — so a walk that only climbs member accesses never sees that <c>_greetings</c> is a receiver
-/// and counts each one as own-section state. That restores the 1:1 tie the conduit rule exists to break,
-/// which is the difference between this being reported and being invisible.
+/// <c>ConditionalAccessExpression</c> and the invoked name under a member BINDING on the far side
+/// of the operator — so a walk that only climbs member accesses never sees that <c>_greetings</c>
+/// is a receiver and counts each one as own-section state.
 /// </summary>
 public class NullSafeGreetingReporter
 {
@@ -95,11 +86,8 @@ public class NullSafeGreetingReporter
 }
 
 /// <summary>
-/// Named <c>PurgeAsync</c>, which <c>AuditLogQueryService</c> in the destination section also declares —
-/// but this method leans on <see cref="GreetingService"/>, which declares no such thing. C# only forbids
-/// duplicate signatures within one containing TYPE, so an unrelated namesake elsewhere in the same
-/// assembly is not a collision and must not be reported as one. A section-wide name index could not tell
-/// the two apart, and common method names made that a frequent false claim.
+/// Named <c>PurgeAsync</c>, which <c>AuditLogQueryService</c> in the destination section also
+/// declares — but this method leans on <see cref="GreetingService"/>, which declares no such thing.
 /// </summary>
 public class UnrelatedNamesakeReporter
 {
@@ -115,10 +103,9 @@ public class UnrelatedNamesakeReporter
 }
 
 /// <summary>
-/// A DEFAULT interface method that pipes into another section. It is not bound by a contract — it IS one,
-/// which neither the override nor the interface-implementation branch catches, since
-/// <c>AllInterfaces</c> excludes the interface a member is declared on. Relocating this body alone changes
-/// what every implementer inherits, so it must read as <c>blocked</c> rather than as a move.
+/// A DEFAULT interface method that pipes into another section. It is not bound by a contract — it
+/// IS one, which neither the override nor the interface-implementation branch catches, since
+/// <c>AllInterfaces</c> excludes the interface a member is declared on.
 /// </summary>
 public interface IDefaultPipingReport
 {
@@ -133,10 +120,8 @@ public interface IDefaultPipingReport
 }
 
 /// <summary>
-/// Same name and parameters as <c>GreetingService.GetRecentGreetingsAsync</c>, different return type. C#
-/// does not allow overloading on return type, so this is a decisive collision — comparing return types
-/// made the analyzer call it a near-miss and then report "different parameter types", which was both the
-/// wrong verdict and a false reason for it.
+/// Same name and parameters as <c>GreetingService.GetRecentGreetingsAsync</c>, different return
+/// type.
 /// </summary>
 public class ReturnTypeClashReporter
 {
@@ -152,9 +137,9 @@ public class ReturnTypeClashReporter
 }
 
 /// <summary>
-/// Delegation written with the null-forgiving operator. <c>_dep!</c> is a transparent wrapper — it changes
-/// nothing about what is reached — but a walk that does not climb it counts every receiver at home and
-/// restores the 1:1 tie, exactly as the conditional-access case did.
+/// Delegation written with the null-forgiving operator. <c>_dep!</c> is a transparent wrapper — it
+/// changes nothing about what is reached — but a walk that does not climb it counts every receiver
+/// at home and restores the 1:1 tie, exactly as the conditional-access case did.
 /// </summary>
 public class NullForgivingGreetingReporter
 {
@@ -170,9 +155,8 @@ public class NullForgivingGreetingReporter
 }
 
 /// <summary>
-/// Reaches three other sections — <c>Core</c>, <c>Services</c>, and <c>Camp</c> — so no single section
-/// could host it. Nothing is misplaced here; the method exists to join sections. It is reported anyway
-/// because an accidental junction drawer has exactly this shape.
+/// Reaches three other sections — <c>Core</c>, <c>Services</c>, and <c>Camp</c> — so no single
+/// section could host it.
 /// </summary>
 public class SectionJoiningDashboard
 {
@@ -196,19 +180,15 @@ public class SectionJoiningDashboard
     }
 }
 
-/// <summary>
-/// Reads <c>Core</c>'s data carrier and calls none of its behavior. That is what mapping code looks
-/// like from here, and a mapper belongs to whoever needs the mapped shape — so no move is proposed.
-/// </summary>
+/// <summary>Reads <c>Core</c>'s data carrier and calls none of its behavior.</summary>
 public class UserRowMapper
 {
     public string MapToRow(User user) => $"{user.Name}|{user.Email}|{user.IsActive}|{user.Id}";
 }
 
 /// <summary>
-/// A pipe that cannot move on its own: the method implements <see cref="IRelocationReport"/>, so the
-/// interface would have to move with it. That is a larger change than relocating a file, and the
-/// distinction is the point — the finding is still true, but the fix is different.
+/// A pipe that cannot move on its own: the method implements <see cref="IRelocationReport"/>, so
+/// the interface would have to move with it.
 /// </summary>
 public class ContractBoundReporter : IRelocationReport
 {
@@ -230,9 +210,9 @@ public interface IRelocationReport
 }
 
 /// <summary>
-/// Below the threshold on purpose. Two calls into another section is what most delegating code in any
-/// solution looks like, so this must NOT be reported — otherwise the command's output is every method
-/// that calls a dependency twice.
+/// Below the threshold on purpose. Two calls into another section is what most delegating code in
+/// any solution looks like, so this must NOT be reported — otherwise the command's output is every
+/// method that calls a dependency twice.
 /// </summary>
 public class BarelyDelegatingReporter
 {
@@ -246,9 +226,8 @@ public class BarelyDelegatingReporter
 }
 
 /// <summary>
-/// Above the touch threshold but not dominant: it works on its own section as much as on the other, so
-/// it is not misplaced. Guards the <c>DominanceFactor</c> half of the test, which a touch count alone
-/// would miss.
+/// Above the touch threshold but not dominant: it works on its own section as much as on the other,
+/// so it is not misplaced.
 /// </summary>
 public class BalancedReporter
 {
@@ -267,11 +246,7 @@ public class BalancedReporter
     }
 }
 
-/// <summary>
-/// The plain pipe again, written as the implementation half of a partial method. The finding is true
-/// but the fix is not a relocation: C# requires both halves of a partial method in the same containing
-/// type, so the body cannot travel to another type or assembly without its declaration.
-/// </summary>
+/// <summary>The plain pipe again, written as the implementation half of a partial method.</summary>
 public partial class PartialPipingReporter
 {
     private readonly GreetingService _greetings = new();
@@ -292,9 +267,7 @@ public partial class PartialPipingReporter
 
 /// <summary>
 /// A pipe whose generic signature matches one the destination type already declares
-/// (<c>GenericMappingService.Passthrough&lt;U&gt;(U)</c>). The two methods' type parameters are
-/// distinct symbols, so identity comparison read this as a namesake with different parameter types
-/// when it is a straight compile-time collision.
+/// (<c>GenericMappingService.Passthrough&lt;U&gt;(U)</c>).
 /// </summary>
 public class GenericClashReporter
 {
@@ -310,9 +283,8 @@ public class GenericClashReporter
 }
 
 /// <summary>
-/// Reads four properties of a type the config classifies as a DTO but whose shape the structural test
-/// rejects. Mapping code belongs to whoever needs the mapped shape, so this is a mapper — counting the
-/// reads as behavior made it a move recommendation with a destination.
+/// Reads four properties of a type the config classifies as a DTO but whose shape the structural
+/// test rejects.
 /// </summary>
 public class ConfiguredDtoRowMapper
 {
@@ -321,9 +293,9 @@ public class ConfiguredDtoRowMapper
 }
 
 /// <summary>
-/// Calls three methods on a type the config labels a DTO. A config rule states a type's role, not the
-/// shape of its members, so these are behavior calls and the method is doing the other section's work.
-/// Classifying every touch on a configured DTO as data reported this as a mapper.
+/// Calls three methods on a type the config labels a DTO. A config rule states a type's role, not
+/// the shape of its members, so these are behavior calls and the method is doing the other
+/// section's work.
 /// </summary>
 public class ConfiguredDtoBehaviorCaller
 {
@@ -355,8 +327,8 @@ public class LocalFunctionReporter
 }
 
 /// <summary>
-/// A pipe whose namesake at the destination differs only in how a parameter is passed
-/// (<c>ref</c> here, <c>out</c> there). C# cannot declare both, so this is a decisive collision.
+/// A pipe whose namesake at the destination differs only in how a parameter is passed (<c>ref</c>
+/// here, <c>out</c> there).
 /// </summary>
 public class RefKindClashReporter
 {
@@ -371,11 +343,7 @@ public class RefKindClashReporter
     }
 }
 
-/// <summary>
-/// Reads three inherited properties of a configured DTO plus one it declares itself. All four are data
-/// reads: the config rule names the type the caller is holding, and inheritance does not turn a property
-/// into behavior.
-/// </summary>
+/// <summary>Reads three inherited properties of a configured DTO plus one it declares itself.</summary>
 public class InheritedDtoRowMapper
 {
     public string MapInheritedSummary(InheritedSummaryResult summary) =>
@@ -384,8 +352,7 @@ public class InheritedDtoRowMapper
 
 /// <summary>
 /// The delegating pipe again, declared on a base whose <b>derived</b> type is what binds it to an
-/// interface. Asked from this class there is no contract to find, which is why the analyzer needs an
-/// index built from every type rather than a lookup on the declaring one.
+/// interface.
 /// </summary>
 public class InheritedContractReporterBase
 {
@@ -409,10 +376,7 @@ public class InheritedContractReporter : InheritedContractReporterBase, IInherit
 {
 }
 
-/// <summary>
-/// A method whose foreign work is expressed entirely through <c>new</c>. Nothing is called on the other
-/// section; three of its types are constructed. Counting only member accesses reported no finding at all.
-/// </summary>
+/// <summary>A method whose foreign work is expressed entirely through <c>new</c>.</summary>
 public class ConstructingReporter
 {
     public string BuildWorkItems(string a, string b, string c)
@@ -425,10 +389,9 @@ public class ConstructingReporter
 }
 
 /// <summary>
-/// The inherited-contract case again, but supplied through a <b>constructed</b> base:
-/// <c>Derived : Base&lt;int&gt;, IGenericContractReport</c> is served by <c>Base&lt;T&gt;.RenderGenericAsync(T)</c>.
-/// The interface map resolves to the substituted <c>Base&lt;int&gt;.RenderGenericAsync(int)</c>, so an
-/// index keyed on the substituted symbol never matches the method as declared.
+/// The inherited-contract case again, but supplied through a <b>constructed</b> base: <c>Derived :
+/// Base&lt;int&gt;, IGenericContractReport</c> is served by
+/// <c>Base&lt;T&gt;.RenderGenericAsync(T)</c>.
 /// </summary>
 public class GenericContractReporterBase<T>
 {
@@ -453,9 +416,9 @@ public class GenericContractReporter : GenericContractReporterBase<int>, IGeneri
 }
 
 /// <summary>
-/// Switches over another section's enum. Every touch is an enum member — a constant, not a call — so
-/// this is a mapper, and no destination TYPE is proposed: the only Services type it touches is an enum,
-/// which cannot host a method.
+/// Switches over another section's enum. Every touch is an enum member — a constant, not a call —
+/// so this is a mapper, and no destination TYPE is proposed: the only Services type it touches is
+/// an enum, which cannot host a method.
 /// </summary>
 public class EnumMappingReporter
 {
@@ -469,19 +432,15 @@ public class EnumMappingReporter
 }
 
 /// <summary>
-/// Uses another section entirely through an indexer. The table arrives as a parameter, so there is no
-/// receiver field to weigh at home — the three reads are the whole measurement.
+/// Uses another section entirely through an indexer. The table arrives as a parameter, so there is
+/// no receiver field to weigh at home — the three reads are the whole measurement.
 /// </summary>
 public class IndexerReadingReporter
 {
     public string SummarizeBySlot(SlotTable table) => $"{table[0]}|{table[1]}|{table[2]}";
 }
 
-/// <summary>
-/// Two overloads differing only in how the parameter is passed. A derived type binds the <c>ref</c> one
-/// to <c>IRefOverloadContract</c>; the by-value one is pinned by nothing. Keyed without the ref kind,
-/// the contract on the first also blocked the second.
-/// </summary>
+/// <summary>Two overloads differing only in how the parameter is passed.</summary>
 public class RefOverloadReporterBase
 {
     private readonly GreetingService _greetings = new();
@@ -509,9 +468,8 @@ public class RefOverloadReporter : RefOverloadReporterBase, IRefOverloadContract
 
 /// <summary>
 /// Delegates through an indexer held in a field. The receiver is a conduit exactly as in
-/// <c>_dep.Method()</c>: unrecognised, three reads scored 3 own against 3 target and tied, which is the
-/// shape the conduit rule exists to break. The earlier indexer fixture took its table as a parameter and
-/// so never exercised this path.
+/// <c>_dep.Method()</c>: unrecognised, three reads scored 3 own against 3 target and tied, which is
+/// the shape the conduit rule exists to break.
 /// </summary>
 public class HeldIndexerReporter
 {
@@ -556,9 +514,9 @@ internal static class PrivateContractHolder
 }
 
 /// <summary>
-/// The held-indexer delegation reached through <c>?[</c>. The receiver sits under a conditional access
-/// and the indexer on an ElementBindingExpression, so a conduit walk that recognises only member
-/// bindings scores <c>_table</c> as own state and the delegation ties instead of moving.
+/// The held-indexer delegation reached through <c>?[</c>. The receiver sits under a conditional
+/// access and the indexer on an ElementBindingExpression, so a conduit walk that recognises only
+/// member bindings scores <c>_table</c> as own state and the delegation ties instead of moving.
 /// </summary>
 public class NullSafeHeldIndexerReporter
 {
@@ -567,10 +525,7 @@ public class NullSafeHeldIndexerReporter
     public string SummarizeNullSafeHeldSlots() => $"{_table?[0]}|{_table?[1]}|{_table?[2]}";
 }
 
-/// <summary>
-/// A dominant pipe declared on a generic type, using that type's parameter in its signature. No
-/// destination can declare <c>T</c>, so this is a pin rather than a relocation.
-/// </summary>
+/// <summary>A dominant pipe declared on a generic type, using that type's parameter in its signature.</summary>
 public class GenericSourceReporter<T>
 {
     private readonly GreetingService _greetings = new();
@@ -584,11 +539,7 @@ public class GenericSourceReporter<T>
     }
 }
 
-/// <summary>
-/// Three reads through an indexer the configured DTO <i>inherits</i>. An element access carries its
-/// receiver on the node itself rather than on its parent, so a receiver lookup written only for member
-/// accesses saw nothing and judged the reads by the unconfigured declaring base.
-/// </summary>
+/// <summary>Three reads through an indexer the configured DTO <i>inherits</i>.</summary>
 public class InheritedIndexerRowMapper
 {
     public string SummarizeInheritedIndexedRow(IndexedSummaryResult row) => $"{row[0]}|{row[1]}|{row[2]}";
@@ -598,8 +549,8 @@ public class InheritedIndexerRowMapper
 }
 
 /// <summary>
-/// Delegation through a cast receiver. The cast changes nothing about what is reached, but a wrapper
-/// walk that stops at it counts the field as own state and the pipe ties 3:3.
+/// Delegation through a cast receiver. The cast changes nothing about what is reached, but a
+/// wrapper walk that stops at it counts the field as own state and the pipe ties 3:3.
 /// </summary>
 public class CastingConduitReporter
 {
@@ -623,8 +574,8 @@ public class CastingConduitReporter
 }
 
 /// <summary>
-/// Four calls into another section, none of them written as a member access: two additions, a negation
-/// and an explicit conversion, all user-defined on <c>SlotWeight</c>.
+/// Four calls into another section, none of them written as a member access: two additions, a
+/// negation and an explicit conversion, all user-defined on <c>SlotWeight</c>.
 /// </summary>
 public class OperatorUsingReporter
 {
@@ -638,8 +589,8 @@ public class OperatorUsingReporter
 }
 
 /// <summary>
-/// Two other sections, split evenly. Neither could host it without leaving the other reached from the
-/// wrong side, which is the orchestrator argument at its smallest fan-out.
+/// Two other sections, split evenly. Neither could host it without leaving the other reached from
+/// the wrong side, which is the orchestrator argument at its smallest fan-out.
 /// </summary>
 public class TwoSectionJunctionReporter
 {
@@ -698,30 +649,10 @@ public class OverridingPipe : OverriddenPipeBase
     public override string DescribeVirtually(int value) => base.DescribeVirtually(value) + "!";
 }
 
-/// <summary>
-/// Three reads of a configured DTO's <i>inherited</i> properties written as a property pattern. A
-/// pattern name has no receiver expression beside it — the receiver is the pattern's input — so the
-/// reads were judged against the unconfigured base that declares them.
-/// </summary>
+/// <summary>Three reads of a configured DTO's <i>inherited</i> properties written as a property pattern.</summary>
 public class PatternReadingRowMapper
 {
     public bool SummarizePatternedRow(PatternedSummaryResult row) =>
         row is { Id: > 0, Slug: not null, Code: not null };
 }
 
-/// <summary>
-/// A dominant pipe whose namesake at the destination differs only in the name of a type parameter
-/// inside a function-pointer parameter. C# calls that one signature.
-/// </summary>
-public class PointerPassthroughReporter
-{
-    private readonly PointerPassthroughService _pointers = new();
-
-    public unsafe string PointerPassthrough<T>(delegate*<T, void> callback)
-    {
-        var first = _pointers.Describe(1);
-        var second = _pointers.Describe(2);
-        var third = _pointers.Describe(3);
-        return callback is null ? first : $"{second}{third}";
-    }
-}

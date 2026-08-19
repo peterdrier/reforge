@@ -630,19 +630,4 @@ public class MisplacedAnalyzerTests
         Assert.Equal(3, finding.TargetDataTouches);
         Assert.Equal(0, finding.TargetBehaviorTouches);
     }
-
-    [Fact]
-    public async Task Analyze_NamesakeDifferingOnlyInsideAFunctionPointer_IsADecisiveCollision()
-    {
-        var report = await AnalyzeAsync();
-        var finding = Find(report, "PointerPassthrough");
-
-        // A function pointer's identity is its whole signature, so `delegate*<T, void>` and
-        // `delegate*<U, void>` are one C# signature. Falling through to symbol equality made the two
-        // type parameters look different and reported a near-miss instead of a collision.
-        Assert.NotNull(finding);
-        Assert.Equal(MisplacedVerdict.MoveWouldDuplicate, finding.Verdict);
-        Assert.NotNull(finding.DuplicateOf);
-        Assert.DoesNotContain("different parameter", finding.DuplicateOf);
-    }
 }

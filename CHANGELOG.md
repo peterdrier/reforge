@@ -4,99 +4,19 @@ What changed and why. Newest first.
 
 ## Unreleased - `misplaced`: which methods are in the wrong assembly, and where they belong
 
-Feature envy (Fowler) narrowed to the one question a section-partitioned codebase can act on: **is this
-method in the right assembly?** Not "is this class too big" or "does this method do too much" — those are
-judgment calls with no correct answer. "This method touches Shifts four times and its own section not at
-all" is a fact, and it names a destination.
-
-The output is a **list of named problems**, not a score. Three reasons, in the order they decided it:
-
-- A number cannot carry a destination, and the destination is the actionable half. "Web scores 34 on
-  placement" tells an agent nothing; "`GreetingReporter.SummarizeGreetings` calls Services three times and
-  Web zero, move it to Services" is a work item.
-- A score is gameable by exactly the edits that make placement *worse* — inline the method into its caller,
-  or add a layer of indirection so the touches spread. Both lower the number.
-- Calibration would need a corpus. Reforge has one real corpus (Humans), and one corpus can produce a
-  threshold that fits it, not a weight that generalizes. Naming problems needs no calibration; every
-  finding carries its own evidence and can be judged individually.
-
-### Verdicts
-
-Placement is decided per method, from **per-section touch counts** rather than per-parameter envy:
-
-| verdict | what it means |
-|---|---|
-| `move` | one other section dominates, nothing at the destination is in the way |
-| `move-would-duplicate` | same, but the destination already declares something under this name |
-| `foundation-target` | the dominant section is shared infrastructure, so the coupling is expected and no move is proposed |
-| `orchestrator` | reaches two or more sections, so no single one could host it |
-| `mapper` | reads the target's data carriers rather than calling its behavior — a mapper belongs to whoever needs the mapped shape |
-| `blocked` | the method is pinned to its type — by a contract it supplies, or by a type parameter that type declares — so it cannot move alone |
-
-By default only `move` and `move-would-duplicate` are reported, since the rest are explanations for why a
-method that *looks* misplaced is not. The tail line always counts every verdict over the full result set,
-so a filtered view still says what it filtered.
-
-`orchestrator` and `mapper` exist because the classic envy predicate is **blind to both by
-construction**. A method aggregating four sections is the opposite of one concentrating touches on a
-single type, so an envy score reads it as clean — and it is the shape most likely to be an accidental
-junction drawer. It gets a verdict rather than a score so it can be looked at. The orchestrator verdict is
-structural for now (two or more sections touched); distinguishing a legitimate cross-cutting
-orchestrator from a drawer needs its own detector and is not attempted here.
-
-**Two, not three.** The threshold was three, with two-section methods reported under a separate
-`judgment` verdict. That verdict applied no dominance test — exactly like `orchestrator`, and for exactly
-the same reason: neither of the two sections could host the method without leaving the other reached from
-the wrong side. It was one claim under two names, the weaker of which is now gone. On Humans this is the
-largest population by far: 634 orchestrators, 467 of them reaching exactly two sections.
-
-The per-section split is part of the orchestrator evidence, where it does more work at a fan-out of two
-than at seven — it separates a method spread evenly across its sections from one leaning on a single one.
-
-### What the destination already has
-
-A proposed move can land on top of something. The check is by **name** at the destination, then by
-**signature**, and the two answers are reported differently because they license different work:
-
-- **Same signature** — decisive. The destination cannot compile with both, so the move is not a
-  relocation; something has to be reconciled first.
-- **Same name, different signature** — weaker. Both could coexist, and the evidence says how they differ
-  (arity, or same arity with different parameter types).
-
-Neither claims the two methods *do* the same thing. That needs the bodies compared, and a name plus a
-signature is not a proof of equivalence — so the finding says what was actually established and stops
-there.
-
-### The conduit rule, which the fixtures found
-
-`_dep.Method()` scores the field `_dep` at home and the call away, so a **purely delegating method ties
-1:1** and can never satisfy the dominance test. The `move` verdict was unreachable for the commonest shape
-it exists to find, and three pipe fixtures produced no output at all until this was fixed. A field or
-property used only as the receiver through which another section is reached is now dropped from both
-sides — dropped rather than credited to the target, because crediting it would double the target's count
-and shift every threshold with it.
-
-Every wrapper that leaves a receiver a receiver had to be recognised one at a time, and each one hid the
-same 3:3 tie until it was: `this._dep`, parentheses, `_dep?.M()`, `_dep!.M()`, `_dep[0]`, `_dep?[0]`,
-`((IForeign)_dep).M()`, `(_dep as IForeign)!.M()`, `(await _depTask).M()`. Symmetrically, work expressed
-as something other than a named member had to be measured one shape at a time: a constructor hangs off
-the creation expression, an indexer off the element access, and a user-defined operator off the operator
-expression, so `new Foreign()`, `foreign[0]` and `left + right` each measured as nothing until handled.
-
-### The tuned number
-
-`--foundation-ratio` (default 8) is the one calibrated constant, and it was calibrated on one corpus. A
-section is foundation when its fan-in is at least 3 and at least 8× its fan-out. On Humans the separation
-window is 4.4 to 21, so 8 sits mid-window with margin on both sides. It is exposed as a flag because a
-number tuned on a single corpus should be adjustable by anyone whose corpus differs.
-
-An earlier version used `fanOut == 0` and matched **nothing**. The reason is worth recording: I computed
-fan-in and fan-out from the *reported findings* rather than from all measured methods, which showed `Base`
-at fan-out 0 when it is actually 1. The graph is now built from every measured method, and the discriminator
-from the real distribution.
-
-The analyzed-assemblies gate is mandatory, not defensive: without it `System.Runtime` resolves as a section
-named `Runtime` and the BCL becomes the most depended-upon part of the architecture.
+- **Lists named problems instead of scoring them.** A score cannot carry a destination, and the
+  destination is the actionable half; it is also gameable by inlining or one more layer of indirection.
+  Each finding names the method, a destination type, and its evidence.
+- **Six verdicts, one walk.** `move` and `move-would-duplicate` name a destination; `orchestrator`
+  (two or more sections — no single one could host it), `mapper` (reads data carriers, so it belongs to
+  whoever needs the shape), `foundation-target`, and `blocked` (seven ways a method is pinned to its
+  type) explain why a method that looks misplaced is not.
+- **On Humans: 759 findings, 7 actionable.** 634 orchestrators, 82 mappers, 35 foundation targets, 1
+  blocked. Fifteen review rounds took the actionable count 40 → 7, almost all of it false positives
+  from measurement gaps — a receiver behind a wrapper (`?.`, `!`, a cast, `await`, an indexer) scored as
+  own state and tied; work carried on an expression rather than a name (a constructor, an indexer, an
+  operator) measured as nothing. Known-unhandled: implicit user-defined conversions and delegate
+  invocations, neither of which occurs in the corpus.
 
 ## Unreleased - Write surface is decided behaviorally, not by the name `I*Service`
 

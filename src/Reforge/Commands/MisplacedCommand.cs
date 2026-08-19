@@ -11,11 +11,8 @@ namespace Reforge.Commands;
 /// with a named destination where there is one.
 /// </summary>
 /// <remarks>
-/// This command <b>lists named problems rather than scoring them</b>, deliberately. A number cannot
-/// carry a destination, which is the only actionable part of the finding; a score over this signal
-/// would be gameable by inlining a call or adding one layer of indirection; and calibrating a weight
-/// needs a second corpus that does not exist. "Not automating judgment calls" is the standing rule —
-/// the tool says which method, where it should go, and what the evidence is, and the reader decides.
+/// Lists named problems rather than scoring them, deliberately: a number cannot carry a destination,
+/// which is the only actionable part of the finding.
 /// </remarks>
 public static class MisplacedCommand
 {
@@ -101,8 +98,7 @@ public static class MisplacedCommand
                     findings = findings.Take(limit.Value).ToList();
                 }
 
-                // A limited list looks like a complete one to anything reading the output, and this
-                // command's whole purpose is to be acted on. Say what was dropped.
+                // A limited list looks complete to anything reading the output. Say what was dropped.
                 if (totalBeforeLimit.HasValue)
                     Console.Error.WriteLine(
                         $"WARNING: --limit {limit!.Value} truncated the list; {totalBeforeLimit.Value - findings.Count} " +
@@ -174,9 +170,8 @@ public static class MisplacedCommand
             sb.AppendLine(group.Key);
             foreach (var f in group)
             {
-                // The destination TYPE where one was chosen: a section is not a place a method goes.
-                // The destination TYPE where one was chosen, already namespace-qualified: a section is
-                // not a place a method goes, and the section is still named in the evidence line below.
+                // The destination TYPE, namespace-qualified: a section is not a place a method goes,
+                // and the section is still named in the evidence line below.
                 var arrow = f.TargetSection is null
                     ? ""
                     : $" -> {f.DestinationType ?? f.TargetSection}";
@@ -196,9 +191,8 @@ public static class MisplacedCommand
     }
 
     /// <summary>
-    /// The tail line always reports every verdict's count over the FULL result set, including the
-    /// ones the filters excluded. A list of 4 "move" findings reads as "4 problems" unless the 60
-    /// orchestrators and mappers beside them are visible.
+    /// Counts every verdict over the FULL result set, filters included: 4 "move" findings read as
+    /// "4 problems" unless the 60 orchestrators and mappers beside them are visible.
     /// </summary>
     private static string Summary(
         IReadOnlyList<MisplacedMethod> findings, IReadOnlyList<MisplacedMethod> all, int? totalBeforeLimit)
