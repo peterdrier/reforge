@@ -2,6 +2,22 @@
 
 What changed and why. Newest first.
 
+## Unreleased - `misplaced`: which methods are in the wrong assembly, and where they belong
+
+- **Lists named problems instead of scoring them.** A score cannot carry a destination, and the
+  destination is the actionable half; it is also gameable by inlining or one more layer of indirection.
+  Each finding names the method, a destination type, and its evidence.
+- **Six verdicts, one walk.** `move` and `move-would-duplicate` name a destination; `orchestrator`
+  (two or more sections — no single one could host it), `mapper` (reads data carriers, so it belongs to
+  whoever needs the shape), `foundation-target`, and `blocked` (seven ways a method is pinned to its
+  type) explain why a method that looks misplaced is not.
+- **On Humans: 759 findings, 7 actionable.** 634 orchestrators, 82 mappers, 35 foundation targets, 1
+  blocked. Fifteen review rounds took the actionable count 40 → 7, almost all of it false positives
+  from measurement gaps — a receiver behind a wrapper (`?.`, `!`, a cast, `await`, an indexer) scored as
+  own state and tied; work carried on an expression rather than a name (a constructor, an indexer, an
+  operator) measured as nothing. Known-unhandled: implicit conversions, delegate invocations, truth
+  operators — none of which occurs in the corpus.
+
 ## Unreleased - Write surface is decided behaviorally, not by the name `I*Service`
 
 Issue #54. `fullServiceInterface` was assigned by the name pattern `I*Service`, and the read escape

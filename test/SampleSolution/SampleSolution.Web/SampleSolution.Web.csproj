@@ -9,6 +9,9 @@
   <ItemGroup>
     <ProjectReference Include="..\SampleSolution.Core\SampleSolution.Core.csproj" />
     <ProjectReference Include="..\SampleSolution.Services\SampleSolution.Services.csproj" />
+    <!-- Only for the `misplaced` orchestrator fixture: three distinct other sections have to be
+         reachable from one method before the orchestrator branch can be exercised at all. -->
+    <ProjectReference Include="..\SampleSolution.Camp.Contracts\SampleSolution.Camp.Contracts.csproj" />
   </ItemGroup>
 
 </Project>
