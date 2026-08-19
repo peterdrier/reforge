@@ -2,6 +2,49 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Cognitive complexity: charge the structure, name the code
+
+Two findings from the dogfooding read in #31, both about `cognitiveComplexity` describing a member
+badly rather than about what it charges for.
+
+**A nested function at a member's own top level no longer pays a nesting level.** The walker added
+one for every lambda and local function, which is right per SonarSource when the function sits
+inside other logic. It is not right when the function *is* the member body. `System.CommandLine`
+takes an action delegate, so all 29 of this tool's commands put an entire body inside
+`command.SetAction(async (parse, ct) => { ... })` — and every branch in there cost 1 more than the
+same code written as a method body, purely because the API takes a delegate instead of letting you
+override a method. The rule is now: charge the level only when there is an increment-bearing node
+between the nested function and its member.
+
+Measured before and after:
+
+| | cognitiveComplexity | internal axis |
+|---|---:|---:|
+| Reforge (`Reforge.slnx`) | — | 1,843 → **1,681** |
+| Humans (`Humans.slnx`, 44 sections) | 820 → **768** | 3,162 → **3,110** |
+
+No other rule moved on either corpus, and surface is untouched on both — this is an
+internal-axis-only change, which is what it should be.
+
+The divergence from SonarSource is deliberate and worth stating plainly: a *top-level* LINQ lambda
+containing a branch now costs one less than Sonar would charge, because it too has no
+increment-bearing node above it. The alternative — special-casing "the lambda is the whole member
+body" — is narrower but brittle, keyed on the shape of the enclosing statement rather than on
+anything structural. Nesting depth is the thing being measured, and at nesting 0 there is no depth.
+
+**The entry points at the code now, not at the signature.** A charge read
+`Create (CC 94) (AuditEfCommand.cs:17)`, where line 17 is the method signature and the branching is
+in an anonymous delegate further down with no name and no reported location. For a tool whose
+premise is that an agent can act on the output without a follow-up `Read`, sending the reader to a
+line the code is not on is the wrong answer even when the charge is right. When a nested function
+holds a strict majority of a member's score, the entry now reports that function's line and says so:
+`Create (CC 75, 75 in a nested function) (AuditEfCommand.cs:21)`. A member whose complexity is
+spread across several lambdas still reports against the member — there is no single place to point
+at. 11 of Reforge's own entries re-attribute; the charge is unchanged in every case.
+
+`ImplementationComplexity.CognitiveDetail` returns the breakdown; `Cognitive` stays as it was for
+every existing caller.
+
 ## Unreleased - Per-section size/complexity metrics beside the surface score
 
 `surface-score` reported three numbers per section — `total`, `surfaceTotal`,

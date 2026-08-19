@@ -74,10 +74,21 @@ public sealed partial class SurfaceScoreEngine
 
                 if (cogW != 0)
                 {
-                    int cc = ImplementationComplexity.Cognitive(syntax);
-                    int over = cc - CognitiveThreshold;
+                    var cog = ImplementationComplexity.CognitiveDetail(syntax);
+                    int over = cog.Score - CognitiveThreshold;
                     if (over > 0)
-                        AddEntry(report, c.Group, "cognitiveComplexity", over * cogW, m, file, line, $"{m.Name} (CC {cc})");
+                    {
+                        // Point at the code, not at the signature. When a member's body is one big
+                        // delegate the complexity has no name of its own, and reporting the method's
+                        // declaration line sends an agent to a line the branching is not on — which
+                        // for a tool whose promise is "act on this without a follow-up Read" is the
+                        // wrong answer even when the charge is right.
+                        var cogLine = cog.NestedDominates ? cog.NestedLine : line;
+                        var detail = cog.NestedDominates
+                            ? $"{m.Name} (CC {cog.Score}, {cog.NestedScore} in a nested function)"
+                            : $"{m.Name} (CC {cog.Score})";
+                        AddEntry(report, c.Group, "cognitiveComplexity", over * cogW, m, file, cogLine, detail);
+                    }
                 }
 
                 // Dispatcher / flags are surface-level smells — only public-ish methods, and
