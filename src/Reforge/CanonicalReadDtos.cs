@@ -231,7 +231,7 @@ public sealed class CanonicalReadDtoSet
     /// Exactly what <see cref="DtoInventory"/> turns into an anchor path, so a type admitted on
     /// these always has facts to inventory rather than anchoring an empty path set.
     /// </summary>
-    private static bool IsCarriedData(ISymbol m) =>
+    internal static bool IsCarriedData(ISymbol m) =>
         m is IPropertySymbol { IsStatic: false, Parameters.Length: 0, DeclaredAccessibility: Accessibility.Public, GetMethod: not null };
 
     /// <summary>
@@ -241,7 +241,7 @@ public sealed class CanonicalReadDtoSet
     /// and anything non-public. An <b>explicit interface implementation</b> is pointedly NOT here —
     /// it is <c>private</c> on the symbol but callable by anyone who casts.
     /// </summary>
-    private static bool IsInvisibleToConsumers(ISymbol m)
+    internal static bool IsInvisibleToConsumers(ISymbol m)
     {
         if (m.IsImplicitlyDeclared) return true;
         if (m is IMethodSymbol { MethodKind: MethodKind.ExplicitInterfaceImplementation }) return false;
