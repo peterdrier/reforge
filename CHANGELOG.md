@@ -2,6 +2,44 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Gate 2 measurements for the internal-axis candidate signals
+
+`docs/superpowers/specs/2026-08-19-internal-axis-signal-measurements.md`. Discharges the
+measure-before-weighting obligation the 2026-08-15 scoring-alignment spec sets for the two candidate
+signals #19 proposes, and answers both open questions #35 flags for the `publicWriteSurface`
+transform. Measured against Humans: 44 sections, 3,448 types, 157,860 prod LOC.
+
+**All three signals are recommended against in the form they were proposed**, which is the gate
+working rather than failing. One deletion is recommended and is free.
+
+- **Single-caller private helper.** 706 of 1,444 non-public methods have exactly one caller — a
+  **48.9% base rate**. As a stock this is not a smell detector, it is a tax on decomposition, and it
+  would point an agent at inlining private methods back into their callers. Confirms the spec's
+  existing position that the signal is meaningful only as a net-new delta, and supplies the evidence
+  for why: the stock is half the population.
+- **Feature envy.** 385 candidates as specified, of which **184 (47.8%) are mappers** — and for a
+  mapper, the refactor the rule implies (move it onto the type it reads) is a dependency inversion:
+  the entity would depend on its own projection. A manual read of the non-mapper top 15 finds five
+  more mappers the structural test missed. A refinement does work — non-mapper, returns a
+  scalar/bool/enum/string, synchronous — landing at **26 candidates at roughly 70% precision**, with
+  the residue a nameable class (`Render*` / `Format*` / `Display*`). Recommended for one more round,
+  not for a weight.
+- **`publicWriteSurface`.** The mean hid the shape: 19 of the 24 sections that declare a write
+  interface declare exactly one, so a flat per-interface charge is a constant for most of the corpus
+  and changes no ranking. Essentially all discriminating power is one section (Users, with 16), so
+  any weight would be fitted to n=1. Recommended as **reported, not scored** until a second corpus
+  says whether that distribution is a property of Humans or of sectioned codebases.
+- **Retiring `crossSectionWriteSurface` is free.** It scores 0 across all 44 sections, so its
+  `crossSectionSuppress` set is empty in consequence and deleting rule, set and branch is a measured
+  no-op.
+
+Two standing figures also moved and are recorded: the internal axis is still **87% size rules**
+(reproducing #19's 88% at a newer commit with a newer reforge), and the six read-surface rules #19
+proposes retiring have **grown** from 7% to **11.8% of surface**.
+
+The spec's Gate 2 section now points at the measurements, and its cleanup-loop requirement for a
+per-section size denominator is marked delivered — #44/#45 added exactly that.
+
 ## Unreleased - A DTO's published shape includes what it inherits
 
 #29 (3b). `ScoreDtoSurface` iterated `c.Type.GetMembers()`, which does not return inherited
