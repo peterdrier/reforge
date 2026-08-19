@@ -27,7 +27,7 @@ public enum MisplacedVerdict
     FoundationTarget,
 
     /// <summary>
-    /// The method reaches three or more other sections. That is not misplacement — no single section
+    /// The method reaches two or more other sections. That is not misplacement — no single section
     /// could host it — but it IS the population worth reading, because a genuine orchestrator and an
     /// accidental junction drawer look identical from here.
     /// </summary>
@@ -43,10 +43,7 @@ public enum MisplacedVerdict
     /// Concentrated on another section but the method cannot move on its own: it implements an
     /// interface member or overrides a base member, so the contract would have to move with it.
     /// </summary>
-    Blocked,
-
-    /// <summary>Two other sections, or one without a clear majority. A human call.</summary>
-    Judgment
+    Blocked
 }
 
 /// <summary>One method whose body suggests it is in the wrong section.</summary>
@@ -92,20 +89,19 @@ public sealed record MisplacedReport(
 /// stylistic — the fix is a file move across a project boundary, not a rename.
 /// </para>
 /// <para>
-/// Three populations come out of one walk, and keeping them apart is the whole design:
+/// Two populations come out of one walk, and keeping them apart is the whole design:
 /// </para>
 /// <list type="bullet">
 ///   <item><b>Pipes</b> reach exactly one other section and concentrate on it. These are the
 ///         actionable ones: there is a named destination.</item>
-///   <item><b>Orchestrators</b> reach three or more. Nothing is misplaced — the method exists
+///   <item><b>Orchestrators</b> reach two or more. Nothing is misplaced — the method exists
 ///         precisely to join sections — so no destination is proposed. They are reported because
 ///         the shape is also what an accidental junction drawer looks like.</item>
-///   <item><b>Judgment</b> is everything between: two sections, or one without a majority.</item>
 /// </list>
 /// <para>
 /// An orchestrator is <b>structurally invisible</b> to the classic envy predicate (touches
 /// concentrated on one parameter, exceeding the method's own state), because spreading touches over
-/// three sections is the opposite of concentrating them. That is why placement here is decided by
+/// several sections is the opposite of concentrating them. That is why placement here is decided by
 /// per-section touch counts rather than by per-parameter envy: one walk then sees both shapes.
 /// </para>
 /// <para>
@@ -130,8 +126,16 @@ public static class MisplacedAnalyzer
     /// </summary>
     public const int DominanceFactor = 2;
 
-    /// <summary>Distinct other sections at which a method is called an orchestrator, not a pipe.</summary>
-    public const int OrchestratorFanOut = 3;
+    /// <summary>
+    /// Distinct other sections at which a method is called an orchestrator, not a pipe.
+    /// </summary>
+    /// <remarks>
+    /// <b>Two</b>, not three. The orchestrator argument is that no single section could host the
+    /// method, and that is already true at two — neither of the two could take it without leaving the
+    /// other reached from the wrong side. Three was arbitrary, and the two-section population it left
+    /// behind was reported under a separate verdict that made exactly the same claim in weaker words.
+    /// </remarks>
+    public const int OrchestratorFanOut = 2;
 
     /// <summary>
     /// Sections that must depend on a section before it can be called a foundation at all, rather than
@@ -486,19 +490,15 @@ public static class MisplacedAnalyzer
             // No dominance test. An orchestrator is defined by its reach, and requiring it to also
             // out-touch its own section would only report the ones that happen to hold no state --
             // which is not the property being described.
-            int reached = m.Behavior.Values.Sum() + m.Data.Values.Sum();
-            return Finding(m, null, 0, 0, MisplacedVerdict.Orchestrator,
-                $"reaches {m.TouchedSections.Count} other sections in {Touches(reached)} " +
-                $"({string.Join(", ", m.TouchedSections)}); {Touches(m.OwnTouches)} on {m.Section}");
-        }
-
-        if (m.TouchedSections.Count > 1)
-        {
+            // The per-section split is part of the evidence, not decoration: it is what separates a
+            // method that spreads evenly over its sections from one that leans on a single one, and at
+            // a fan-out of two that difference is the whole reading.
             int reached = m.Behavior.Values.Sum() + m.Data.Values.Sum();
             var parts = m.TouchedSections.Select(s =>
                 $"{s}:{(m.Behavior.TryGetValue(s, out var b) ? b : 0) + (m.Data.TryGetValue(s, out var d) ? d : 0)}");
-            return Finding(m, null, 0, 0, MisplacedVerdict.Judgment,
-                $"splits {Touches(reached)} across {string.Join(", ", parts)}; {Touches(m.OwnTouches)} on {m.Section}");
+            return Finding(m, null, 0, 0, MisplacedVerdict.Orchestrator,
+                $"reaches {m.TouchedSections.Count} other sections in {Touches(reached)} " +
+                $"({string.Join(", ", parts)}); {Touches(m.OwnTouches)} on {m.Section}");
         }
 
         var target = m.TouchedSections[0];
@@ -863,6 +863,9 @@ public static class MisplacedAnalyzer
                 MemberAccessExpressionSyntax or ParenthesizedExpressionSyntax => true,
                 PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.SuppressNullableWarningExpression } => true,
                 CastExpressionSyntax cast => cast.Expression == current,
+                // `(await _depTask).Method()` — awaiting a held task changes nothing about what is
+                // reached, so the field is as much a conduit as in the synchronous form.
+                AwaitExpressionSyntax await => await.Expression == current,
                 // `_dep as IForeign` — the same conversion written as an operator, and only the left
                 // side is the value being converted; the right side is a type name.
                 BinaryExpressionSyntax { RawKind: (int)SyntaxKind.AsExpression } asExpression =>

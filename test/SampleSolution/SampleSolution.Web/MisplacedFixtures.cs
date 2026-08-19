@@ -636,3 +636,41 @@ public class OperatorUsingReporter
         return (int)negated;
     }
 }
+
+/// <summary>
+/// Two other sections, split evenly. Neither could host it without leaving the other reached from the
+/// wrong side, which is the orchestrator argument at its smallest fan-out.
+/// </summary>
+public class TwoSectionJunctionReporter
+{
+    private readonly GreetingService _greetings = new();
+    private readonly ICampServiceRead _camps;
+
+    public TwoSectionJunctionReporter(ICampServiceRead camps) => _camps = camps;
+
+    public async Task<string> SummarizeTwoSectionsAsync(Guid campId)
+    {
+        var greeting = await _greetings.GetGreetingAsync(1);
+        var recent = await _greetings.GetRecentGreetingsAsync(1);
+        var camp = await _camps.GetByIdAsync(campId);
+        var settings = await _camps.GetSettingsAsync(campId);
+        return $"{greeting}/{recent.Count}/{camp.Name}/{settings}";
+    }
+}
+
+/// <summary>
+/// Delegation through an awaited receiver. The field holds a task, so every call reaches the other
+/// section through <c>await</c> — a wrapper that leaves the receiver exactly what it was.
+/// </summary>
+public class AwaitedConduitReporter
+{
+    private readonly Task<GreetingService> _greetings = Task.FromResult(new GreetingService());
+
+    public async Task<string> SummarizeThroughAwaitAsync()
+    {
+        var greeting = await (await _greetings).GetGreetingAsync(1);
+        var recent = await (await _greetings).GetRecentGreetingsAsync(1);
+        await (await _greetings).RecordGreetingAsync(1, greeting);
+        return $"{greeting}/{recent.Count}";
+    }
+}

@@ -570,4 +570,35 @@ public class MisplacedAnalyzerTests
         Assert.Equal(4, finding.TargetBehaviorTouches);
         Assert.Equal(0, finding.OwnTouches);
     }
+
+    [Fact]
+    public async Task Analyze_MethodSpanningTwoSections_IsAnOrchestrator()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeTwoSectionsAsync");
+
+        // Two is the smallest fan-out at which the orchestrator argument holds: neither section could
+        // host this without leaving the other reached from the wrong side. This population used to be
+        // a separate verdict that made the same claim in weaker words.
+        Assert.NotNull(finding);
+        Assert.Equal(MisplacedVerdict.Orchestrator, finding.Verdict);
+        Assert.Null(finding.TargetSection);
+        Assert.Equal(2, finding.SectionsTouched.Count);
+        // The per-section split is the evidence that separates an even spread from a lean.
+        Assert.Contains(":2", finding.Evidence);
+    }
+
+    [Fact]
+    public async Task Analyze_AwaitedReceivers_AreStillConduits()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeThroughAwaitAsync");
+
+        // `(await _greetings).Method()` reaches the other section exactly as `_greetings.Method()`
+        // would. Stopping the wrapper walk at the await scored the held task as own state three times,
+        // tying 3:3 and suppressing a pipe whose body is nothing but delegation.
+        Assert.NotNull(finding);
+        Assert.Equal(0, finding.OwnTouches);
+        Assert.Equal(3, finding.TargetBehaviorTouches);
+    }
 }

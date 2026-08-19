@@ -47,7 +47,7 @@ public static class MisplacedCommand
         };
         var verdictOption = new Option<string[]>("--verdict")
         {
-            Description = "Filter by verdict: move, move-would-duplicate, orchestrator, mapper, blocked, judgment. Repeatable. Default: move and move-would-duplicate — the two that name a destination.",
+            Description = "Filter by verdict: move, move-would-duplicate, orchestrator, mapper, blocked. Repeatable. Default: move and move-would-duplicate — the two that name a destination.",
             AllowMultipleArgumentsPerToken = true
         };
 
@@ -157,7 +157,6 @@ public static class MisplacedCommand
         MisplacedVerdict.Orchestrator => "orchestrator",
         MisplacedVerdict.Mapper => "mapper",
         MisplacedVerdict.Blocked => "blocked",
-        MisplacedVerdict.Judgment => "judgment",
         _ => verdict.ToString().ToLowerInvariant()
     };
 
@@ -199,7 +198,7 @@ public static class MisplacedCommand
     /// <summary>
     /// The tail line always reports every verdict's count over the FULL result set, including the
     /// ones the filters excluded. A list of 4 "move" findings reads as "4 problems" unless the 60
-    /// judgment calls beside them are visible.
+    /// orchestrators and mappers beside them are visible.
     /// </summary>
     private static string Summary(
         IReadOnlyList<MisplacedMethod> findings, IReadOnlyList<MisplacedMethod> all, int? totalBeforeLimit)
