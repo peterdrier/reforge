@@ -99,6 +99,34 @@ other and are wrong together, so matching totals are not evidence of soundness. 
 `--allow-degraded` to analyze anyway; it prints the result, marks it degraded in every format, and
 exits 0.
 
+**Every section reports its size beside its score.** A score number alone can't tell you whether
+a section's points fell because its API shrank or because its code did — and most
+internal-complexity points are satisfiable by edits that improve nothing. So each group carries a
+`metrics` block, with a solution-level rollup beside `typesAnalyzed`:
+
+```json
+"metrics": {
+  "locProd": 767, "files": 15, "classes": 25, "interfaces": 3, "methods": 67,
+  "cognitive":  { "avg": 0.82, "p95": 2, "max": 35, "maxMethod": "ReportBuilder.BuildEverything" },
+  "cyclomatic": { "avg": 1.72, "p95": 5, "max": 17, "maxMethod": "ReportBuilder.BuildEverything" },
+  "maxClassLoc": 150, "maxClassLocName": "UserService"
+}
+```
+
+Compact and markdown print the same numbers inline — LOC plus a cognitive figure per section.
+Cognitive complexity is the metric the internal axis actually scores; cyclomatic is carried for
+continuity with the `snapshot` history series, which has always recorded it solution-wide.
+
+The corpus is the **scoring** corpus, so a metric and a score always describe the same code: no
+test projects (attributing tests to a section is a different problem), no generated code (EF
+migrations, `*.g.cs`, `*.Designer.cs` — excluded from the internal axis too), and complexity
+measured only over methods that have a body. `maxClassLoc` covers classes and structs — the same
+set `classes` counts and the `largeClass` rule scores. With `--group` set, the top-level rollup
+scopes to that section, the way `byRule` already does. `--list-groups` carries `locProd` per
+section, so sections can be ranked by size without pulling a full report.
+
+Metrics are informational: nothing here feeds the score, so totals are unaffected by their presence.
+
 `reforge section-shape` renders the same sections as a report (interfaces, DTO anchors,
 cross-section use, missing surfaces, visible debt, advisories).
 

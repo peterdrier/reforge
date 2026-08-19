@@ -2,6 +2,47 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Per-section size/complexity metrics beside the surface score
+
+`surface-score` reported three numbers per section — `total`, `surfaceTotal`,
+`internalComplexityTotal` — and nothing about the code they describe. That is not enough to read a
+delta with. A section's surface points fall when its API shrinks *or* when its code is deleted; its
+internal-complexity points fall when methods get simpler *or* when they move somewhere else. #19
+documents the sharper version of the problem: most internal-complexity points are satisfiable by
+edits that don't improve the code, so a score delta without a size delta beside it is a number a
+consumer can't act on. `snapshot` already computed all of this — but solution-wide, for the history
+CSV, which is the wrong grain for anything that ranks or compares sections.
+
+Each group now carries a `metrics` block (`locProd`, `files`, `classes`, `interfaces`, `methods`,
+cognitive + cyclomatic avg/p95/max with the method holding the max, `maxClassLoc` with its class),
+plus a solution-level rollup. Compact and markdown print LOC and a cognitive figure per section
+inline; JSON carries the whole block.
+
+**Both complexity metrics, for different reasons.** Cognitive is what the internal axis actually
+scores, so a section's `cognitiveComplexity` points and its cognitive p95 move together and can be
+read against each other. Cyclomatic is what `snapshot` has always recorded solution-wide, so a
+section's number is comparable to the history series it sits inside. They are the same walk over
+the same methods, so carrying both costs one field each.
+
+**The corpus is the scoring corpus, not the solution's file set.** Metrics are re-aggregated from
+the same `ClassifiedType` list the rules run over, which fixes the grain question the obvious
+implementation gets wrong: measuring files-on-disk per project would report growth the score has no
+way to explain. Consequences, all deliberate: no test LOC (test projects never enter the classifier,
+and attributing them to a section needs project-reference resolution — #36/#37 territory);
+generated code excluded exactly as the internal axis excludes it; complexity measured only over
+methods that have a body, because folding a 0 or a 1 in for every abstract declaration would drag a
+section's average toward whichever number the bodyless case produced.
+
+**Informational, and load-bearingly so.** The pass adds no score entries, so totals are
+byte-identical to before it existed — verified by diffing full `--format json --all` output across
+the change with the `metrics` keys stripped, not only asserted. Graph metrics (reach, core SCC,
+cycles, fan-out) stay out: they are global by nature, and a per-section subgraph variant is a
+design question, not an aggregation.
+
+`ImplementationComplexity.Cyclomatic` now holds the McCabe walk that lived privately in
+`SnapshotAnalyzer`, so the history series and the per-section number are one implementation rather
+than two that agree until one is edited.
+
 ## Unreleased - Gate 1 tranche 4: the two cross-section dependency rules
 
 Pairs for `crossSectionReadInterface` and `crossSectionFullService`, the first fixtures to use the

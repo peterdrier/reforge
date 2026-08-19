@@ -197,6 +197,54 @@ public static class ImplementationComplexity
         };
     }
 
+    // ---------------- Cyclomatic complexity ----------------
+
+    /// <summary>
+    /// McCabe cyclomatic complexity over a method body: one plus every independent branch
+    /// (conditionals, loops, catch clauses, switch arms, and the short-circuiting operators).
+    /// Flat where <see cref="Cognitive"/> is nesting-weighted, and the metric <c>snapshot</c>
+    /// has always recorded — kept here so the history series and the per-section metrics are
+    /// the same number computed once.
+    /// </summary>
+    public static int Cyclomatic(SyntaxNode methodBody)
+    {
+        int complexity = 1;
+        foreach (var node in methodBody.DescendantNodes())
+        {
+            complexity += node switch
+            {
+                IfStatementSyntax => 1,
+                ElseClauseSyntax { Statement: IfStatementSyntax } => 0,
+                CaseSwitchLabelSyntax => 1,
+                CasePatternSwitchLabelSyntax => 1,
+                SwitchExpressionArmSyntax => 1,
+                ConditionalExpressionSyntax => 1,
+                ForStatementSyntax => 1,
+                ForEachStatementSyntax => 1,
+                WhileStatementSyntax => 1,
+                DoStatementSyntax => 1,
+                CatchClauseSyntax => 1,
+                BinaryExpressionSyntax b when b.IsKind(SyntaxKind.LogicalAndExpression) => 1,
+                BinaryExpressionSyntax b when b.IsKind(SyntaxKind.LogicalOrExpression) => 1,
+                BinaryExpressionSyntax b when b.IsKind(SyntaxKind.CoalesceExpression) => 1,
+                ConditionalAccessExpressionSyntax => 1,
+                _ => 0
+            };
+        }
+        return complexity;
+    }
+
+    /// <summary>
+    /// <see cref="Cyclomatic(SyntaxNode)"/> over a declaration's body — block or expression-bodied.
+    /// Returns 0 for a bodyless declaration (abstract, interface, partial definition): those carry
+    /// no implementation, and folding a 1 in for each would drag every distribution toward 1.
+    /// </summary>
+    public static int Cyclomatic(BaseMethodDeclarationSyntax method)
+    {
+        SyntaxNode? body = (SyntaxNode?)method.Body ?? method.ExpressionBody;
+        return body is null ? 0 : Cyclomatic(body);
+    }
+
     // ---------------- Behavioral read vs mutation ----------------
 
     // Only persistence-COMMIT calls are treated as definitive write signals. Add/Update/Remove

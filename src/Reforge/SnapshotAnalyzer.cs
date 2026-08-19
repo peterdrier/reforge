@@ -1,5 +1,4 @@
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Reforge;
@@ -138,7 +137,7 @@ public static class SnapshotAnalyzer
                     };
                     if (body is null) continue;
 
-                    int cc = ComputeCyclomaticComplexity(body);
+                    int cc = ImplementationComplexity.Cyclomatic(body);
                     ccValues.Add(cc);
                     if (cc > ccMax)
                     {
@@ -195,34 +194,6 @@ public static class SnapshotAnalyzer
         );
 
         return (record, graph, sccs);
-    }
-
-    private static int ComputeCyclomaticComplexity(SyntaxNode methodBody)
-    {
-        int complexity = 1;
-        foreach (var node in methodBody.DescendantNodes())
-        {
-            complexity += node switch
-            {
-                IfStatementSyntax => 1,
-                ElseClauseSyntax { Statement: IfStatementSyntax } => 0,
-                CaseSwitchLabelSyntax => 1,
-                CasePatternSwitchLabelSyntax => 1,
-                SwitchExpressionArmSyntax => 1,
-                ConditionalExpressionSyntax => 1,
-                ForStatementSyntax => 1,
-                ForEachStatementSyntax => 1,
-                WhileStatementSyntax => 1,
-                DoStatementSyntax => 1,
-                CatchClauseSyntax => 1,
-                BinaryExpressionSyntax b when b.IsKind(SyntaxKind.LogicalAndExpression) => 1,
-                BinaryExpressionSyntax b when b.IsKind(SyntaxKind.LogicalOrExpression) => 1,
-                BinaryExpressionSyntax b when b.IsKind(SyntaxKind.CoalesceExpression) => 1,
-                ConditionalAccessExpressionSyntax => 1,
-                _ => 0
-            };
-        }
-        return complexity;
     }
 
     private static string FindContainingType(SyntaxNode node)
