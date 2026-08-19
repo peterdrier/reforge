@@ -224,3 +224,21 @@ public class DialService : IDialService
 {
     public string GetDialLabel(int id) => $"dial-{id}";
 }
+
+/// <summary>Replaces <see cref="IBeaconService"/>'s static virtual default with one that commits.</summary>
+public class BeaconService : IBeaconService
+{
+    public static int Ping() => MeterBacking.Db.SaveChanges();
+}
+
+/// <summary>Replaces <see cref="IChimeService"/>'s static virtual default with one that reads.</summary>
+public class ChimeService : IChimeService
+{
+    public static int Ping() => 1;
+}
+
+/// <summary>Implements <see cref="IFuseService"/>'s instance member; the field is the interface's own.</summary>
+public class FuseService : IFuseService
+{
+    public string GetFuseLabel(int id) => $"fuse-{id}";
+}

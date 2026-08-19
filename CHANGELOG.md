@@ -35,14 +35,20 @@ member let a published command go unseen. A static member with a **body** carrie
 itself, which makes it decidable with no implementer at all — methods, operators, and **getters** alike,
 since `static int Current => Db.SaveChanges();` is as callable as a static method and commits just the
 same. A `static abstract` member has no body there and is observed on the implementing type like anything
-else.
+else — and so is a `static virtual` one, because the split that matters is not abstract vs concrete but
+**replaceable vs not**. A `static virtual` default is a real body, so a mutating one publishes a write no
+override can withdraw; a read-only one settles nothing, since an implementer can replace it and a call
+through a constrained type parameter reaches the replacement.
 
 Which raises the case where that accounts for the **whole** published surface.
 `IClockService { static int GetTicks() => 0; }` has nothing an implementer could supply and, in a real
 solution, no implementer at all — so requiring one kept a definitively read-only interface classified as a
 write forever. The declaration pass now records a complete observation when every reachable member is
 settled there, which is also what lets an interface publishing nothing at all demote. A **getter-only property** is read at the implementation like
-a method, but only for the definitive signal — a persistence commit in the getter body. The
+a method, but only for the definitive signal — a persistence commit in the getter body. A `readonly` or
+`const` field is not automatically harmless either: it cannot be assigned through, but its **initializer**
+runs on first access, so `public static readonly int Blown = Db.SaveChanges();` commits the moment a
+consumer touches it and needs no method and no implementer to do so. The
 command-shape heuristic is meaningless for an accessor, since a getter returns data by definition, so
 `ImplementationComplexity.CommitsPersistentWrite` is now exposed separately from `IsMutation` for this.
 
@@ -173,7 +179,7 @@ Following dependency calls one level would fix both and risks the opposite failu
 a service that writes becomes a write surface, which re-inflates the population the change exists to
 shrink. Left as-is deliberately, and recorded rather than hidden.
 
-Sample solution: `surfaceTotal` 2,368 → 2,316. One fixture per branch of the rule, so a future change
+Sample solution: `surfaceTotal` 2,431 → 2,377. One fixture per branch of the rule, so a future change
 to any branch moves a test rather than a number:
 
 | fixture | expected | why |
@@ -200,13 +206,19 @@ to any branch moves a test rather than a number:
 | `IMeterService` | stays full | `public static` getter whose body commits |
 | `IDialService` | demote | `public static` getter that reads — negative control for the static getter rule |
 | `IClockService` | demote | nothing but a static query, and no implementer at all |
+| `IBeaconService` | stays full | `static virtual` default that reads, replaced by an override that commits |
+| `IChimeService` | demote | `static virtual` default replaced by an override that reads — control for that path |
+| `IFuseService` | stays full | `static readonly` field whose initializer commits on first access |
 | `IBadgeService` | demote | implementer nested two levels deep — now reachable |
 | `IManifestService` | demote | implemented by a partial method whose body is on the other half |
 | `IRosterService` | demote | declared by an abstract base, accounted for by the concrete derived class |
 | `ILedgerService` | stays full | only implementer is abstract, so no body is observed |
 
-Two branches have **no fixture**, both for the same reason: a getter reached from a referenced
-*binary*, and a concrete implementer whose member arrives from one. Every project in the sample solution is a `ProjectReference`, so
+Three branches have **no fixture**, and two of them for the same reason: a getter reached from a
+referenced *binary*, and a concrete implementer whose member arrives from one. A static method inherited
+from a referenced binary is the third and is a gap for exactly the same reason — `IsMutation` falls back to
+the command shape when handed no syntax, so a data-returning signature would otherwise answer "read" on
+the strength of its name. Every project in the sample solution is a `ProjectReference`, so
 Roslyn hands back source symbols and neither shape can be reproduced there; a concrete class written in
 source must give every member a body. Both lines are covered by reading, not by a test, and are
 recorded here rather than left to look tested. The abstract-exemption half of the second one *is*

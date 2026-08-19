@@ -264,3 +264,35 @@ public interface IDialService
 
     string GetDialLabel(int id);
 }
+
+/// <summary>
+/// Fixture for <c>static virtual</c>. The default body here reads, but an implementer can REPLACE it, and
+/// a call through a constrained type parameter dispatches to the replacement — so unlike a plain static
+/// member this one settles nothing on the declaration. <see cref="BeaconService"/>'s override commits, so
+/// it must stay <c>fullServiceInterface</c>.
+/// </summary>
+public interface IBeaconService
+{
+    static virtual int Ping() => 0;
+}
+
+/// <summary>
+/// Negative control for <see cref="IBeaconService"/>: same shape, an override that reads. Without it,
+/// "any static virtual member is unknowable" would satisfy that fixture just as well.
+/// </summary>
+public interface IChimeService
+{
+    static virtual int Ping() => 0;
+}
+
+/// <summary>
+/// Fixture for the field INITIALIZER. <c>Blown</c> cannot be assigned through — it is <c>readonly</c> — but
+/// the first consumer access runs its initializer, which commits. Declaring every readonly field harmless
+/// missed a write that needs no method and no implementer to reach. Must stay <c>fullServiceInterface</c>.
+/// </summary>
+public interface IFuseService
+{
+    public static readonly int Blown = MeterBacking.Db.SaveChanges();
+
+    string GetFuseLabel(int id);
+}

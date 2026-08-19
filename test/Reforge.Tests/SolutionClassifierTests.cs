@@ -218,6 +218,40 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_StaticVirtualOverrideThatWrites_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IBeaconService's static virtual default reads, and BeaconService replaces it with one that
+        // commits. Splitting static members into abstract and non-abstract put every static VIRTUAL one
+        // on the declaration side, where its replaceable body was read as the final answer.
+        Assert.Contains(classified, c => c.Type.Name == "IBeaconService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IBeaconService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_StaticVirtualOverrideThatReads_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // Negative control: same shape, an override that reads. "Any static virtual member is
+        // unknowable" would pass the test above too.
+        Assert.Contains(classified, c => c.Type.Name == "IChimeService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_CommittingFieldInitializer_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IFuseService.Blown is readonly, so no consumer can assign through it — but the first access
+        // runs its initializer, which commits. ISettledService is the standing control: readonly and
+        // const fields with literal initializers still demote.
+        Assert.Contains(classified, c => c.Type.Name == "IFuseService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IFuseService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
     public async Task ClassifyAsync_ServiceInterfaceImplementedPrivately_IsStillObserved()
     {
         var classified = await ClassifyAsync();

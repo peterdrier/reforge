@@ -217,11 +217,12 @@ public static class SolutionClassifier
                     // members, which no consumer can call and `ScoreInterfaceMethods` already excludes.
                     if (!IsReachableByConsumers(member)) continue;
 
-                    // A static member with a body carries it on the interface itself, so it is decided
-                    // in the declaration pass and there is no implementation to look for here. A
-                    // `static abstract` one is supplied by the implementing type like any other member,
-                    // and falls through to the observation below.
-                    if (member.IsStatic && !member.IsAbstract) continue;
+                    // A static member whose behavior no implementer can replace carries its body on the
+                    // interface itself, so it is decided in the declaration pass and there is nothing to
+                    // look for here. `static abstract` and `static virtual` are both replaceable — a
+                    // call through a constrained type parameter dispatches to the implementing type — so
+                    // both fall through to the observation below.
+                    if (member.IsStatic && !member.IsAbstract && !member.IsVirtual) continue;
 
                     switch (member)
                     {
@@ -373,20 +374,47 @@ public static class SolutionClassifier
                             or MethodKind.EventRemove or MethodKind.EventRaise
             }:
             case INamedTypeSymbol:
-            case IFieldSymbol:
                 return DeclarationVerdict.NoWrite;
+
+            // Any field reaching here is `readonly` or `const`, since a mutable one is a write above —
+            // but its INITIALIZER runs on first access, so `static readonly int Blown = Db.SaveChanges();`
+            // commits the moment a consumer touches it.
+            case IFieldSymbol f:
+                return FieldInitializerVerdict(f, ct);
         }
 
         if (!member.IsStatic || member.IsAbstract) return DeclarationVerdict.NeedsImplementation;
 
-        return member switch
+        // A `static virtual` default IS a body, so a mutating one publishes a write that no override can
+        // withdraw. A read-only one settles nothing, because an override may write and calls through a
+        // constrained type parameter reach it.
+        if (member.IsVirtual)
+            return StaticBodyVerdict(member, ct) == DeclarationVerdict.Write
+                ? DeclarationVerdict.Write
+                : DeclarationVerdict.NeedsImplementation;
+
+        return StaticBodyVerdict(member, ct);
+    }
+
+    /// <summary>
+    /// Reads the body a static interface member declares here. Methods and operators are judged by
+    /// <see cref="ImplementationComplexity.IsMutation"/>; a getter only by the definitive signal, since it
+    /// returns data by definition. A body that cannot be read at all is not an answer.
+    /// </summary>
+    private static DeclarationVerdict StaticBodyVerdict(ISymbol member, CancellationToken ct) =>
+        member switch
         {
+            // The body has to be readable. `IsMutation` falls back to the command shape when handed no
+            // syntax, so a data-returning signature inherited from a referenced binary would answer
+            // "read" on the strength of its name alone — the same gap the getter branch below refuses.
             IMethodSymbol
             {
                 MethodKind: MethodKind.Ordinary or MethodKind.UserDefinedOperator or MethodKind.Conversion
-            } m => ImplementationComplexity.IsMutation(m, MethodBody(m, ct))
-                ? DeclarationVerdict.Write
-                : DeclarationVerdict.NoWrite,
+            } m => MethodBody(m, ct) is { } body
+                ? (ImplementationComplexity.IsMutation(m, body)
+                    ? DeclarationVerdict.Write
+                    : DeclarationVerdict.NoWrite)
+                : DeclarationVerdict.NeedsImplementation,
 
             // A static getter is read exactly like an instance one: a getter returns data by definition,
             // so only a persistence commit in its body counts. A body that cannot be read is a gap.
@@ -399,6 +427,27 @@ public static class SolutionClassifier
 
             _ => DeclarationVerdict.NeedsImplementation
         };
+
+    /// <summary>
+    /// Whether a <c>readonly</c> or <c>const</c> interface field's initializer commits. The field cannot
+    /// be assigned through, but the first consumer access runs the initializer, so the write is published
+    /// all the same. A <c>const</c> can only be a literal; a declaration with no readable syntax is from a
+    /// referenced binary and is a gap, not a harmless field.
+    /// </summary>
+    private static DeclarationVerdict FieldInitializerVerdict(IFieldSymbol field, CancellationToken ct)
+    {
+        if (field.IsConst) return DeclarationVerdict.NoWrite;
+
+        foreach (var reference in field.DeclaringSyntaxReferences)
+        {
+            if (reference.GetSyntax(ct) is not VariableDeclaratorSyntax declarator) continue;
+            return declarator.Initializer?.Value is { } initializer
+                   && ImplementationComplexity.CommitsPersistentWrite(initializer)
+                ? DeclarationVerdict.Write
+                : DeclarationVerdict.NoWrite;
+        }
+
+        return DeclarationVerdict.NeedsImplementation;
     }
 
     /// <summary>
