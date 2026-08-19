@@ -489,4 +489,34 @@ public class MisplacedAnalyzerTests
         Assert.True(report.Sections["Core"].FanIn > 0);
         Assert.All(report.Sections.Values, p => Assert.True(p.FanIn >= 0 && p.FanOut >= 0));
     }
+
+    [Fact]
+    public async Task Analyze_NullSafeHeldIndexer_TreatsTheReceiverAsAConduit()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeNullSafeHeldSlots");
+
+        // `_table?[0]` puts the reached indexer on an ElementBindingExpression, so a conduit walk
+        // looking only for member bindings counted the receiver as own state three times. The 3:3 tie
+        // that produced suppressed the finding entirely — the same delegation `_table[0]` reports.
+        Assert.NotNull(finding);
+        Assert.Equal(0, finding.OwnTouches);
+        Assert.Equal(3, finding.TargetBehaviorTouches);
+    }
+
+    [Fact]
+    public async Task Analyze_MethodUsingItsContainingTypesTypeParameter_IsBlocked()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "DescribeWithTypeParameter");
+
+        // A dominant pipe, and still not movable: `T` is declared on `GenericSourceReporter<T>`, so no
+        // destination can declare this method as written. Reported as a plain move it would understate
+        // the work by a generic redesign.
+        Assert.NotNull(finding);
+        Assert.Equal(MisplacedVerdict.Blocked, finding.Verdict);
+        Assert.Equal(3, finding.TargetBehaviorTouches);
+        Assert.NotNull(finding.BlockedBy);
+        Assert.Contains("type parameter T", finding.BlockedBy);
+    }
 }

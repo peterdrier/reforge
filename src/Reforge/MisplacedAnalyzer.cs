@@ -244,7 +244,11 @@ public static class MisplacedAnalyzer
         // winning section is the concrete destination — which is what makes a collision claim sayable,
         // since C# only forbids duplicate signatures within one containing type.
         Dictionary<string, Dictionary<INamedTypeSymbol, int>> BehaviorTypes,
-        List<string> TouchedSections);
+        List<string> TouchedSections,
+        // The containing type's type parameters this method mentions, or null. They pin it in place:
+        // a parameter declared on the enclosing type is scoped to that type, so no destination can
+        // declare the method as written.
+        string? OuterTypeParameters = null);
 
     /// <summary>
     /// Fan-in and fan-out per section, counted in distinct sections rather than in touches: the
@@ -408,7 +412,53 @@ public static class MisplacedAnalyzer
             behavior,
             data,
             behaviorTypes,
-            touchedSections);
+            touchedSections,
+            AnyEnclosingTypeIsGeneric(symbol.ContainingType)
+                ? OuterTypeParameters(declaration, doc, ct)
+                : null);
+    }
+
+    /// <summary>Whether this type or any type enclosing it declares type parameters.</summary>
+    private static bool AnyEnclosingTypeIsGeneric(INamedTypeSymbol type)
+    {
+        for (INamedTypeSymbol? t = type; t is not null; t = t.ContainingType)
+            if (t.TypeParameters.Length > 0) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// The containing type's type parameters that this method mentions, or null if it mentions none.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A type parameter declared on the <b>containing</b> type is scoped to that type. A non-generic
+    /// destination cannot declare <c>Source&lt;T&gt;.M(T)</c> at all, and a generic one would have to
+    /// supply a parameter of its own — either way the method cannot move on its own, which is the same
+    /// thing an implemented interface member means and is reported the same way.
+    /// </para>
+    /// <para>
+    /// A method's OWN type parameters travel with it and are not pins — only
+    /// <see cref="TypeParameterKind.Type"/> counts.
+    /// </para>
+    /// <para>
+    /// This reads the whole declaration, so it sees the signature and every explicit mention in the
+    /// body. It does not see a parameter reached only by inference (<c>var row = _rows[0];</c> where
+    /// <c>_rows</c> is <c>List&lt;T&gt;</c>) — but such a body also works on its own type's state,
+    /// which nothing here claims to relocate either.
+    /// </para>
+    /// </remarks>
+    private static string? OuterTypeParameters(
+        MethodDeclarationSyntax declaration, SolutionDocument doc, CancellationToken ct)
+    {
+        SortedSet<string>? used = null;
+        foreach (var node in declaration.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>())
+        {
+            ct.ThrowIfCancellationRequested();
+            if (doc.Model.GetSymbolInfo(node, ct).Symbol
+                is not ITypeParameterSymbol { TypeParameterKind: TypeParameterKind.Type } parameter) continue;
+            (used ??= new SortedSet<string>(StringComparer.Ordinal)).Add(parameter.Name);
+        }
+        return used is null ? null : string.Join(", ", used);
     }
 
     private static MisplacedMethod? Judge(
@@ -469,6 +519,14 @@ public static class MisplacedAnalyzer
         if (Contract(m.Symbol, inheritedContracts) is { } blockedBy)
             return Finding(m, target, behaviorTouches, dataTouches, MisplacedVerdict.Blocked, evidence,
                 blockedBy: blockedBy);
+
+        // The other way a method is pinned to its type: it uses a type parameter the CONTAINING type
+        // declares. That parameter does not exist at any destination, so the relocation is a generic
+        // redesign rather than a move, and reporting it as a plain move overstates what it would take.
+        if (m.OuterTypeParameters is { } pinned)
+            return Finding(m, target, behaviorTouches, dataTouches, MisplacedVerdict.Blocked, evidence,
+                blockedBy: $"uses type parameter {pinned} of {m.Symbol.ContainingType.OriginalDefinition.ToDisplayString()}, " +
+                    "which is scoped to that type and does not exist at the destination");
 
         // The concrete type the method leans on hardest in the winning section. This is what makes a
         // collision claim sayable at all: a duplicate signature is only prohibited within one containing
@@ -735,11 +793,22 @@ public static class MisplacedAnalyzer
                 // under a member BINDING on the other side of the `?.`, so the member-access walk never
                 // reaches it. Null-safe delegation is common enough that missing it left the same 1:1 tie
                 // the conduit rule exists to break.
+                // `_dep?.Method()` puts the receiver under a conditional access and the reached member
+                // on the other side of the `?.`, as a member binding for `?.Method` and an ELEMENT
+                // binding for `?[0]`. Searching only for the former left `_slots?[0]` scoring its
+                // receiver as own state three times, tying 3:3 against the indexer reads and hiding
+                // the same delegation the non-conditional `_slots[0]` reports.
                 ConditionalAccessExpressionSyntax conditional when conditional.Expression == current =>
                     conditional.WhenNotNull
                         .DescendantNodesAndSelf()
-                        .OfType<MemberBindingExpressionSyntax>()
-                        .FirstOrDefault()?.Name,
+                        .FirstOrDefault(n => n is MemberBindingExpressionSyntax or ElementBindingExpressionSyntax)
+                        switch
+                        {
+                            MemberBindingExpressionSyntax member => member.Name,
+                            // The element binding IS the access, so it resolves to the indexer directly.
+                            ElementBindingExpressionSyntax element => element,
+                            _ => null
+                        },
 
                 // `_table[0]` reaches another section through an indexer, and the receiver is as much a
                 // conduit as in `_dep.Method()`. Unrecognised, three reads through a held indexer scored
@@ -882,6 +951,13 @@ public static class MisplacedAnalyzer
             {
                 ct.ThrowIfCancellationRequested();
                 if (type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) continue;
+
+                // A compilation's global namespace spans its references too, so without this every
+                // project re-walked its whole dependency closure — interface mapping included — and the
+                // pass scaled with repeated references rather than with the solution's distinct types.
+                // Each analyzed assembly still visits its own types, so no implementer goes unseen.
+                if (!SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, compilation.Assembly))
+                    continue;
 
                 foreach (var iface in type.AllInterfaces)
                     foreach (var member in iface.GetMembers())

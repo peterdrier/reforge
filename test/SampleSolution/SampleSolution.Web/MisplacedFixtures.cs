@@ -554,3 +554,32 @@ internal static class PrivateContractHolder
 
     internal static IPrivatelyImplementedContract Create() => new Hidden();
 }
+
+/// <summary>
+/// The held-indexer delegation reached through <c>?[</c>. The receiver sits under a conditional access
+/// and the indexer on an ElementBindingExpression, so a conduit walk that recognises only member
+/// bindings scores <c>_table</c> as own state and the delegation ties instead of moving.
+/// </summary>
+public class NullSafeHeldIndexerReporter
+{
+    private readonly SlotTable? _table = new();
+
+    public string SummarizeNullSafeHeldSlots() => $"{_table?[0]}|{_table?[1]}|{_table?[2]}";
+}
+
+/// <summary>
+/// A dominant pipe declared on a generic type, using that type's parameter in its signature. No
+/// destination can declare <c>T</c>, so this is a pin rather than a relocation.
+/// </summary>
+public class GenericSourceReporter<T>
+{
+    private readonly GreetingService _greetings = new();
+
+    public string DescribeWithTypeParameter(T payload)
+    {
+        var greeting = _greetings.GetGreetingAsync(1).GetAwaiter().GetResult();
+        var recent = _greetings.GetRecentGreetingsAsync(1).GetAwaiter().GetResult();
+        _greetings.RecordGreetingAsync(1, greeting).GetAwaiter().GetResult();
+        return $"{payload}:{greeting}/{recent.Count}";
+    }
+}
