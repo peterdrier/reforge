@@ -189,4 +189,18 @@ public class DtoInheritedPropertyTests
         // Charged to the publishing section, not the declaring one.
         Assert.All(inherited, e => Assert.Equal("Reporting", e.Group));
     }
+
+    [Fact]
+    public async Task APropertyTypedFromAnotherProject_IsANestedDtoProperty()
+    {
+        var report = await ScoreDefaultAsync();
+
+        // IsNestedDtoType decides "is this type ours?" and used the same source-location proxy as
+        // the base-chain walk. A solution type reached through a compiled DLL has no source
+        // location, so the property would be priced as scalar (1) instead of nested (3).
+        var payload = Assert.Single(Entries(report), e =>
+            e.Symbol == "Payload" && e.File.Contains("InheritedDtoFixtures"));
+
+        Assert.Equal("dtoNestedProperty", payload.Rule);
+    }
 }

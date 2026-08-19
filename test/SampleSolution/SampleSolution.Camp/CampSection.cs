@@ -65,3 +65,10 @@ public class CrossProjectEnvelopeBase
     public Guid Id { get; set; }
     public string Origin { get; set; } = "";
 }
+
+// Property type for the cross-project nested-DTO test: a solution type declared in a different
+// section from the DTO that references it.
+public sealed class CrossProjectNestedPayload
+{
+    public string Value { get; set; } = "";
+}

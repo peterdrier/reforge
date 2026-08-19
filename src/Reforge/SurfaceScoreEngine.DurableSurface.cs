@@ -113,7 +113,7 @@ public sealed partial class SurfaceScoreEngine
     /// Whether a type belongs to the analysed solution, decided by declaring assembly rather than
     /// by source location — see <c>_analyzedAssemblies</c> for why the two differ.
     /// </summary>
-    private bool IsInAnalyzedSolution(INamedTypeSymbol t) =>
+    private bool IsInAnalyzedSolution(ISymbol t) =>
         t.ContainingAssembly?.Name is { } name && _analyzedAssemblies.Contains(name);
 
     /// <summary>
@@ -164,22 +164,23 @@ public sealed partial class SurfaceScoreEngine
         return false;
     }
 
-    private static bool IsNestedDtoType(ITypeSymbol t)
+    private bool IsNestedDtoType(ITypeSymbol t)
     {
         if (t.SpecialType != SpecialType.None) return false;
         if (t.TypeKind != TypeKind.Class && t.TypeKind != TypeKind.Struct) return false;
         if (t.ContainingNamespace?.ToDisplayString().StartsWith("System", StringComparison.Ordinal) == true) return false;
-        if (!t.Locations.Any(l => l.IsInSource)) return false;
+        // Same boundary as the base-chain walks, for the same reason: a solution type reached
+        // through a compiled DLL reference has no source location, and treating it as foreign
+        // would price a nested DTO property (3) as a scalar one (1).
+        if (!IsInAnalyzedSolution(t)) return false;
         return true;
     }
 
     /// <summary>
-    /// A type only counts as a DTO if it actually carries data: public properties and
-    /// no business-logic methods. This prevents static command-registration classes,
-    /// service classes that happen to match a name pattern, etc. from inflating the DTO score.
-    /// </summary>
-    /// <summary>
     /// Whether a type is a pure data carrier: carried data, and nothing a consumer can invoke.
+    /// A type only counts as a DTO if it carries data and no behaviour, which keeps static
+    /// command-registration classes and services that happen to match a name pattern out of the
+    /// DTO score.
     /// </summary>
     /// <remarks>
     /// <para>

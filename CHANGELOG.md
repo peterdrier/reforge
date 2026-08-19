@@ -16,6 +16,11 @@ analysed set or it is not — and that answer does not depend on how a reference
 now reuses it, so there is one definition of the boundary rather than two that agree only on the
 layout everyone happens to use.
 
+Three sites used the proxy, not two: the DTO property walk, the data-carrier check, and
+`IsNestedDtoType`, which decides whether a property's *type* is one of ours. The third mispriced
+rather than skipped — a nested DTO property (weight 3) charged as a scalar one (weight 1) — which is
+the quieter failure of the three.
+
 No change on Humans (surface 17,379, internal 3,113): its projects reference each other the ordinary
 way, which is exactly why the gap was invisible without looking for it. The sample solution now
 carries a DTO deriving from a base in a different project, pinning the cross-project case.
