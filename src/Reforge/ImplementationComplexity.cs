@@ -29,6 +29,20 @@ public static class SurfaceScoreRuleGroups
 }
 
 /// <summary>
+/// A cognitive-complexity reading: the total, and how much of it sits inside a nested function
+/// declared at the member's own top level (with that function's line, or 0 when there is none).
+/// </summary>
+public readonly record struct CognitiveScore(int Score, int NestedScore, int NestedLine)
+{
+    /// <summary>
+    /// Whether the nested function holds most of the score, i.e. whether pointing a reader at the
+    /// member's signature would point them away from the code. A strict majority, so a member with
+    /// its complexity spread across several lambdas still reports against the member.
+    /// </summary>
+    public bool NestedDominates => NestedLine > 0 && NestedScore * 2 > Score;
+}
+
+/// <summary>
 /// Syntax-level implementation-complexity analysis. All methods are pure functions
 /// over Roslyn syntax/symbol input — no workspace state — so they're directly unit
 /// testable. The engine calls these once per method/class and turns the raw counts
@@ -79,19 +93,40 @@ public static class ImplementationComplexity
     /// (just +1, no nesting). One metric replaces separate branch-count and
     /// nesting-depth knobs and gives an established baseline that's harder to game.
     /// </summary>
-    public static int Cognitive(BaseMethodDeclarationSyntax method)
+    public static int Cognitive(BaseMethodDeclarationSyntax method) => CognitiveDetail(method).Score;
+
+    /// <summary>
+    /// <see cref="Cognitive"/> plus where the score actually sits: <see cref="CognitiveScore.NestedScore"/>
+    /// is the share accrued inside the heaviest nested function declared at the member's own top
+    /// level, and <see cref="CognitiveScore.NestedLine"/> is that function's line.
+    /// </summary>
+    /// <remarks>
+    /// Reported because a member whose entire body is a delegate — an action handler, a
+    /// <c>SetAction</c> callback, a registration lambda — carries all of its complexity in a node
+    /// with no name and no declaration line of its own, and naming the enclosing method sends a
+    /// reader to a signature the code is not in.
+    /// </remarks>
+    public static CognitiveScore CognitiveDetail(BaseMethodDeclarationSyntax method)
     {
         var w = new CognitiveWalker();
         if (method.Body is { } block)
             w.VisitChildren(block, 0);
         else if (method.ExpressionBody is { } arrow)
             w.Visit(arrow.Expression, 0);
-        return w.Score;
+        return new CognitiveScore(w.Score, w.TopNestedScore, w.TopNestedLine);
     }
 
     private sealed class CognitiveWalker
     {
         public int Score;
+        /// <summary>Points accrued inside the heaviest top-level nested function, and its line.</summary>
+        public int TopNestedScore;
+        public int TopNestedLine;
+        /// <summary>
+        /// Whether the walk is currently inside a nested function. Saved and restored around each
+        /// one, so it reflects the path to the current node rather than how many have been seen.
+        /// </summary>
+        private bool _inNestedFunction;
 
         public void VisitChildren(SyntaxNode node, int nesting)
         {
@@ -140,9 +175,39 @@ public static class ImplementationComplexity
                     return;
                 case ParenthesizedLambdaExpressionSyntax or SimpleLambdaExpressionSyntax
                      or AnonymousMethodExpressionSyntax or LocalFunctionStatementSyntax:
-                    // Nested functions increase the structural nesting of their body.
-                    VisitChildren(node, nesting + 1);
+                {
+                    // A nested function increases the structural nesting of its body only when it
+                    // sits inside enclosing structure of its own. At the member's own top level
+                    // there is no increment-bearing node between it and its member, so the level
+                    // would be charged for the shape of an API rather than for anything a reader
+                    // has to hold: `command.SetAction(async (parse, ct) => { ... })` puts an entire
+                    // member body one level down for no structural reason, and every branch inside
+                    // it then costs 1 more than the same code written as a method body.
+                    //
+                    // "At the member's own top level" needs both halves. `nesting == 0` alone is
+                    // not enough once the exemption is granted: the exempt body is walked at 0, so
+                    // a lambda declared INSIDE it would see 0 as well and take the exemption a
+                    // second time — a LINQ lambda inside a SetAction callback would then score its
+                    // branches at member depth, though it is genuinely two functions deep. Tracking
+                    // "already inside a nested function" separately from the nesting value keeps
+                    // the exemption to the outermost one, while still granting it to each of
+                    // several sibling top-level lambdas.
+                    bool wasInNested = _inNestedFunction;
+                    int inner = (nesting == 0 && !wasInNested) ? 0 : nesting + 1;
+                    int before = Score;
+                    _inNestedFunction = true;
+                    VisitChildren(node, inner);
+                    _inNestedFunction = wasInNested;
+                    // Attribution (issue #31 3a): remember the heaviest nested function at the
+                    // member's own top level, so a caller can point at the code instead of at a
+                    // signature the complexity is not in.
+                    if (nesting == 0 && !wasInNested && Score - before > TopNestedScore)
+                    {
+                        TopNestedScore = Score - before;
+                        TopNestedLine = node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                    }
                     return;
+                }
             }
             VisitChildren(node, nesting);
         }
