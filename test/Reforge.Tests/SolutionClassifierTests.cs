@@ -133,6 +133,59 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_PublicStaticCommand_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IPurgeService.ClearAll() is callable with no instance and no implementing type. A static
+        // member with a body carries it on the interface, so this is decided in the declaration pass —
+        // skipping every static member let a published command go unseen.
+        Assert.Contains(classified, c => c.Type.Name == "IPurgeService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IPurgeService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_PublicStaticQuery_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // Negative control for the test above: a public static method that returns data, so the
+        // command shape does not apply. "Any public static method is a write" would pass that test too.
+        Assert.Contains(classified, c => c.Type.Name == "ITallyService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_StaticAbstractCommand_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // No body on the interface to read, so IStampService is decided on StampService.Stamp, which
+        // commits — the same implementation path an instance method takes.
+        Assert.Contains(classified, c => c.Type.Name == "IStampService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_StaticAbstractQuery_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // Control for the static abstract path itself: this demotes only if PollService.Poll was
+        // actually resolved and read. Had that lookup failed, the member would count as unobserved and
+        // the interface would stay full — which is indistinguishable from the test above passing.
+        Assert.Contains(classified, c => c.Type.Name == "IPollService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_PrivateSetter_IsNotWriteSurface()
+    {
+        var classified = await ClassifyAsync();
+
+        // IVaultService.Value is `get => 0; private set { }`. Every consumer can read it and none can
+        // write it, so matching any non-null SetMethod read a read-only interface as write surface.
+        Assert.Contains(classified, c => c.Type.Name == "IVaultService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
     public async Task ClassifyAsync_ServiceInterfaceImplementedPrivately_IsStillObserved()
     {
         var classified = await ClassifyAsync();

@@ -151,8 +151,64 @@ public interface IDigestService
     string GetDigest(int id);
 
     private void ResetCounters() { }
+}
 
+/// <summary>
+/// Fixture for the public STATIC command. <c>IPurgeService.ClearAll()</c> is callable with no instance
+/// and no implementing type, so skipping every static member let a published command go unseen. A static
+/// member with a body carries it on the interface, so this one is decided without an implementer at all.
+/// Must stay <c>fullServiceInterface</c>.
+/// </summary>
+public interface IPurgeService
+{
+    string GetPurgeState(int id);
+
+    /// <summary>Command-shaped: returns no data and is not named for a query, so the shape decides it.</summary>
     public static void ClearAll() { }
+}
+
+/// <summary>
+/// Negative control for <see cref="IPurgeService"/>: a public static method that RETURNS data, so the
+/// command shape does not apply. Without it, "any public static method is a write" would satisfy that
+/// fixture just as well.
+/// </summary>
+public interface ITallyService
+{
+    string GetTallyState(int id);
+
+    public static int Count() => 0;
+}
+
+/// <summary>
+/// Fixture for the <c>static abstract</c> command. There is no body here to read, so unlike
+/// <see cref="IPurgeService"/> this one is observed on the implementing type — the same path an
+/// instance method takes.
+/// </summary>
+public interface IStampService
+{
+    static abstract void Stamp(int id);
+}
+
+/// <summary>
+/// Negative control for <see cref="IStampService"/>: a <c>static abstract</c> member whose implementation
+/// reads. It demotes only if the static abstract implementation is actually resolved and read — if that
+/// lookup silently failed, the member would count as unobserved and the interface would stay full.
+/// </summary>
+public interface IPollService
+{
+    static abstract int Poll(int id);
+}
+
+/// <summary>
+/// Fixture for setter accessibility. <c>Value</c> is publicly readable and its setter is <c>private</c>,
+/// so no consumer can write through it — matching any non-null <c>SetMethod</c> read this as published
+/// write capability. Every other member is read-shaped, so it must demote.
+/// </summary>
+public interface IVaultService
+{
+    int Value { get => 0; private set { } }
+
+    string GetVaultName(int id);
 }
 
 /// <summary>

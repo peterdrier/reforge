@@ -174,3 +174,35 @@ public class RackService : IRackService
 
     public int this[int slot] => _slots[slot];
 }
+
+/// <summary>Implements <see cref="IStampService"/>'s static abstract command with a body that commits.</summary>
+public class StampService : IStampService
+{
+    private static readonly AuditDbContext Db = new();
+
+    public static void Stamp(int id) => Db.SaveChanges();
+}
+
+/// <summary>Implements <see cref="IPollService"/>'s static abstract member with a body that reads.</summary>
+public class PollService : IPollService
+{
+    public static int Poll(int id) => id;
+}
+
+/// <summary>Implements <see cref="IVaultService"/>, leaving the default property alone.</summary>
+public class VaultService : IVaultService
+{
+    public string GetVaultName(int id) => $"vault-{id}";
+}
+
+/// <summary>Implements <see cref="IPurgeService"/> — nothing static to supply.</summary>
+public class PurgeService : IPurgeService
+{
+    public string GetPurgeState(int id) => $"purge-{id}";
+}
+
+/// <summary>Implements <see cref="ITallyService"/> — nothing static to supply.</summary>
+public class TallyService : ITallyService
+{
+    public string GetTallyState(int id) => $"tally-{id}";
+}

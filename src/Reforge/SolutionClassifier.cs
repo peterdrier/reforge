@@ -174,7 +174,7 @@ public static class SolutionClassifier
             {
                 ct.ThrowIfCancellationRequested();
                 if (!IsReachableByConsumers(member)) continue;
-                if (PublishesWriteByDeclaration(member))
+                if (PublishesWriteByDeclaration(member) || PublishesStaticWrite(member, ct))
                 {
                     writes.Add(key);
                     break;
@@ -194,16 +194,23 @@ public static class SolutionClassifier
                 bool complete = true;
                 foreach (var member in PublishedMembers(iface))
                 {
-                    // Only what a consumer can reach, and only what an implementer can supply. Since
-                    // C# 8 an interface may declare private and static members: a consumer cannot call
-                    // either, `ScoreInterfaceMethods` already excludes them, and a static member has no
-                    // implementation to find — so counting one would either invent a write or report a
-                    // gap for a member no implementation was ever going to fill.
-                    if (!IsReachableByConsumers(member) || member.IsStatic) continue;
+                    // Only what a consumer can reach. Since C# 8 an interface may declare private
+                    // members, which no consumer can call and `ScoreInterfaceMethods` already excludes.
+                    if (!IsReachableByConsumers(member)) continue;
+
+                    // A static member with a body carries it on the interface itself, so it is decided
+                    // in the declaration pass and there is no implementation to look for here. A
+                    // `static abstract` one is supplied by the implementing type like any other member,
+                    // and falls through to the observation below.
+                    if (member.IsStatic && !member.IsAbstract) continue;
 
                     switch (member)
                     {
-                        case IMethodSymbol { MethodKind: MethodKind.Ordinary } m:
+                        case IMethodSymbol
+                        {
+                            MethodKind: MethodKind.Ordinary or MethodKind.UserDefinedOperator
+                                        or MethodKind.Conversion
+                        } m:
                             if (!ObserveMethod(type, m, key, writes, ct)) complete = false;
                             break;
 
@@ -212,6 +219,34 @@ public static class SolutionClassifier
                         // this can add a write and never invent one.
                         case IPropertySymbol { GetMethod: not null } p:
                             if (!ObserveGetter(type, p, key, writes, ct)) complete = false;
+                            break;
+
+                        // Shapes that need no observation because something else already decided them.
+                        // An accessor is decided with the property or event it belongs to; a nested
+                        // type's members are its own surface, not this interface's; a `readonly` or
+                        // `const` field cannot be written through; and a settable property, an event or
+                        // a mutable field was already recorded as a write by the declaration pass, so
+                        // the interface cannot demote whatever this loop concludes.
+                        case IMethodSymbol
+                        {
+                            MethodKind: MethodKind.PropertyGet or MethodKind.PropertySet
+                                        or MethodKind.EventAdd or MethodKind.EventRemove
+                                        or MethodKind.EventRaise
+                        }:
+                        case INamedTypeSymbol:
+                        case IFieldSymbol:
+                        case IEventSymbol:
+                        case IPropertySymbol:
+                            break;
+
+                        // Anything else is a shape this predicate has never seen. Demotion is a claim
+                        // about the WHOLE published surface, so an unrecognized member is a gap and not
+                        // a read: a C# feature added after this was written preserves the name-derived
+                        // classification instead of quietly counting as harmless. Rounds 4 through 9 of
+                        // review on #54 were all one shape at a time -- indexers, mutable fields, ref
+                        // returns, static commands -- each defaulting to "read" until it was named.
+                        default:
+                            complete = false;
                             break;
                     }
                 }
@@ -254,9 +289,11 @@ public static class SolutionClassifier
     /// that no implementation body could withdraw it.
     /// </summary>
     /// <remarks>
-    /// Three shapes qualify:
+    /// Four shapes qualify:
     /// <list type="bullet">
-    ///   <item>A <b>settable property</b> — including <c>init</c>, and including indexers.</item>
+    ///   <item>A <b>settable property</b> — including <c>init</c>, and including indexers — whose setter
+    ///         a consumer can actually call. A default interface property may be
+    ///         <c>int Value { get => 0; private set { } }</c>, which publishes no write at all.</item>
     ///   <item>An <b>event</b>, whose add/remove mutate the subscriber list.</item>
     ///   <item>A <b>mutable field</b>. An interface can declare a static field since C# 8, and
     ///         <c>IStateService.Current = 5</c> writes straight through it. <c>readonly</c> and
@@ -271,13 +308,31 @@ public static class SolutionClassifier
     /// </remarks>
     private static bool PublishesWriteByDeclaration(ISymbol member) => member switch
     {
-        IPropertySymbol { SetMethod: not null } => true,
-        IPropertySymbol { ReturnsByRef: true } => true,
+        // A setter only publishes a write if a consumer can call IT. A default interface property may
+        // be `int Value { get => 0; private set { } }` — readable by everyone, settable by nobody
+        // outside the interface. Both halves of the property are checked here rather than in sequence,
+        // so a private setter cannot mask a writable ref return on the same member.
+        IPropertySymbol p => (p.SetMethod is { } setter && IsReachableByConsumers(setter)) || p.ReturnsByRef,
         IMethodSymbol { ReturnsByRef: true } => true,
         IEventSymbol => true,
         IFieldSymbol { IsReadOnly: false, IsConst: false } => true,
         _ => false
     };
+
+    /// <summary>
+    /// Whether a <c>public static</c> interface method mutates. A static member with a body carries it
+    /// on the interface itself, so unlike an instance method it is decidable without an implementer —
+    /// and it is callable: <c>IPurgeService.ClearAll()</c> needs no instance and no implementing type,
+    /// which is why skipping every static member could let a published command go unseen. A
+    /// <c>static abstract</c> member has no body here and is observed on the implementing type instead.
+    /// </summary>
+    private static bool PublishesStaticWrite(ISymbol member, CancellationToken ct) =>
+        member is IMethodSymbol
+        {
+            IsStatic: true, IsAbstract: false,
+            MethodKind: MethodKind.Ordinary or MethodKind.UserDefinedOperator or MethodKind.Conversion
+        } m
+        && ImplementationComplexity.IsMutation(m, MethodBody(m, ct));
 
     /// <summary>
     /// Reads one method's implementation on <paramref name="type"/>. Returns whether behavior was

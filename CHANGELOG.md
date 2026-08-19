@@ -23,13 +23,34 @@ implementation needed. `ref int Current { get; }` has no setter and its implemen
 writes through. `ref readonly` does not qualify, and neither do `readonly` and `const` fields; both
 have negative-control fixtures so the rules cannot silently widen to "any ref" and "any field".
 
-Only members a consumer can actually reach are read. Since C# 8 an interface may declare `private` and
-`static` members: no consumer can call a private one, `ScoreInterfaceMethods` already excludes them, and
-a static member has no implementation to find — so counting one would either invent a write or report a
-gap for a member nothing was ever going to fill. A **getter-only property** is read at the implementation like
+Only members a consumer can actually reach are read. Since C# 8 an interface may declare `private`
+members: no consumer can call one and `ScoreInterfaceMethods` already excludes them. Reachability is
+tested on the **accessor**, not the member, for a property: `int Value { get => 0; private set { } }` is
+readable by every consumer and settable by none, so matching any non-null `SetMethod` read a read-only
+interface as published write capability.
+
+`static` members are reachable, and are decided in two places. `IPurgeService.ClearAll()` needs no
+instance and no implementing type — it is as callable as any instance method, so skipping every static
+member let a published command go unseen. A static member with a **body** carries it on the interface
+itself, which makes it the one method shape decidable with no implementer at all; a `static abstract` one
+has no body there and is observed on the implementing type like anything else. A **getter-only property** is read at the implementation like
 a method, but only for the definitive signal — a persistence commit in the getter body. The
 command-shape heuristic is meaningless for an accessor, since a getter returns data by definition, so
 `ImplementationComplexity.CommitsPersistentWrite` is now exposed separately from `IsMutation` for this.
+
+**An unrecognized member shape is a gap, not a read.** The observation loop enumerates what it can
+prove harmless — an instance method or operator it read the body of, a getter whose body it read, an
+accessor (decided with its property or event), a nested type (its own surface, not this interface's), a
+`readonly` or `const` field, and the property/event/field shapes the declaration pass already recorded as
+writes — and anything else preserves the name-derived classification. This is a change of default, and it
+is the structural answer to the shape the review of #54 took: rounds 4 through 9 were each one member
+shape at a time — inherited members, accessors, getter bodies, partial members, indexers, writable `ref`
+returns, mutable fields, static commands — every one of them a shape that defaulted to *read* until it
+was named. Enumerating write capability means every C# feature nobody has thought of yet is a silent
+false read; enumerating read safety means it is a preserved classification instead. With today's C# the
+default branch is unreachable, since the recognized list covers every member kind an interface can
+publish that a consumer can reach, so it has no fixture and cannot have one — it exists so that the next
+member shape the language adds fails safe rather than fails quiet.
 
 Membership is read from the interface **and its base interfaces**, because `GetMembers()` returns only
 what a type declares itself — `IOrderService : ICrudService<Order>` would otherwise look empty and
@@ -140,7 +161,7 @@ Following dependency calls one level would fix both and risks the opposite failu
 a service that writes becomes a write surface, which re-inflates the population the change exists to
 shrink. Left as-is deliberately, and recorded rather than hidden.
 
-Sample solution: `surfaceTotal` 2,205 → 2,163. One fixture per branch of the rule, so a future change
+Sample solution: `surfaceTotal` 2,318 → 2,270. One fixture per branch of the rule, so a future change
 to any branch moves a test rather than a number:
 
 | fixture | expected | why |
@@ -158,7 +179,12 @@ to any branch moves a test rather than a number:
 | `IStateService` | stays full | mutable static field — writable with no setter |
 | `IReadingService` | demote | `ref readonly` return — negative control for the ref rule |
 | `ISettledService` | demote | `const` and `static readonly` fields — negative control for the field rule |
-| `IDigestService` | demote | its command-shaped members are `private` and `static`, so unreachable |
+| `IDigestService` | demote | its command-shaped member is `private`, so no consumer can reach it |
+| `IPurgeService` | stays full | `public static` command — callable with no instance and no implementer |
+| `ITallyService` | demote | `public static` method returning data — negative control for the static rule |
+| `IStampService` | stays full | `static abstract` command whose implementation commits |
+| `IPollService` | demote | `static abstract` member whose implementation reads — control for that lookup |
+| `IVaultService` | demote | `private set` on a default interface property — unreachable write |
 | `IBadgeService` | demote | implementer nested two levels deep — now reachable |
 | `IManifestService` | demote | implemented by a partial method whose body is on the other half |
 | `IRosterService` | demote | declared by an abstract base, accounted for by the concrete derived class |
