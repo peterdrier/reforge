@@ -237,6 +237,16 @@ comparison in `SurfaceScoreBaseline` to diff helper sets between two runs and ch
 that are **new in this change** and have exactly one caller. That is a delta-native rule, and the
 only one proposed so far — worth noting because nothing in the current engine is shaped that way.
 
+**And the delta form has not been through Gate 2.** What is discharged here is the signal *as #19
+proposes it*, measured as a stock, and the answer is a rejection with a stated successor. The successor
+is a different rule with a different population — helpers that appear in a diff — and nothing measured
+here establishes its precision. A 59.2% stock base rate says the stock is not chargeable; it says
+nothing about whether newly-added single-caller helpers are linter-driven extraction or intended
+decomposition, and the audit above suggests that distinction may not be decidable from structure at
+all. So the delta rule needs its own Gate 2 read — helper-set diffs across real changes, with a manual
+read of what shows up — before it earns a weight. Recording that explicitly because "confirmed as a
+delta signal" could otherwise be read as "cleared to implement", and it is not.
+
 ---
 
 ## Signal B — feature envy
@@ -544,15 +554,21 @@ precisely the case where one corpus is not enough.
 
 ### Modelled cost
 
-| weight | per section (24 charges) | per interface (47 charges) |
-|---:|---:|---:|
-| 5 | 120 (0.7%) | 235 (1.4%) |
-| 10 | 240 (1.4%) | 470 (2.7%) |
-| 15 | 360 (2.1%) | 705 (4.1%) |
-| 25 | 600 (3.5%) | 1,175 (6.8%) |
+Costed on the **audited** population — 18 sections, 37 interfaces — because that is what the rule is
+meant to price. The classified-set columns are shown alongside, since a naive implementation reading
+`fullServiceInterfaces` would produce them:
 
-Percentages are of the current 17,379-point surface. Under the per-interface reading Users alone
-takes 16 of 47 charges — **34%** of the rule's output.
+| weight | per section, audited (18) | per section, as classified (24) | per interface, audited (37) | per interface, as classified (47) |
+|---:|---:|---:|---:|---:|
+| 5 | 90 (0.5%) | 120 (0.7%) | 185 (1.1%) | 235 (1.4%) |
+| 10 | 180 (1.0%) | 240 (1.4%) | 370 (2.1%) | 470 (2.7%) |
+| 15 | 270 (1.6%) | 360 (2.1%) | 555 (3.2%) | 705 (4.1%) |
+| 25 | 450 (2.6%) | 600 (3.5%) | 925 (5.3%) | 1,175 (6.8%) |
+
+Percentages are of the current 17,379-point surface. The two per-section columns differ by a third,
+which is the size of the #54 defect expressed as a weight — worth seeing before anyone picks one.
+Under the per-interface reading Users alone takes 16 of 37 audited charges — **43%** of the rule's
+output.
 
 ### Decision
 
@@ -570,27 +586,32 @@ laying out rather than just the answer:
   actually charges. The distribution is binary-with-one-outlier again, and per section is the
   defensible reading again.
 
-On the corrected count:
+On the corrected and audited count:
 
-- **Per section fires on 24 of 44 — 55% of scored sections.** That is a real split, not a
-  near-constant: it separates the sections that publish write capability from the sections that do
-  not, which is exactly what #35's crossed-the-line rationale asks for, and it is orthogonal to
-  `fullServiceInterfaceMethod`, which prices width by method.
-- **Per interface would charge Users 16 times** — 34% of the rule's total output — for a single
-  architectural decision, and would be a near-constant for the 79% of positive sections that have
-  exactly one interface. It measures fragmentation only in the five sections where fragmentation
-  varies at all.
+- **Per section fires on 18 of 44 — 41% of scored sections** (24 of 44, 55%, on the unaudited
+  classified set). Either way it is a real split rather than a near-constant: it separates the
+  sections that publish write capability from the sections that do not, which is exactly what #35's
+  crossed-the-line rationale asks for, and it is orthogonal to `fullServiceInterfaceMethod`, which
+  prices width by method.
+- **Per interface would charge Users 16 times** — 43% of the rule's total output on the audited
+  population — for a single architectural decision, and would be a near-constant for the 83% of
+  positive sections that have exactly one interface. It measures fragmentation only in the three
+  sections where fragmentation varies at all.
 
 The `n = 1` calibration objection therefore stands, and applies to the **per-interface** reading only:
-any weight calibrated against a graded tail would in fact be calibrated against Users. Under the
+any weight calibrated against a tail of one would in fact be calibrated against Users. Under the
 per-section reading there is no outlier problem, and what remains is the milder objection that one
-corpus cannot say whether 55% prevalence is normal or high.
+corpus cannot say whether 41% prevalence is normal or high.
 
 **Recommended as reported, not scored** — a category the 2026-08-15 spec already has — pending a
-second corpus. Surfacing the per-section exported write-interface count in the `metrics` block added
-by #45 costs nothing and makes that second reading free to take. If it is later scored, the weight
-remains policy; 5 to 10 keeps it informative without making it the fourth-largest rule in the system
-on its first day.
+second corpus, **and blocked behind #54 in either form**. That last condition is not a formality: the
+prevalence this rule would report is 18 of 44 and the prevalence the classified set yields is 24 of
+44, so implementing the metric off `fullServiceInterfaces` today would report six sections as
+publishing write capability when their only `I*Service` is read-only. It would ship the #54 defect
+into a new metric and calibrate a future weight against an inflated denominator. So: implement it
+from a predicate that actually establishes write capability, or wait for the classifier repair — do
+not read it off the classified set. If it is later scored, the weight remains policy; 5 to 10 keeps
+it informative without making it a top-five rule on its first day.
 
 **The methodological finding is the more durable one.** Three passes over the same question produced
 per-section, per-interface, per-section — and the flip in the middle came from a population that was
@@ -602,8 +623,11 @@ it is listing. That is a real gap in reforge's own output, not just a mistake in
 
 ## Consequences for the 2026-08-15 spec
 
-1. **Gate 2 is discharged for both #19 candidates.** One is confirmed delta-only with evidence; the
-   other is rejected as specified and refined into a form worth one more round.
+1. **Gate 2 is discharged for both #19 candidates as proposed**, and both answers are negative. The
+   single-caller helper is rejected as a stock with evidence, and pointed at a delta form that has
+   **not** itself been gated; feature envy is rejected as specified and refined into a form worth one
+   more round. In both cases the successor needs its own Gate 2 read — a discharged gate that returns
+   "no" does not pre-clear the thing it suggests instead.
 2. **The per-section size denominator that spec asks for now exists.** It lists under the cleanup
    loop: *"Per-section density, not absolute points, must be derivable from the report… `typesAnalyzed`
    exists; a per-section size denominator does not."* It does now — #45 added a `metrics` block per

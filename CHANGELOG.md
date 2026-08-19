@@ -28,7 +28,9 @@ points (5.2% of `fullServiceInterfaceMethod`), filed as #54; the report-side amb
   the zero-caller bucket). As a stock this is not a smell detector, it is a tax on decomposition, and it
   would point an agent at inlining private methods back into their callers. Confirms the spec's
   existing position that the signal is meaningful only as a net-new delta, and supplies the evidence
-  for why: the stock is the majority of the population.
+  for why: the stock is the majority of the population. The **delta form has not itself been gated** —
+  it is a different rule over a different population (helpers appearing in a diff), and a stock base
+  rate says nothing about its precision, so it needs its own Gate 2 read before it earns a weight.
 - **Feature envy.** 361 candidates as specified, of which **171 (47.4%) are mappers** — and for a
   mapper, the refactor the rule implies (move it onto the type it reads) is a dependency inversion:
   the entity would depend on its own projection. A manual read of the non-mapper top 15 finds five
@@ -36,7 +38,12 @@ points (5.2% of `fullServiceInterfaceMethod`), filed as #54; the report-side amb
   scalar/bool/enum/string, synchronous — landing at **26 candidates at roughly 70% precision**, with
   the residue a nameable class (`Render*` / `Format*` / `Display*`). Recommended for one more round,
   not for a weight.
-- **`publicWriteSurface`.** 47 **exported** write interfaces across 24 of the 44 scored sections,
+- **`publicWriteSurface`.** 47 **exported** write interfaces across 24 of the 44 scored sections — 37
+  across 18 sections once the read-only classifications are audited out, which is the population the
+  rule is meant to price and the one the modelled costs use. Reporting it is **blocked behind #54 in
+  either form**: implemented off `fullServiceInterfaces` today it would report six sections as
+  publishing write capability when their only `I*Service` is read-only, shipping that defect into a
+  new metric and calibrating a future weight against an inflated denominator.
   carrying 292 charged methods and 4,136 existing points. The distribution is binary with one
   outlier: 19 sections at exactly one interface, then 2, 2, 3, 5, and Users at 16. **Per section, not
   per interface** — a per-interface charge would give Users 16 of 47 charges (34% of the rule's
