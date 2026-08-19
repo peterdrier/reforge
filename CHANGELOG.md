@@ -43,6 +43,25 @@ design question, not an aggregation.
 `SnapshotAnalyzer`, so the history series and the per-section number are one implementation rather
 than two that agree until one is edited.
 
+Three corrections from review, all of which the metrics pass made newly load-bearing:
+
+- **Deconstructing `foreach` was never counted.** `foreach (var (k, v) in xs)` parses as
+  `ForEachVariableStatementSyntax`, a *sibling* of `ForEachStatementSyntax` rather than a subtype,
+  so the McCabe switch — which matched only the latter — undercounted every one of them by 1. The
+  cognitive walker has always handled both, which is what makes this a slip rather than a policy.
+  Matching `CommonForEachStatementSyntax` covers the pair. This also corrects `snapshot`'s
+  cyclomatic figures on any solution that deconstructs in a loop; the history series shifts up
+  slightly at the point of this commit.
+- **Generated code is filtered per declaration, not per primary file.** A partial type is one symbol
+  spanning several files, so testing the classifier's primary file decided the whole type: a
+  handwritten class with a generated `.Designer.cs` half leaked the generated LOC and methods in
+  when the handwritten file happened to be primary, and dropped the handwritten half when it did
+  not. Each declaring syntax reference and each method is now filtered by its own tree.
+- **`--list-groups` covers sections that scored nothing.** A section whose types are all unscored
+  has metrics and no `GroupScore`, so enumerating only the scored groups dropped it — precisely the
+  section a size-ranked listing needs to show. The listing (and a new `sections` array in the JSON)
+  now spans every section; `discoveredGroups` still means what it always did.
+
 ## Unreleased - Gate 1 tranche 4: the two cross-section dependency rules
 
 Pairs for `crossSectionReadInterface` and `crossSectionFullService`, the first fixtures to use the

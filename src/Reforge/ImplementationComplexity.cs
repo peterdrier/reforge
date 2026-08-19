@@ -220,7 +220,11 @@ public static class ImplementationComplexity
                 SwitchExpressionArmSyntax => 1,
                 ConditionalExpressionSyntax => 1,
                 ForStatementSyntax => 1,
-                ForEachStatementSyntax => 1,
+                // CommonForEachStatementSyntax, not ForEachStatementSyntax: a deconstructing
+                // `foreach (var (k, v) in xs)` parses as ForEachVariableStatementSyntax, a sibling
+                // rather than a subtype, and matching only the latter silently undercounts it. The
+                // cognitive walker has always handled both.
+                CommonForEachStatementSyntax => 1,
                 WhileStatementSyntax => 1,
                 DoStatementSyntax => 1,
                 CatchClauseSyntax => 1,

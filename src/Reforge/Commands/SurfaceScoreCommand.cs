@@ -785,6 +785,33 @@ public static class SurfaceScoreCommand
 
     // ----------------------- --list-groups -----------------------
 
+    /// <summary>
+    /// Every section of the solution with its score and size, including sections that scored
+    /// nothing. A section whose types are all unscored (pure DTOs that fail the data-carrier
+    /// check, say) has metrics but no <see cref="GroupScore"/> — listing only the scored groups
+    /// would drop it, and it is exactly the section a size-ranked listing needs to show.
+    /// </summary>
+    private static List<(string Name, int Total, int Entries, SectionMetrics Metrics)> AllSections(ScoreReport report)
+    {
+        var names = new HashSet<string>(report.ConfiguredSections, StringComparer.OrdinalIgnoreCase);
+        foreach (var name in report.Groups.Keys) names.Add(name);
+
+        return names
+            .Select(name =>
+            {
+                var total = report.Groups.TryGetValue(name, out var g) ? g.Total : 0;
+                var entries = g?.Entries.Count ?? 0;
+                var metrics = report.MetricsBySection.TryGetValue(name, out var m) ? m : SectionMetrics.Empty;
+                return (Name: name, Total: total, Entries: entries, Metrics: metrics);
+            })
+            .OrderByDescending(s => s.Total)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    internal static void WriteGroupListForTest(ScoreReport report, OutputFormat format)
+        => WriteGroupList(report, format);
+
     private static void WriteGroupList(ScoreReport report, OutputFormat format)
     {
         if (format == OutputFormat.Json)
@@ -794,6 +821,12 @@ public static class SurfaceScoreCommand
                 command = "surface-score",
                 listGroups = true,
                 configuredSections = report.ConfiguredSections,
+                // Every section, scored or not, with its size — the list to rank by. `discoveredGroups`
+                // below stays what it has always been (sections that scored) so consumers reading it
+                // are unaffected.
+                sections = AllSections(report)
+                    .Select(s => new { name = s.Name, total = s.Total, entries = s.Entries, locProd = s.Metrics.LocProd })
+                    .ToArray(),
                 discoveredGroups = report.Groups
                     .OrderByDescending(kv => kv.Value.Total)
                     .ThenBy(kv => kv.Key, StringComparer.Ordinal)
@@ -810,9 +843,10 @@ public static class SurfaceScoreCommand
             return;
         }
 
-        Console.WriteLine($"Sections ({report.ConfiguredSections.Count}, one per assembly):");
-        foreach (var s in report.ConfiguredSections)
-            Console.WriteLine($"  {s}");
+        var sections = AllSections(report);
+        Console.WriteLine($"Sections ({sections.Count}, one per assembly):");
+        foreach (var s in sections)
+            Console.WriteLine($"  {s.Name,-30} total={s.Total,5} entries={s.Entries} loc={s.Metrics.LocProd}");
 
         Console.WriteLine();
         Console.WriteLine($"Discovered groups ({report.Groups.Count}):");

@@ -176,6 +176,21 @@ public class SectionMetricsTests
     }
 
     [Fact]
+    public void Cyclomatic_CountsDeconstructingForeach()
+    {
+        // `foreach (var (k, v) in xs)` parses as ForEachVariableStatementSyntax — a sibling of
+        // ForEachStatementSyntax, not a subtype. Matching only the latter undercounted every
+        // deconstructing loop by one, in the section distributions and in `snapshot` alike.
+        var deconstructing = ParseMethod(
+            "void M(System.Collections.Generic.Dictionary<int, int> xs) { foreach (var (k, v) in xs) { } }");
+        var plain = ParseMethod(
+            "void M(System.Collections.Generic.Dictionary<int, int> xs) { foreach (var pair in xs) { } }");
+
+        Assert.Equal(2, ImplementationComplexity.Cyclomatic(plain));
+        Assert.Equal(ImplementationComplexity.Cyclomatic(plain), ImplementationComplexity.Cyclomatic(deconstructing));
+    }
+
+    [Fact]
     public void Cyclomatic_StraightLineMethodIsOne()
     {
         Assert.Equal(1, ImplementationComplexity.Cyclomatic(ParseMethod("void M() { var x = 1; }")));
@@ -193,6 +208,29 @@ public class SectionMetricsTests
     {
         var tree = CSharpSyntaxTree.ParseText($"abstract class C {{ {source} }}");
         return tree.GetRoot().DescendantNodes().OfType<BaseMethodDeclarationSyntax>().First();
+    }
+
+    // ---------------- Generated-code exclusion ----------------
+
+    [Fact]
+    public async Task Analyze_FiltersGeneratedCodePerDeclarationNotPerPrimaryFile()
+    {
+        // A partial type is one symbol spanning several files. Deciding generated-ness from the
+        // classifier's primary file alone would leak a generated half in (when the handwritten
+        // file is primary) or drop the handwritten half (when the generated one is), so the
+        // filter runs per declaring syntax reference and per method.
+        var classified = await SolutionClassifier.ClassifyAsync(
+            _fixture.Solution, SurfaceScoreConfig.Default(),
+            LocationHelper.GetSolutionDirectory(_fixture.Solution), CancellationToken.None);
+
+        var (bySection, solution) = SectionMetricsAnalyzer.Analyze(classified, CancellationToken.None);
+
+        Assert.True(solution.Files > 0);
+        // The invariant the per-declaration filter must not break: sections still partition the
+        // corpus, with no file counted twice and none dropped.
+        Assert.Equal(solution.LocProd, bySection.Values.Sum(m => m.LocProd));
+        Assert.Equal(solution.Files, bySection.Values.Sum(m => m.Files));
+        Assert.Equal(solution.Methods, bySection.Values.Sum(m => m.Methods));
     }
 
     // ---------------- Output ----------------
@@ -245,6 +283,31 @@ public class SectionMetricsTests
 
         Assert.Contains("| Group | Score | LOC | Files | Classes | Interfaces |", output);
         Assert.Contains("- **Corpus**: loc=", output);
+    }
+
+    [Fact]
+    public async Task ListGroups_CoversSectionsThatScoredNothing()
+    {
+        var report = await ScoreDefaultAsync();
+        // A section with classified types but no scored entry has metrics and no GroupScore.
+        // Listing only the scored groups would drop it from a size-ranked view.
+        report.ConfiguredSections.Add("SilentSection");
+        report.MetricsBySection["SilentSection"] = new SectionMetrics(
+            LocProd: 42, Files: 1, Classes: 1, Interfaces: 0, Methods: 0,
+            Cognitive: MetricDistribution.Empty, Cyclomatic: MetricDistribution.Empty,
+            MaxClassLoc: 7, MaxClassLocName: "Quiet");
+        Assert.False(report.Groups.ContainsKey("SilentSection"));
+
+        var compact = Capture(() => SurfaceScoreCommand.WriteGroupListForTest(report, OutputFormat.Compact));
+        Assert.Contains("SilentSection", compact);
+        Assert.Contains("loc=42", compact);
+
+        var json = Capture(() => SurfaceScoreCommand.WriteGroupListForTest(report, OutputFormat.Json));
+        using var doc = JsonDocument.Parse(json);
+        var silent = doc.RootElement.GetProperty("sections").EnumerateArray()
+            .Single(e => e.GetProperty("name").GetString() == "SilentSection");
+        Assert.Equal(42, silent.GetProperty("locProd").GetInt32());
+        Assert.Equal(0, silent.GetProperty("total").GetInt32());
     }
 
     [Fact]

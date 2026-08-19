@@ -77,9 +77,12 @@ public static class SectionMetricsAnalyzer
         foreach (var c in classified)
         {
             if (ct.IsCancellationRequested) break;
-            if (IsGeneratedFile(c.File)) continue;
 
             var facts = Measure(c, locByFile, ct);
+            // Every declaration was generated — the type contributes nothing to measure. Checked
+            // on the facts rather than up front: a partial type is one symbol spanning several
+            // files, and the classifier's primary file is only one of them.
+            if (facts is null) continue;
 
             if (!bySection.TryGetValue(c.Group, out var acc))
             {
@@ -107,14 +110,29 @@ public static class SectionMetricsAnalyzer
         int ClassLoc,
         List<MethodFact> Methods);
 
-    private static TypeFacts Measure(ClassifiedType c, Dictionary<string, int> locByFile, CancellationToken ct)
+    /// <summary>
+    /// Measures one type, or returns null when every declaration of it is generated.
+    /// </summary>
+    /// <remarks>
+    /// Generated-ness is decided <b>per declaration</b>, not once from the classifier's primary
+    /// file. A partial type is a single symbol spanning several files, and a handwritten class with
+    /// a generated <c>.Designer.cs</c> half has one of each: filtering on the primary file alone
+    /// would leak the generated half's LOC and methods in whenever the handwritten file happened to
+    /// be primary, and discard the handwritten half whenever the generated one was. Methods are
+    /// filtered by their own declaring tree for the same reason.
+    /// </remarks>
+    private static TypeFacts? Measure(ClassifiedType c, Dictionary<string, int> locByFile, CancellationToken ct)
     {
         var files = new List<(string Path, int Loc)>();
         int classLoc = 0;
+        bool anyDeclaration = false;
 
         foreach (var reference in c.Type.DeclaringSyntaxReferences)
         {
             var path = reference.SyntaxTree.FilePath;
+            if (IsGeneratedFile(path)) continue;
+            anyDeclaration = true;
+
             if (!string.IsNullOrEmpty(path))
             {
                 if (!locByFile.TryGetValue(path, out var loc))
@@ -130,6 +148,8 @@ public static class SectionMetricsAnalyzer
                 classLoc += ImplementationComplexity.NonBlankLines(declaration);
         }
 
+        if (!anyDeclaration) return null;
+
         var methods = new List<MethodFact>();
         foreach (var member in c.Type.GetMembers())
         {
@@ -141,6 +161,7 @@ public static class SectionMetricsAnalyzer
 
             var syntax = MethodSyntax(m, ct);
             if (syntax is null) continue;
+            if (IsGeneratedFile(syntax.SyntaxTree.FilePath)) continue;
             if (syntax.Body is null && syntax.ExpressionBody is null) continue;
 
             methods.Add(new MethodFact(

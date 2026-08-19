@@ -122,8 +122,9 @@ test projects (attributing tests to a section is a different problem), no genera
 migrations, `*.g.cs`, `*.Designer.cs` — excluded from the internal axis too), and complexity
 measured only over methods that have a body. `maxClassLoc` covers classes and structs — the same
 set `classes` counts and the `largeClass` rule scores. With `--group` set, the top-level rollup
-scopes to that section, the way `byRule` already does. `--list-groups` carries `locProd` per
-section, so sections can be ranked by size without pulling a full report.
+scopes to that section, the way `byRule` already does. `--list-groups` carries `locProd` for every
+section — including sections that scored nothing — so sections can be ranked by size without
+pulling a full report.
 
 Metrics are informational: nothing here feeds the score, so totals are unaffected by their presence.
 
