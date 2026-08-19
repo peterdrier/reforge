@@ -125,3 +125,33 @@ public interface IRefOverloadContract
 {
     string HandleRefOverload(ref int value);
 }
+
+/// <summary>
+/// A contract supplied to a <b>private</b> derived type. The classifier drops effectively private types,
+/// so an index built from that list never saw this pin — while the compiler does not care who can see
+/// the implementer: moving the base method still breaks the build.
+/// </summary>
+public interface IPrivatelyImplementedContract
+{
+    string DescribePrivately(int value);
+}
+
+/// <summary>
+/// Same-named nested types in one namespace. A destination name assembled from namespace and simple name
+/// alone renders both identically, which is what the qualified-name fix had to keep apart.
+/// </summary>
+public static class OuterA
+{
+    public class SharedName
+    {
+        public string Describe() => "a";
+    }
+}
+
+public static class OuterB
+{
+    public class SharedName
+    {
+        public string Describe() => "b";
+    }
+}

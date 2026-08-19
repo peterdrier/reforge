@@ -367,6 +367,53 @@ public class MisplacedAnalyzerTests
         // A section can hold two types of one name in different namespaces, and nothing else in the
         // output says which was meant — no destination file or namespace is reported anywhere.
         Assert.Equal("SampleSolution.Services.GreetingService", finding.DestinationType);
+        // Assembled by hand from namespace and simple name, a nested type loses its containing type:
+        // OuterA.SharedName and OuterB.SharedName would both render as SampleSolution.Services.SharedName.
+        Assert.All(
+            report.Findings.Where(f => f.DestinationType?.EndsWith(".SharedName", StringComparison.Ordinal) == true),
+            f => Assert.Contains("Outer", f.DestinationType!, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Analyze_IndexerHeldInAField_TreatsTheReceiverAsAConduit()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeHeldSlots");
+
+        Assert.NotNull(finding);
+        // `_table[0]` reaches another section through an indexer, so the receiver is a conduit exactly as
+        // in `_dep.Method()`. Unrecognised, three reads scored 3 own against 3 target and tied — the
+        // shape the conduit rule exists to break. The earlier indexer fixture took its table as a
+        // parameter and so never exercised this path.
+        Assert.Equal(0, finding.OwnTouches);
+        Assert.Equal(3, finding.TargetBehaviorTouches);
+    }
+
+    [Fact]
+    public async Task Analyze_NullSafeIndexerReads_AreMeasured()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeNullSafeSlots");
+
+        Assert.NotNull(finding);
+        // `table?[0]` hangs the indexer off an ElementBindingExpression, a different node type from the
+        // ElementAccessExpression of `table[0]` — the same split that once hid `?.` calls.
+        Assert.Equal("Services", finding.TargetSection);
+        Assert.Equal(3, finding.TargetBehaviorTouches);
+    }
+
+    [Fact]
+    public async Task Analyze_ContractOnAPrivateDerivedType_IsStillBlocked()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "DescribePrivately");
+
+        Assert.NotNull(finding);
+        // The classifier drops effectively private types, so an index built from that list never saw a
+        // private `Derived : Base, IFoo`. The compiler does not care who can see the implementer: moving
+        // the base method breaks the build either way.
+        Assert.Equal(MisplacedVerdict.Blocked, finding.Verdict);
+        Assert.Contains("IPrivatelyImplementedContract", finding.BlockedBy!, StringComparison.Ordinal);
     }
 
     [Fact]

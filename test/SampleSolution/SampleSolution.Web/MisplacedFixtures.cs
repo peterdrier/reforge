@@ -506,3 +506,51 @@ public class RefOverloadReporterBase
 public class RefOverloadReporter : RefOverloadReporterBase, IRefOverloadContract
 {
 }
+
+/// <summary>
+/// Delegates through an indexer held in a field. The receiver is a conduit exactly as in
+/// <c>_dep.Method()</c>: unrecognised, three reads scored 3 own against 3 target and tied, which is the
+/// shape the conduit rule exists to break. The earlier indexer fixture took its table as a parameter and
+/// so never exercised this path.
+/// </summary>
+public class HeldIndexerReporter
+{
+    private readonly SlotTable _table = new();
+
+    public string SummarizeHeldSlots() => $"{_table[0]}|{_table[1]}|{_table[2]}";
+}
+
+/// <summary>
+/// The same delegation through a null-safe indexer. <c>table?[0]</c> puts the indexer on an
+/// ElementBindingExpression rather than an ElementAccessExpression — a separate node type.
+/// </summary>
+public class NullSafeIndexerReporter
+{
+    public string SummarizeNullSafeSlots(SlotTable? table) => $"{table?[0]}|{table?[1]}|{table?[2]}";
+}
+
+/// <summary>
+/// A public base pinned by a <b>private</b> derived type. Nothing outside this file can see
+/// <c>PrivateContractHolder</c>, and the pin is real regardless.
+/// </summary>
+public class PrivatelyPinnedReporterBase
+{
+    private readonly GreetingService _greetings = new();
+
+    public string DescribePrivately(int value)
+    {
+        var greeting = _greetings.GetGreetingAsync(value).GetAwaiter().GetResult();
+        var recent = _greetings.GetRecentGreetingsAsync(value).GetAwaiter().GetResult();
+        _greetings.RecordGreetingAsync(value, greeting).GetAwaiter().GetResult();
+        return $"{greeting}/{recent.Count}";
+    }
+}
+
+internal static class PrivateContractHolder
+{
+    private sealed class Hidden : PrivatelyPinnedReporterBase, IPrivatelyImplementedContract
+    {
+    }
+
+    internal static IPrivatelyImplementedContract Create() => new Hidden();
+}

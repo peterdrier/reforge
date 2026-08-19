@@ -658,6 +658,13 @@ public static class SolutionClassifier
     public static string TypeKey(ISymbol type) =>
         $"{type.ContainingAssembly?.Name}|{type.ToDisplayString()}";
 
+    /// <summary>
+    /// Every type declared under <paramref name="ns"/>, nested types included, regardless of
+    /// accessibility. Exposed because a type the classifier drops as effectively private can still
+    /// constrain a public one — a private <c>Derived : Base, IFoo</c> pins <c>Base.M</c>.
+    /// </summary>
+    public static IEnumerable<INamedTypeSymbol> EnumerateAllTypes(INamespaceSymbol ns) => EnumerateTypes(ns);
+
     private static IEnumerable<INamedTypeSymbol> EnumerateTypes(INamespaceSymbol ns)
     {
         foreach (var m in ns.GetMembers())

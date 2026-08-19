@@ -193,7 +193,7 @@ public static class MisplacedAnalyzer
         // inherited `Base.M`, and Base.AllInterfaces does not mention IFoo — so a dominant Base.M read as
         // freely movable, when relocating it leaves Derived without its IFoo.M and the solution will not
         // compile. Built once here because the question cannot be answered from the declaring type alone.
-        var inheritedContracts = BuildInheritedContractIndex(classified, ct);
+        var inheritedContracts = await BuildInheritedContractIndexAsync(solution, analyzedAssemblies, ct);
 
         // Phase 1 — measure every method's touches. No verdicts yet: the section dependency graph is
         // a property of the whole solution, and a verdict that consults it cannot be reached until
@@ -336,8 +336,12 @@ public static class MisplacedAnalyzer
             // Element access carries its indexer on the ElementAccessExpression, the same way object
             // creation carries its constructor: `table[0]` has no identifier that binds to the indexer,
             // so three reads through an indexer measured as nothing at all.
+            // ElementBindingExpression is the `[0]` in `table?[0]` — the conditional-access counterpart of
+            // ElementAccessExpression, and a separate node type, so handling only the latter missed
+            // null-safe indexer reads the same way the conduit walk once missed `?.` calls.
             if (node is not (IdentifierNameSyntax or GenericNameSyntax
-                or BaseObjectCreationExpressionSyntax or ElementAccessExpressionSyntax)) continue;
+                or BaseObjectCreationExpressionSyntax
+                or ElementAccessExpressionSyntax or ElementBindingExpressionSyntax)) continue;
             if (IsInsideNameOf(node)) continue;
 
             // A type name inside `new T(...)` would otherwise be counted a second time, once as the
@@ -737,6 +741,12 @@ public static class MisplacedAnalyzer
                         .OfType<MemberBindingExpressionSyntax>()
                         .FirstOrDefault()?.Name,
 
+                // `_table[0]` reaches another section through an indexer, and the receiver is as much a
+                // conduit as in `_dep.Method()`. Unrecognised, three reads through a held indexer scored
+                // 3 own against 3 target and tied — the exact shape the conduit rule exists to break.
+                // The element access IS the access, so it is what gets resolved rather than a name.
+                ElementAccessExpressionSyntax element when element.Expression == current => element,
+
                 _ => null
             };
 
@@ -815,13 +825,15 @@ public static class MisplacedAnalyzer
     /// namespaces, and nothing else in the output identifies which was meant — no destination file or
     /// namespace is reported anywhere. The section is still readable from the evidence line, so the
     /// qualified name costs the reader nothing it does not already say.
+    /// </para>
+    /// <para>
+    /// <see cref="ISymbol.ToDisplayString()"/> rather than namespace-plus-name assembled by hand, which
+    /// was the first attempt: hand assembly drops the containing types, so <c>OuterA.Handler</c> and
+    /// <c>OuterB.Handler</c> in one namespace both rendered as <c>Ns.Handler</c>, and it drops generic
+    /// arity too. The default display format keeps both, and is the same form
+    /// <see cref="SolutionClassifier.TypeKey"/> already keys on.
     /// </remarks>
-    private static string? QualifiedName(INamedTypeSymbol? type) =>
-        type is null
-            ? null
-            : type.ContainingNamespace is { IsGlobalNamespace: false } ns
-                ? $"{ns.ToDisplayString()}.{type.Name}"
-                : type.Name;
+    private static string? QualifiedName(INamedTypeSymbol? type) => type?.ToDisplayString();
 
     /// <summary><c>1 touch</c> / <c>4 touches</c>. The output is read by people and by models.</summary>
     private static string Touches(int n) => n == 1 ? "1 touch" : $"{n} touches";
@@ -844,39 +856,52 @@ public static class MisplacedAnalyzer
     /// rather than looked up per method.
     /// </para>
     /// <para>
-    /// Keyed by a string rather than by symbol on purpose: <c>classified</c> is collected from each
-    /// project's own compilation, and the symbol a document's model produces for the same method in a
-    /// referencing project is a different instance that <see cref="SymbolEqualityComparer"/> would miss.
+    /// Keyed by a string rather than by symbol on purpose: types are collected from each project's own
+    /// compilation, and the symbol a document's model produces for the same method in a referencing
+    /// project is a different instance that <see cref="SymbolEqualityComparer"/> would miss.
+    /// </para>
+    /// <para>
+    /// Walks <b>every</b> type in each analyzed compilation rather than the classified list, which drops
+    /// effectively private types. A private or privately-nested <c>Derived : Base, IFoo</c> constrains a
+    /// public <c>Base.M</c> exactly as a public one does — the compiler does not care who can see the
+    /// implementer — so reading the filtered list left that pin invisible.
     /// </para>
     /// </remarks>
-    private static Dictionary<string, string> BuildInheritedContractIndex(
-        IReadOnlyList<ClassifiedType> classified, CancellationToken ct)
+    private static async Task<Dictionary<string, string>> BuildInheritedContractIndexAsync(
+        Solution solution, HashSet<string> analyzedAssemblies, CancellationToken ct)
     {
         var index = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        foreach (var c in classified)
+        foreach (var project in solution.Projects)
         {
             ct.ThrowIfCancellationRequested();
-            if (c.Type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) continue;
+            if (project.AssemblyName is not { } assembly || !analyzedAssemblies.Contains(assembly)) continue;
+            if (await project.GetCompilationAsync(ct) is not { } compilation) continue;
 
-            foreach (var iface in c.Type.AllInterfaces)
-                foreach (var member in iface.GetMembers())
-                {
-                    if (member is not IMethodSymbol candidate) continue;
-                    if (c.Type.FindImplementationForInterfaceMember(candidate) is not IMethodSymbol impl) continue;
+            foreach (var type in SolutionClassifier.EnumerateAllTypes(compilation.GlobalNamespace))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) continue;
 
-                    // Declared on this very type is the case Contract already answers without an index.
-                    if (SymbolEqualityComparer.Default.Equals(impl.ContainingType, c.Type)) continue;
+                foreach (var iface in type.AllInterfaces)
+                    foreach (var member in iface.GetMembers())
+                    {
+                        if (member is not IMethodSymbol candidate) continue;
+                        if (type.FindImplementationForInterfaceMember(candidate) is not IMethodSymbol impl) continue;
 
-                    // The ORIGINAL definition. A contract supplied through a constructed base —
-                    // `Derived : Base<int>, IFoo` inheriting `Base<T>.M(T)` — resolves to the
-                    // substituted `Base<int>.M(int)`, while the method measured from syntax is
-                    // `Base<T>.M(T)`. Keyed as substituted, the two never meet and the pin stays
-                    // invisible, which is the bug this index was added to fix.
-                    index.TryAdd(
-                        MethodKey(impl.OriginalDefinition),
-                        $"implements {iface.Name}.{candidate.Name} for {c.Type.Name}");
-                }
+                        // Declared on this very type is the case Contract already answers without an index.
+                        if (SymbolEqualityComparer.Default.Equals(impl.ContainingType, type)) continue;
+
+                        // The ORIGINAL definition. A contract supplied through a constructed base —
+                        // `Derived : Base<int>, IFoo` inheriting `Base<T>.M(T)` — resolves to the
+                        // substituted `Base<int>.M(int)`, while the method measured from syntax is
+                        // `Base<T>.M(T)`. Keyed as substituted, the two never meet and the pin stays
+                        // invisible, which is the bug this index was added to fix.
+                        index.TryAdd(
+                            MethodKey(impl.OriginalDefinition),
+                            $"implements {iface.Name}.{candidate.Name} for {type.Name}");
+                    }
+            }
         }
 
         return index;
