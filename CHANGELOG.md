@@ -70,6 +70,16 @@ interface implemented through an abstract base could ever be judged**, which is 
 that the pass was close to inert on it. This one was caught by a fixture written for a different rule,
 not by review.
 
+A getter's body is looked for on the accessor, on an arrow on the member itself, and — the shape that
+is easy to miss — on an arrow on an **indexer**. An indexer is an `IPropertySymbol` like any other, but
+its declaration is an `IndexerDeclarationSyntax`, and `ExpressionBody` is declared on that type and on
+`PropertyDeclarationSyntax` separately rather than on the `BasePropertyDeclarationSyntax` they share. So
+matching only the property syntax read `public int this[int slot] => _db.SaveChanges() + slot;` as
+*bodyless* — and a bodyless getter in source is an auto-property, i.e. a complete read-only observation.
+The fallback is narrowed for the same reason: there is no such thing as an auto-indexer, so an indexer
+declared in source always carries a body, and reaching the fallback with one means the declaration could
+not be read — a gap, not a member that provably commits nothing.
+
 A method's body is also looked for across **every** declaration and across
 `PartialImplementationPart`, not just `DeclaringSyntaxReferences[0]`. Partial *properties* split the
 same way and are followed the same way. A `partial` method has a
@@ -130,7 +140,7 @@ Following dependency calls one level would fix both and risks the opposite failu
 a service that writes becomes a write surface, which re-inflates the population the change exists to
 shrink. Left as-is deliberately, and recorded rather than hidden.
 
-Sample solution: `surfaceTotal` 2,189 → 2,147. One fixture per branch of the rule, so a future change
+Sample solution: `surfaceTotal` 2,205 → 2,163. One fixture per branch of the rule, so a future change
 to any branch moves a test rather than a number:
 
 | fixture | expected | why |
@@ -142,6 +152,8 @@ to any branch moves a test rather than a number:
 | `IArchiveService` | stays full | write inherited from `IArchiveWriter<T>` |
 | `IRetentionService` | stays full | settable property, every method read-shaped |
 | `IQuotaService` | stays full | getter-only property whose getter commits |
+| `IShelfService` | stays full | getter-only **indexer** whose arrow-bodied getter commits |
+| `IRackService` | demote | arrow-bodied indexer getter that reads — negative control for the indexer rule |
 | `IGaugeService`, `ISlotService` | stays full | writable `ref` return — assignable with no setter |
 | `IStateService` | stays full | mutable static field — writable with no setter |
 | `IReadingService` | demote | `ref readonly` return — negative control for the ref rule |
@@ -159,7 +171,9 @@ source must give every member a body. Both lines are covered by reading, not by 
 recorded here rather than left to look tested. The abstract-exemption half of the second one *is*
 fixtured (`IRosterService`), which is what guards against the over-strict reading of the rule.
 
-The last five each fail against the commit before the one that added them.
+Every fixture added after the first round fails against the commit before the one that added it —
+verified by reverting the source change and re-running, not assumed. The negative controls pass either
+way, which is what makes them controls.
 
 ## Unreleased - Gate 2 measurements for the internal-axis candidate signals
 

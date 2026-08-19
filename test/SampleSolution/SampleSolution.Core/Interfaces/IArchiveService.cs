@@ -154,3 +154,24 @@ public interface IDigestService
 
     public static void ClearAll() { }
 }
+
+/// <summary>
+/// Fixture for the expression-bodied INDEXER case. An indexer is an <c>IPropertySymbol</c> like any
+/// other, but its declaration syntax is <c>IndexerDeclarationSyntax</c>, which is not a
+/// <c>PropertyDeclarationSyntax</c> — so reading only the latter's <c>ExpressionBody</c> made every
+/// arrow-bodied indexer getter look bodyless, and a bodyless getter in source reads as an
+/// auto-property. This one's getter commits, so the interface must stay <c>fullServiceInterface</c>.
+/// </summary>
+public interface IShelfService
+{
+    int this[int slot] { get; }
+}
+
+/// <summary>
+/// Negative control for <see cref="IShelfService"/>: same shape, same arrow, but the getter commits
+/// nothing. Without it, "any indexer is a gap" would pass the test above just as well.
+/// </summary>
+public interface IRackService
+{
+    int this[int slot] { get; }
+}

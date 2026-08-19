@@ -155,3 +155,22 @@ public static class VisibilityHost
         }
     }
 }
+
+/// <summary>
+/// Implements <see cref="IShelfService"/> with an arrow-bodied indexer getter that commits. The arrow
+/// is the point: a block-bodied accessor was already read correctly.
+/// </summary>
+public class ShelfService : IShelfService
+{
+    private readonly AuditDbContext _db = new();
+
+    public int this[int slot] => _db.SaveChanges() + slot;
+}
+
+/// <summary>Implements <see cref="IRackService"/> with an arrow-bodied indexer getter that reads.</summary>
+public class RackService : IRackService
+{
+    private readonly int[] _slots = new int[4];
+
+    public int this[int slot] => _slots[slot];
+}

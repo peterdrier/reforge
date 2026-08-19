@@ -110,6 +110,29 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_WritingExpressionBodiedIndexer_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // ShelfService implements IShelfService's getter-only indexer as `=> _db.SaveChanges() + slot`.
+        // An indexer's declaration is IndexerDeclarationSyntax, not PropertyDeclarationSyntax, so
+        // reading only the latter's ExpressionBody found no body — and a bodyless getter declared in
+        // source is read as an auto-property, i.e. a complete read-only observation.
+        Assert.Contains(classified, c => c.Type.Name == "IShelfService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IShelfService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ReadingExpressionBodiedIndexer_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // Negative control for the test above: same shape, same arrow, a getter that commits nothing.
+        // Without this, treating every indexer as unreadable would satisfy that test just as well.
+        Assert.Contains(classified, c => c.Type.Name == "IRackService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
     public async Task ClassifyAsync_ServiceInterfaceImplementedPrivately_IsStillObserved()
     {
         var classified = await ClassifyAsync();

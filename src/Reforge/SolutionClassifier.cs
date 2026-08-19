@@ -396,11 +396,15 @@ public static class SolutionClassifier
             return true;
         }
 
-        // No body found means one of two opposite things. A property declared in SOURCE with no body
-        // is an auto-property, which provably commits nothing — a complete observation. A property
-        // reached from a referenced binary has no syntax to read at all, so its getter could do
+        // No body found means one of two opposite things for a PROPERTY. Declared in SOURCE with no
+        // body it is an auto-property, which provably commits nothing — a complete observation.
+        // Reached from a referenced binary it has no syntax to read at all, so its getter could do
         // anything; that is a gap, and a gap must not read as read-only.
-        return impl.Locations.Any(l => l.IsInSource);
+        //
+        // An INDEXER is only ever the second of those: there is no auto-indexer, so one declared in
+        // source always carries an accessor body or an arrow. Reaching here for an indexer means the
+        // declaration could not be read, which is a gap however it is located.
+        return !impl.IsIndexer && impl.Locations.Any(l => l.IsInSource);
     }
 
     /// <summary>
@@ -420,26 +424,37 @@ public static class SolutionClassifier
             foreach (var reference in (property.GetMethod?.DeclaringSyntaxReferences
                                        ?? ImmutableArray<SyntaxReference>.Empty))
             {
-                switch (reference.GetSyntax(ct))
+                var syntax = reference.GetSyntax(ct);
+                if (syntax is AccessorDeclarationSyntax accessor)
                 {
-                    case AccessorDeclarationSyntax accessor:
-                        var body = (SyntaxNode?)accessor.Body ?? accessor.ExpressionBody?.Expression;
-                        if (body is not null) return body;
-                        break;
-                    case PropertyDeclarationSyntax { ExpressionBody.Expression: { } arrow }:
-                        return arrow;
+                    var body = (SyntaxNode?)accessor.Body ?? accessor.ExpressionBody?.Expression;
+                    if (body is not null) return body;
                 }
+                else if (ArrowBody(syntax) is { } arrow) return arrow;
             }
 
             // An expression-bodied property's getter may report the PROPERTY as its declaration only
             // indirectly, so check the property's own syntax before concluding there is no body.
             foreach (var reference in property.DeclaringSyntaxReferences)
-                if (reference.GetSyntax(ct) is PropertyDeclarationSyntax { ExpressionBody.Expression: { } arrow })
+                if (ArrowBody(reference.GetSyntax(ct)) is { } arrow)
                     return arrow;
         }
 
         return null;
     }
+
+    /// <summary>
+    /// The expression behind a <c>=&gt;</c> on the member declaration itself. Properties and indexers
+    /// both carry <c>ExpressionBody</c>, but each declares it on its own syntax type rather than on the
+    /// shared <c>BasePropertyDeclarationSyntax</c>, so matching only <c>PropertyDeclarationSyntax</c>
+    /// read every expression-bodied INDEXER as bodyless.
+    /// </summary>
+    private static ExpressionSyntax? ArrowBody(SyntaxNode? node) => node switch
+    {
+        PropertyDeclarationSyntax p => p.ExpressionBody?.Expression,
+        IndexerDeclarationSyntax i => i.ExpressionBody?.Expression,
+        _ => null
+    };
 
     /// <summary>
     /// Every member an interface publishes to a consumer, its own and its base interfaces'.
