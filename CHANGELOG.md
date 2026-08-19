@@ -12,8 +12,8 @@ transform. Measured against Humans: 44 sections, 3,448 types, 157,860 prod LOC.
 **All three signals are recommended against in the form they were proposed**, which is the gate
 working rather than failing. One deletion is recommended, with its real cost stated below.
 
-- **Single-caller private helper.** 760 of 1,319 private methods have exactly one caller — a
-  **57.6% base rate**. As a stock this is not a smell detector, it is a tax on decomposition, and it
+- **Single-caller private helper.** 762 of 1,319 private methods have exactly one caller — a
+  **57.8% base rate**. As a stock this is not a smell detector, it is a tax on decomposition, and it
   would point an agent at inlining private methods back into their callers. Confirms the spec's
   existing position that the signal is meaningful only as a net-new delta, and supplies the evidence
   for why: the stock is half the population.
@@ -24,16 +24,15 @@ working rather than failing. One deletion is recommended, with its real cost sta
   scalar/bool/enum/string, synchronous — landing at **26 candidates at roughly 70% precision**, with
   the residue a nameable class (`Render*` / `Format*` / `Display*`). Recommended for one more round,
   not for a weight.
-- **`publicWriteSurface`.** The mean hid the shape: 19 of the 24 sections that declare a write
-  interface declare exactly one, so the distribution is effectively binary plus a single outlier
-  (Users, with 16). That forces a choice #35 leaves implicit — **per section** ("this section
-  publishes write capability") prices something `fullServiceInterfaceMethod` does not, while **per
-  interface** measures the same dimension more coarsely *and* contradicts the crossed-the-line
-  rationale by charging one section sixteen times for one decision. The per-section reading is the
-  defensible one and is not what a naive implementation produces. Either way the weight cannot be
-  calibrated here: past the binary split all discriminating power is n=1. Recommended as
-  **reported, not scored** until a second corpus says whether that distribution is a property of
-  Humans or of sectioned codebases.
+- **`publicWriteSurface`.** 93 write interfaces across 37 of 45 sections, in a graded distribution
+  (18 sections at one, 9 at two, 5 at three, then 4, 6, 7, 9, 16). **Per interface**, not per
+  section: a binary per-section charge fires on 82% of the solution and so is close to a constant,
+  while the per-interface count measures *fragmentation* of the write surface — how many separate
+  write APIs a section publishes — which is distinct from the width `fullServiceInterfaceMethod`
+  already prices by method. This reverses an earlier draft, which counted declaring *files* rather
+  than interface symbols, was wrong by roughly 2×, and on that bad count made the distribution look
+  binary-plus-one-outlier. Weight stays policy but is now calibratable; still recommended as
+  reported-before-scored pending one look at a second corpus.
 - **Retiring `crossSectionWriteSurface`.** It scores 0 across all 44 sections of Humans, so the
   deletion is a no-op *there* — but not on the sample solution, which scores it 30 across two
   purpose-built fixtures, and whose suppression set is correspondingly non-empty. The retirement

@@ -40,7 +40,8 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
   resolved symbol is that method's `OriginalDefinition` is attributed to the member enclosing it —
   the nearest `MethodDeclaration` / `ConstructorDeclaration` / `PropertyDeclaration` /
   `AccessorDeclaration` / `LocalFunctionStatement` / `FieldDeclaration` ancestor. The method's caller
-  count is the number of **distinct** such members. Two details are load-bearing: resolving *name
+  count is the number of **distinct** such members, excluding the method itself (recursion is not a
+  caller) and excluding names inside a `nameof(...)` argument (a mention is not a call). Two details are load-bearing: resolving *name
   nodes* rather than invocations is what makes a method group (a delegate assignment, an event
   subscription) count at all, and grouping by enclosing member is what makes "called twice from one
   method" one caller rather than two. Counting per assembly is exact for `private`, which nothing
@@ -64,9 +65,10 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
     methods were async and the synchronous filter had already removed them. The predicate was wrong
     even though the published number was not.)
   - *synchronous* — return type is not `Task` / `ValueTask`.
-- **Write surface.** Distinct declaring files carrying a `fullServiceInterfaceMethod` entry in
-  `surface-score --format json --all`, grouped by section. No harness needed for this one; it is
-  readable off the report.
+- **Write surface.** Each section's `fullServiceInterfaces` array from
+  `section-shape --format json`, which lists them by **symbol**. No harness needed; it is readable
+  off the report. Counting distinct declaring *files* instead — the earlier proxy — undercounts
+  wherever two interfaces share a file, and is wrong by roughly a factor of two on this corpus.
 
 ## Context reproduced
 
@@ -103,13 +105,13 @@ extract-to-satisfy-the-linter artifact. Needed as a counterweight if any size ru
 | callers | methods | share | median LOC |
 |---:|---:|---:|---:|
 | 0 | 38 | 2.9% | 6 |
-| **1** | **760** | **57.6%** | 15 |
-| 2 | 330 | 25.0% | 11 |
+| **1** | **762** | **57.8%** | 15 |
+| 2 | 328 | 24.9% | 11 |
 | 3 | 79 | 6.0% | 10 |
 | 4 | 34 | 2.6% | 8 |
 | 5+ | 78 | 5.9% | 8 |
 
-359 of the 760 single-caller helpers are under 15 LOC.
+360 of the 762 single-caller helpers are under 15 LOC.
 
 **Three corrections from review, all of which this table already reflects.** The first pass measured
 the wrong population, undercounted references, and then counted the wrong thing entirely:
@@ -126,15 +128,21 @@ the wrong population, undercounted references, and then counted the wrong thing 
 - It counted **references**, not **callers**. A helper invoked twice from one method has one caller
   and landed in the two-reference bucket — which understates exactly the population #19's rule
   targets. References are now grouped by the member enclosing them.
+- It counted two kinds of reference that are not calls: `nameof(Helper)`, which mentions a method
+  without calling it, and a **recursive** self-reference, which makes a helper its own caller. The
+  first can put a never-called helper in the one-caller bucket; the second pushes a helper called
+  from exactly one other member out of it. Both are excluded. (Worth 2 methods on this corpus —
+  57.6% → 57.8% — but they distort in opposite directions, so the small net says nothing about
+  either.)
 
 The population and counting fixes moved the figure barely (48.9% → 48.5%). Grouping by caller moved
-it a lot: **57.6%**. Worth separating those, because they say different things. The first two were
+it a lot: **57.8%**. Worth separating those, because they say different things. The first two were
 flaws that happened not to matter in aggregate; the third was measuring a different quantity than the
 one under discussion, and correcting it made the finding *stronger*.
 
 ### Reading
 
-**The base rate is 57.6%.** Well over half of all private methods in this codebase have exactly one
+**The base rate is 57.8%.** Well over half of all private methods in this codebase have exactly one
 caller — in a corpus nobody has accused of extract-method fragmentation, and much of which predates
 any LLM involvement.
 
@@ -305,89 +313,58 @@ capability at all. It flags two things to decide. Both are measurable, so both a
 
 ### Population
 
-| | count |
-|---|---:|
-| write-capable service interfaces (exported) | **47** |
-| sections declaring at least one | **24 of 44** |
-| methods on them | 517 |
-| already charged by `fullServiceInterfaceMethod` (8/method) | **4,136 points** |
+Counted from `section-shape --format json`, which lists each section's full-service interfaces by
+**symbol**. An earlier draft of this document counted distinct *files* carrying a
+`fullServiceInterfaceMethod` entry, which collapses two interfaces declared in one file into one —
+a layout this repo's own sample solution uses (`ICampService` and `ICampRequestService` share
+`CampFixtures.cs`). That proxy was wrong by roughly a factor of two, and correcting it reverses the
+recommendation below.
 
-Mean 11 methods per write interface. But the mean hides the shape, and the shape is the finding:
+| | file proxy (wrong) | interface symbols (correct) |
+|---|---:|---:|
+| write-capable service interfaces | 47 | **93** |
+| sections declaring at least one | 24 of 44 | **37 of 45** |
+
+Methods on them: 517, already charged **4,136 points** by `fullServiceInterfaceMethod` at 8/method.
+
+The distribution is the part that matters, and it is not the shape the earlier draft described:
 
 | write interfaces in the section | sections |
 |---:|---:|
-| 1 | **19** |
-| 2 | 2 |
-| 3 | 1 |
-| 5 | 1 |
-| **16** | **1** (Users) |
+| 1 | 18 |
+| 2 | 9 |
+| 3 | 5 |
+| 4 | 1 |
+| 6 | 1 |
+| 7 | 1 |
+| 9 | 1 |
+| 16 | 1 (Users) |
 
-**19 of the 24 sections that have a write interface have exactly one.** So the distribution is
-effectively binary plus a single outlier: 20 sections at zero, 19 at one, four in between, and Users
-at sixteen.
-
-That shape forces a choice #35 does not make explicitly, and the two readings do not price the same
-thing:
-
-- **Per section (binary)** — "this section publishes write capability". Fires on 24 of 44, adds the
-  same amount to each, and separates 24 from 20. This is the reading that matches #35's rationale
-  that a section "has crossed the line once", and it is genuinely orthogonal to
-  `fullServiceInterfaceMethod`, which prices width.
-- **Per interface** — "this section publishes *N* write APIs". On this corpus that is the binary
-  signal for 43 of 44 sections and a 16× charge for Users. It also contradicts the crossed-the-line
-  rationale, since it charges Users sixteen times for one decision — and it measures the same
-  dimension `fullServiceInterfaceMethod` already measures more finely, which is exactly the
-  "weight change wearing a new name" #35 worries about.
-
-**The per-section reading is the defensible one**, and it is not what a naive implementation of
-"charge for exporting write capability" would produce. Worth settling before the rule is written,
-not after.
-
-The outlier matters to **one** of those readings, not both, and an earlier draft of this document
-conflated them. Under the per-interface reading, past the binary split all remaining discriminating
-power is a single observation — Users declares sixteen write interfaces, three times the next section
-— so a weight fitted to that distribution is fitted to **n = 1**. Under the per-section reading Users
-contributes exactly one charge like the other 23 positive sections, and there is no n = 1 problem at
-all.
-
-What the per-section reading is left with is a different question, and a milder one: is 24-of-44
-prevalence a property of Humans or of sectioned codebases? The weight itself is policy — every weight
-in the config is — and the measurement's contribution is the prevalence and the cost table below,
-not a number.
+**This is a graded distribution, not a binary split with one outlier.** Half the positive sections
+have more than one write interface, and the tail runs 3, 4, 6, 7, 9, 16 rather than jumping from 1 to
+16. Users is the top of a range, not a lone anomaly.
 
 ### Question 1 — does it double-charge `fullServiceInterfaceMethod`?
 
-**No — under the per-section reading.** The two then price different decisions:
+**Not necessarily, and the answer differs by reading.**
 
-- `fullServiceInterfaceMethod` scales with **width** — how much write API a section published.
-- `publicWriteSurface` prices the **decision to publish a write API at all**, which is a separate
-  architectural fact: a section with one write method and a section with thirty have both crossed the
-  same line once.
+- `fullServiceInterfaceMethod` scales with **width** — how much write API a section published, by
+  method. 517 methods, 4,136 points.
+- A **per-interface** charge measures **fragmentation** — how many separate write APIs a section
+  publishes. 93 interfaces. A section with one 30-method interface and a section with fifteen
+  2-method interfaces have the same width and very different shapes, and only this rule can tell
+  them apart.
+- A **per-section** charge measures the binary decision to publish write capability at all.
 
-**Yes — under the per-interface reading**, which is why the distribution above matters for more than
-calibration. Charging per interface charges Users sixteen times for one decision, which is not
-"crossed the line once" in any sense; and counting interfaces is the same dimension
-`fullServiceInterfaceMethod` already counts by method, only coarser. That is a weight change on the
-existing rule wearing a new name, exactly as #35 suspects.
-
-Modelled cost of each reading:
-
-| weight | per section (24 charges) | per interface (47 charges) | per-interface share landing on Users |
-|---:|---:|---:|---:|
-| 5 | 120 | 235 | 34% |
-| 10 | 240 | 470 | 34% |
-| 15 | 360 | 705 | 34% |
-| 25 | 600 | 1,175 | 34% |
-
-Under the per-interface reading a third of the rule's entire output lands on one section at every
-weight. A weight of 25 — the current `crossSectionRepository` level — would additionally make this
-the 6th largest rule in the system on its first day, off 47 declarations.
+Fragmentation and width are correlated but distinct, so a per-interface charge is not simply a
+weight change on the existing rule — which is the concern #35 raises, and it is answerable on the
+data rather than by argument.
 
 ### Question 2 — what happens to `crossSectionSuppress`?
 
 `ScoreAsync` maintains a suppression set purely so `crossSectionWriteSurface` can pre-empt
 `writeCapableInterfaceUsedReadOnly` for the same caller/dependency pairs. Since the old rule fires
-**0 times on 44 sections of Humans**, that set is empty there, and `writeCapableInterfaceUsedReadOnly`
+**0 times on 45 sections of Humans**, that set is empty there, and `writeCapableInterfaceUsedReadOnly`
 scores 60 points across 5 files in 3 sections regardless.
 
 **On Humans, retiring the rule and its suppression set is a measured no-op.** It is worth being
@@ -410,45 +387,44 @@ fixture work attached, not a free deletion, and that whoever does it should meas
 solution as well as Humans — a rule that fires nowhere in the field but twice in the fixtures is
 precisely the case where one corpus is not enough.
 
+### Modelled cost
+
+| weight | per section (37 charges) | per interface (93 charges) |
+|---:|---:|---:|
+| 5 | 185 (1.1%) | 465 (2.7%) |
+| 10 | 370 (2.1%) | 930 (5.4%) |
+| 15 | 555 (3.2%) | 1,395 (8.0%) |
+| 25 | 925 (5.3%) | 2,325 (13.4%) |
+
+Percentages are of the current 17,379-point surface. Under the per-interface reading Users takes
+16 of 93 charges — **17%** of the rule's output, not the third the file-proxy figures implied.
+
 ### Decision
 
-Split, because the two halves of #35 measure very differently.
+**Per interface, not per section — which reverses this document's earlier recommendation.**
 
-**Retire `crossSectionWriteSurface`: yes — but it is not free, and an earlier draft of this document
-said it was.** It scores 0 on Humans's 44 sections, so the deletion is a measured no-op *there*. The
-sample solution scores it 30 across two purpose-built fixtures, and the suppression set is not empty
-there either. The retirement carries fixture work and a `NotYetCovered` entry with it. Small, still
-worth doing, not a free deletion.
+The reversal is entirely due to the count. On the file proxy the distribution looked binary (19 of 24
+sections at exactly one), which made a per-section charge look like the discriminating reading and a
+per-interface charge look like an outlier detector for Users. On the real counts:
 
-**Add a scored `publicWriteSurface`: not yet, and settle the shape first.** #35's double-charging
-question has an answer, but it depends on the reading: a **per-section** charge prices a decision
-`fullServiceInterfaceMethod` does not price at all, and the codebase already prices
-`newRepositoryInterface` at 15 beside `repositoryInterfaceMethod` at 10, so the shape has precedent.
-A **per-interface** charge measures the dimension `fullServiceInterfaceMethod` already measures, only
-coarser — that one *is* a weight change wearing a new name, and it contradicts the crossed-the-line
-rationale by charging one section sixteen times for one decision.
+- **Per section fires on 37 of 45 — 82% of the solution.** A charge that lands on four sections in
+  five is close to a constant: it shifts nearly every score by the same amount and changes almost no
+  ranking, which is the one thing a per-section rule exists to do.
+- **Per interface has a real distribution** — 1 through 16, with half the positive sections above 1 —
+  so it discriminates, and it measures fragmentation, which nothing else in the config measures.
 
-What is left open differs by reading, and it is worth being exact since the recommendation turns on
-it. **Per interface**, the weight cannot be calibrated here at all: past the binary split the
-distribution is one outlier, so any number is fitted to Users. **Per section**, there is no such
-obstacle — the weight is policy, like every weight in the config, and the measurement supplies the
-prevalence (24 of 44) and the cost table rather than a number.
+The `n = 1` objection the earlier draft raised does not survive the corrected count either: 16 is the
+top of a graded tail, not a lone spike.
 
-So the case for waiting is weaker under the reading I recommend, and it should be stated as what it
-is: **one corpus cannot say whether 55% prevalence is normal**, and a rule that fires on the majority
-of sections is worth sanity-checking against a second codebase before it ships. That is a reason to
-confirm, not the harder n = 1 objection that applies to the per-interface form.
+**The weight remains policy**, as every weight in the config is, but it is now calibratable against a
+real distribution rather than fitted to one section. A weight of 25 would make this the fourth
+largest rule in the system on its first day; 5 to 10 keeps it informative without dominating.
 
-That is precisely the failure Gate 2 exists to prevent, so the gate should hold.
-
-**Recommended instead: report it, don't score it.** The 2026-08-15 spec already has a "Reported, not
-scored" category for exactly this state — a signal believed real, not yet calibratable. Surfacing
-the exported-write-interface count per section in the `metrics` block added by #45 costs nothing,
-changes no total, and makes the distribution visible on every corpus reforge is ever run against.
-Pick the weight when a second corpus shows whether 19-of-24-have-exactly-one is a property of
-Humans or a property of sectioned codebases.
-
----
+**Still recommended as reported-before-scored**, but for a narrower reason than before: not because
+the signal cannot be calibrated, but because a rule that fires on 82% of sections in its *binary*
+form and on 93 declarations in its *per-interface* form deserves one look at a second corpus before
+it ships. Surfacing the per-section interface count in the `metrics` block added by #45 costs nothing
+and makes that second reading free to take.
 
 ## Consequences for the 2026-08-15 spec
 
