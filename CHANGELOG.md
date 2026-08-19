@@ -86,7 +86,16 @@ points (5.2% of `fullServiceInterfaceMethod`), filed as #54; the report-side amb
 - **Retiring `crossSectionWriteSurface`.** It scores 0 across all 44 scored sections of Humans, so the
   deletion is a no-op *there* — but not on the sample solution, which scores it 30 across two
   purpose-built fixtures, and whose suppression set is correspondingly non-empty. The retirement
-  carries fixture work and a `NotYetCovered` entry with it. Worth doing; not free. Recorded that way
+  carries fixture work and a `NotYetCovered` entry with it. Worth doing; not free.
+
+  The scored zero also hid a second population, which the first version of the document claimed to
+  answer without counting: `crossSectionWriteSurfaceUnverified` advisories, emitted where a dependency
+  escapes analysis. There are **2 on Humans** (`AccountController` and `HomeController`, both against
+  `IUserService`), and **both audit to write users** — `RecordLoginAsync`, `DeclareNotAttendingAsync`,
+  `UndoNotAttendingAsync`. Since the rule fires on *read-only* use of a write-capable interface, the
+  zero is 0-because-checked rather than 0-because-unevaluated, which strengthens the retirement case.
+  Both escaped analysis for the same narrow reason: the interface arrives as a primary-constructor
+  parameter forwarded to a base-class constructor, and the cross-section walk does not follow that. Recorded that way
   because an earlier draft of the document generalised "0/44" into "free", which is the exact
   mistake the measure-before-weighting gate exists to catch.
 

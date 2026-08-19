@@ -644,6 +644,41 @@ weight change wearing a new name.
 **0 times on all 44 scored sections of Humans**, that set is empty there, and `writeCapableInterfaceUsedReadOnly`
 scores 60 points across 5 files in 3 sections regardless.
 
+There is a second population the scored count hides, and this document initially failed to look at it.
+`AnalyzeCrossSectionUsesAsync` puts dependencies it cannot resolve into `WriteSurfaceUnverified`, and
+`SurfaceScoreEngine.SectionArchitecture` emits a `crossSectionWriteSurfaceUnverified` diagnostic for
+each — scoring nothing. `GateOneFixtureTests` says explicitly that these real-corpus advisories are
+what decide whether the rule needs a fixture or a repair, so claiming to answer that question without
+counting them was claiming more than had been measured.
+
+**Counted: 2 advisories on Humans**, both against the same interface:
+
+```
+crossSectionWriteSurfaceUnverified: AccountController <- IUserService:
+  read-only use unconfirmed (dependency escapes analysis); advisory only.
+crossSectionWriteSurfaceUnverified: HomeController <- IUserService:
+  read-only use unconfirmed (dependency escapes analysis); advisory only.
+```
+
+**Both audited, and both are write users** — so the rule's zero is correct on the merits, not merely
+undetermined:
+
+- `HomeController` calls `DeclareNotAttendingAsync` and `UndoNotAttendingAsync`.
+- `AccountController` calls `RecordLoginAsync` (twice).
+
+`crossSectionWriteSurface` fires on *read-only* use of a write-capable interface. Neither of these is
+read-only, so neither is a violation, and the advisories are the analyzer correctly reporting
+uncertainty rather than a missed hit. **That strengthens the retirement case**: the 0 is not 0-because-
+unevaluated, it is 0-because-checked, and the 2 advisories that would disappear with the rule were
+both false alarms.
+
+Worth recording *why* they escaped analysis, since it is a real and narrow limitation: in both
+controllers `IUserService` arrives as a **primary-constructor parameter forwarded to a base-class
+constructor** (`AccountController(... IUserService userService ...) : HumansControllerBase(userService)`),
+and the cross-section walk does not follow a dependency through a base constructor call. It behaved
+correctly — flagging uncertainty instead of guessing — so this is a documented limitation rather than a
+filed defect, but anyone extending that analysis should know the case exists.
+
 **On Humans, retiring the rule and its suppression set is a measured no-op.** It is worth being
 precise about the scope of that claim, because an earlier draft of this document was not:
 "0/44, therefore free" is true of Humans and false in general.
@@ -655,7 +690,8 @@ no-op there, and three things travel with it:
 - the two fixtures lose their reason to exist in their current form;
 - `crossSectionWriteSurface` has a `NotYetCovered` entry in `GateOneFixtureTests` that would have to
   go with it — and that entry's stated reason ("the unverified advisories from a real corpus decide
-  whether the rule needs a fixture or a repair") is exactly what this measurement answers;
+  whether the rule needs a fixture or a repair") is now actually answered above: there are 2 such
+  advisories, both audited, both write users, so neither indicates a rule needing repair;
 - removing the suppression set means `writeCapableInterfaceUsedReadOnly` (12) can fire on pairs the
   specialised rule (15) used to claim. Zero such pairs on Humans; two on the sample solution.
 
