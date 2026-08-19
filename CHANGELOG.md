@@ -2,6 +2,232 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Write surface is decided behaviorally, not by the name `I*Service`
+
+Issue #54. `fullServiceInterface` was assigned by the name pattern `I*Service`, and the read escape
+hatch only caught `I*ServiceRead` / `I*ReadService` / `I*QueryService`. So an all-`Get*` facade named
+`IAuditViewerService` was priced as published **write** surface. `SolutionClassifier` now reclassifies
+such an interface as `readServiceInterface` when no implementation of any of its members observably
+mutates state, reusing the existing `ImplementationComplexity.IsMutation` rather than adding a second
+write detector.
+
+For **methods** the question is only decidable at the implementation — an interface method has no body
+— which is why this could not be fixed in the classification rules alone. Four member shapes are
+decidable on the declaration and are read there instead: a **settable property** (including `init`, and
+including indexers), an **event**, a **mutable field** (an interface may declare a static one since
+C# 8, and `IStateService.Current = 5` writes straight through it), and anything **returned by writable
+reference**. Each hands every
+consumer a mutation that no implementation body can withdraw, so one is sufficient on its own, with no
+implementation needed. `ref int Current { get; }` has no setter and its implementation is
+`=> ref _current` — no persistence call, so it reads as a query — but `svc.Current = 5` compiles and
+writes through. `ref readonly` does not qualify, and neither do `readonly` and `const` fields; both
+have negative-control fixtures so the rules cannot silently widen to "any ref" and "any field".
+
+Only members a consumer can actually reach are read. Since C# 8 an interface may declare `private`
+members: no consumer can call one and `ScoreInterfaceMethods` already excludes them. Reachability is
+tested on the **accessor**, not the member, for a property: `int Value { get => 0; private set { } }` is
+readable by every consumer and settable by none, so matching any non-null `SetMethod` read a read-only
+interface as published write capability.
+
+`static` members are reachable, and are decided in two places. `IPurgeService.ClearAll()` needs no
+instance and no implementing type — it is as callable as any instance method, so skipping every static
+member let a published command go unseen. A static member with a **body** carries it on the interface
+itself, which makes it decidable with no implementer at all — methods, operators, and **getters** alike,
+since `static int Current => Db.SaveChanges();` is as callable as a static method and commits just the
+same. A `static abstract` member has no body there and is observed on the implementing type like anything
+else — and so is a `static virtual` one, because the split that matters is not abstract vs concrete but
+**replaceable vs not**. A `static virtual` default is a real body, so a mutating one publishes a write no
+override can withdraw; a read-only one settles nothing, since an implementer can replace it and a call
+through a constrained type parameter reaches the replacement.
+
+Which raises the case where that accounts for the **whole** published surface.
+`IClockService { static int GetTicks() => 0; }` has nothing an implementer could supply and, in a real
+solution, no implementer at all — so requiring one kept a definitively read-only interface classified as a
+write forever. The declaration pass now records a complete observation when every reachable member is
+settled there, which is also what lets an interface publishing nothing at all demote. A **getter-only property** is read at the implementation like
+a method, but only for the definitive signal — a persistence commit in the getter body. A `readonly` or
+`const` field is not automatically harmless either: it cannot be assigned through, but its **initializer**
+runs on first access, so `public static readonly int Blown = Db.SaveChanges();` commits the moment a
+consumer touches it and needs no method and no implementer to do so. The
+command-shape heuristic is meaningless for an accessor, since a getter returns data by definition, so
+`ImplementationComplexity.CommitsPersistentWrite` is now exposed separately from `IsMutation` for this.
+
+**An unrecognized member shape is a gap, not a read.** The observation loop enumerates what it can
+prove harmless — an instance method or operator it read the body of, a getter whose body it read, an
+accessor (decided with its property or event), a nested type (its own surface, not this interface's), a
+`readonly` or `const` field, and the property/event/field shapes the declaration pass already recorded as
+writes — and anything else preserves the name-derived classification. This is a change of default, and it
+is the structural answer to the shape the review of #54 took: rounds 4 through 9 were each one member
+shape at a time — inherited members, accessors, getter bodies, partial members, indexers, writable `ref`
+returns, mutable fields, static commands — every one of them a shape that defaulted to *read* until it
+was named. Enumerating write capability means every C# feature nobody has thought of yet is a silent
+false read; enumerating read safety means it is a preserved classification instead. With today's C# the
+default branch is unreachable, since the recognized list covers every member kind an interface can
+publish that a consumer can reach, so it has no fixture and cannot have one — it exists so that the next
+member shape the language adds fails safe rather than fails quiet.
+
+Membership is read from the interface **and its base interfaces**, because `GetMembers()` returns only
+what a type declares itself — `IOrderService : ICrudService<Order>` would otherwise look empty and
+demote while its consumers get a full set of writes.
+
+**Demotion requires evidence of read-only-ness, not absence of evidence of writing.** Two gaps
+therefore preserve the name-derived classification rather than repricing on nothing — repricing surface
+on an analysis gap is the failure #51 fixed elsewhere:
+
+- **No implementation in the analyzed solution.** The walk skips test projects and cannot see other
+  assemblies, so "not found" means unknown, not read-only. *Private* types are explicitly not such a
+  gap: they are excluded from the scored corpus but included as implementation evidence, so an
+  interface implemented only by a private nested class behind a factory is still observed. Answering
+  "unknown" about a type the walk is looking straight at is not conservatism.
+- **No implementing type accounts for the whole surface.** An abstract class may list the interface and
+  leave its members abstract; a bodyless data-returning declaration reads as a query under the shape
+  heuristic, so demoting there would be concluding from an absence. Evidence of *writing* still counts
+  from a partial observation — only the read-only conclusion needs every member accounted for by some
+  one implementer. A bodyless *getter* declared in **source** is the one exception, and it runs the
+  other way: that is an auto-property, which provably commits nothing. A getter with no syntax at all
+  is a property reached from a referenced binary, which is a gap again, not an auto-property.
+
+Demoted interfaces are not exempted either — they score `readServiceInterfaceMethod` (6) instead of
+`fullServiceInterfaceMethod` (8). A published read facade is real surface; it is just not a write
+commitment.
+
+Completeness is required of **every concrete implementer**, not of any one: an interface with two
+implementations is only known to be read-only if both are accounted for, since one fully-read
+implementation says nothing about a second whose members arrive from a referenced binary. Abstract
+classes are exempt from the requirement but not from the write scan — an abstract class is a partial
+implementation whose gaps its derived classes fill, and each of those is checked in its own right.
+
+The member read for a mapped interface member is the **most derived override**, not the interface-map
+entry. `FindImplementationForInterfaceMember` answers with the map entry, which for
+`class Derived : Base` where `Base` declares the interface is a member of `Base` — and if that member
+is `abstract`, the answer has no body. Taken at face value that reads as "nothing observed", so **no
+interface implemented through an abstract base could ever be judged**, which is a common enough shape
+that the pass was close to inert on it. This one was caught by a fixture written for a different rule,
+not by review.
+
+A getter's body is looked for on the accessor, on an arrow on the member itself, and — the shape that
+is easy to miss — on an arrow on an **indexer**. An indexer is an `IPropertySymbol` like any other, but
+its declaration is an `IndexerDeclarationSyntax`, and `ExpressionBody` is declared on that type and on
+`PropertyDeclarationSyntax` separately rather than on the `BasePropertyDeclarationSyntax` they share. So
+matching only the property syntax read `public int this[int slot] => _db.SaveChanges() + slot;` as
+*bodyless* — and a bodyless getter in source is an auto-property, i.e. a complete read-only observation.
+The fallback is narrowed for the same reason: there is no such thing as an auto-indexer, so an indexer
+declared in source always carries a body, and reaching the fallback with one means the declaration could
+not be read — a gap, not a member that provably commits nothing.
+
+A method's body is also looked for across **every** declaration and across
+`PartialImplementationPart`, not just `DeclaringSyntaxReferences[0]`. Partial *properties* split the
+same way and are followed the same way. A `partial` method has a
+bodyless defining declaration and a separate implementing one, and Roslyn may enumerate the bodyless
+one first — which read a fully implemented member as a gap.
+
+`SolutionClassifier` also enumerates nested types **recursively** now, where it stopped at one level of
+nesting before. An implementation nested inside a nested factory was invisible to every pass at once,
+not just this one. Isolated on one tree, this is **+1 type and +6 surface on the sample solution, +0 and
++0 on Humans**, with internal complexity unmoved on both. The +6 is a genuinely public depth-two type
+that the corpus should always have contained.
+
+An earlier revision of this entry claimed "+5 types, `surfaceTotal` unchanged on both". That was
+measured by comparing a build with recursion *and* a new fixture against one with neither, and
+attributing the whole result to the recursion — two changes, one cause credited. The figures above come
+from toggling only the enumeration on a fixed tree.
+
+Because recursion reaches further, the corpus filter now tests **effective** accessibility: a `public`
+type nested inside a `private` one is private in every sense that matters, and the walk had begun
+admitting exactly the class of types that had never been in the corpus — and charging its section for
+them. It still counts as implementation evidence, like any private type.
+
+Every refinement above — inherited members, accessors, getter bodies, partial members, private and deeply
+nested implementers, most-derived overrides, per-implementer completeness, and the static-surface rules —
+**changes no number on Humans**: the demoted interface set is byte-identical with and without them, all
+45 full / 68 read either way. For most of them that is structural, since they can only reclassify what the
+predicate already looked at. The static-surface rules are the exception and were measured on their own
+account: an all-static or member-less interface now demotes with **no implementer at all**, which can move
+a count, and it moved none here because Humans contains no such `I*Service`. That distinction matters —
+the rest could not have changed the corpus, this one could have and did not. They are correctness fixes for shapes Humans does not currently
+contain, and the sample-solution fixtures below are what exercises them. A clean corpus is not evidence
+that a predicate is right, only that this corpus does not reach the wrong part of it.
+
+Measured against Humans (`113061bcf5f6`): **48 of 93 classified service interfaces reclassified**, and
+`surfaceTotal` **17,379 → 17,129**.
+
+| rule | before | after |
+|---|---:|---:|
+| `crossSectionFullService` | 1,768 | **1,344** |
+| `crossSectionReadInterface` | 536 | **642** |
+| `fullServiceInterfaceMethod` | 4,136 | **3,560** |
+| `readServiceInterfaceMethod` | 990 | **1,422** |
+| `readSurfaceProjectionMethod` | 536 | **748** |
+| `missingReadSurface` / `missingWriteSurface` | 120 / 20 | **70 / 70** |
+
+The dominant effect is not the direct charge but the **cross-section** one: consumers depending on a
+read-only `I*Service` were being charged for a write dependency. #54 estimated the defect at 216 points
+by scoping to `fullServiceInterfaceMethod` on *exported* interfaces only; the classification feeds six
+rules, and the cross-section rules are deliberately not visibility-gated. The estimate was low by
+roughly 5× — the same scope-the-population error the 2026-08-19 measurement record documents at length.
+
+**Two known misclassifications remain, one in each direction**, both inherent to `IsMutation`'s
+depth-1 view of a body:
+
+- `IAdminAuthorizationService` stays a write surface. Its only member, `Task RequireCurrentUserIsAdminAsync(...)`,
+  returns no data, which the command-shape fallback reads as a mutation. It is an authorization check
+  that throws.
+- `IDriveActivityMonitorService` is demoted to read. `CheckForAnomalousActivityAsync` does write — via
+  `auditLogService.LogAsync(...)`, one call deeper than the body scan reaches.
+
+Following dependency calls one level would fix both and risks the opposite failure: anything touching
+a service that writes becomes a write surface, which re-inflates the population the change exists to
+shrink. Left as-is deliberately, and recorded rather than hidden.
+
+Sample solution: `surfaceTotal` 2,431 → 2,377. One fixture per branch of the rule, so a future change
+to any branch moves a test rather than a number:
+
+| fixture | expected | why |
+|---|---|---|
+| `IUserService`, `IGateRegistrar*Service` | demote | only `Get*` / `int Count()` |
+| `ILookupService` | demote | implemented only by a private nested class — evidence all the same |
+| `IGreetingService` | stays full | `RecordGreetingAsync` writes |
+| `ICampBillingService` | stays full | nothing implements it |
+| `IArchiveService` | stays full | write inherited from `IArchiveWriter<T>` |
+| `IRetentionService` | stays full | settable property, every method read-shaped |
+| `IQuotaService` | stays full | getter-only property whose getter commits |
+| `IShelfService` | stays full | getter-only **indexer** whose arrow-bodied getter commits |
+| `IRackService` | demote | arrow-bodied indexer getter that reads — negative control for the indexer rule |
+| `IGaugeService`, `ISlotService` | stays full | writable `ref` return — assignable with no setter |
+| `IStateService` | stays full | mutable static field — writable with no setter |
+| `IReadingService` | demote | `ref readonly` return — negative control for the ref rule |
+| `ISettledService` | demote | `const` and `static readonly` fields — negative control for the field rule |
+| `IDigestService` | demote | its command-shaped member is `private`, so no consumer can reach it |
+| `IPurgeService` | stays full | `public static` command — callable with no instance and no implementer |
+| `ITallyService` | demote | `public static` method returning data — negative control for the static rule |
+| `IStampService` | stays full | `static abstract` command whose implementation commits |
+| `IPollService` | demote | `static abstract` member whose implementation reads — control for that lookup |
+| `IVaultService` | demote | `private set` on a default interface property — unreachable write |
+| `IMeterService` | stays full | `public static` getter whose body commits |
+| `IDialService` | demote | `public static` getter that reads — negative control for the static getter rule |
+| `IClockService` | demote | nothing but a static query, and no implementer at all |
+| `IBeaconService` | stays full | `static virtual` default that reads, replaced by an override that commits |
+| `IChimeService` | demote | `static virtual` default replaced by an override that reads — control for that path |
+| `IFuseService` | stays full | `static readonly` field whose initializer commits on first access |
+| `IBadgeService` | demote | implementer nested two levels deep — now reachable |
+| `IManifestService` | demote | implemented by a partial method whose body is on the other half |
+| `IRosterService` | demote | declared by an abstract base, accounted for by the concrete derived class |
+| `ILedgerService` | stays full | only implementer is abstract, so no body is observed |
+
+Three branches have **no fixture**, and two of them for the same reason: a getter reached from a
+referenced *binary*, and a concrete implementer whose member arrives from one. A static method inherited
+from a referenced binary is the third and is a gap for exactly the same reason — `IsMutation` falls back to
+the command shape when handed no syntax, so a data-returning signature would otherwise answer "read" on
+the strength of its name. Every project in the sample solution is a `ProjectReference`, so
+Roslyn hands back source symbols and neither shape can be reproduced there; a concrete class written in
+source must give every member a body. Both lines are covered by reading, not by a test, and are
+recorded here rather than left to look tested. The abstract-exemption half of the second one *is*
+fixtured (`IRosterService`), which is what guards against the over-strict reading of the rule.
+
+Every fixture added after the first round fails against the commit before the one that added it —
+verified by reverting the source change and re-running, not assumed. The negative controls pass either
+way, which is what makes them controls.
+
 ## Unreleased - Gate 2 measurements for the internal-axis candidate signals
 
 `docs/superpowers/specs/2026-08-19-internal-axis-signal-measurements.md`. Discharges the

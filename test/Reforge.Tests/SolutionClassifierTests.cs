@@ -19,13 +19,374 @@ public class SolutionClassifierTests
         var classified = await ClassifyAsync();
 
         Assert.Contains(classified, c => c.Type.Name == "UserService" && c.Tags.Contains("applicationService"));
-        Assert.Contains(classified, c => c.Type.Name == "IUserService" && c.Tags.Contains("fullServiceInterface"));
+        // IUserService declares two Get* methods and nothing else, so it is a READ service interface.
+        // It was classified as a full (write-capable) one until #54, purely because the name pattern
+        // for `fullServiceInterface` is `I*Service` and the read escape hatch only caught
+        // `I*ServiceRead` / `I*ReadService` / `I*QueryService`.
+        Assert.Contains(classified, c => c.Type.Name == "IUserService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IUserService" && c.Tags.Contains("fullServiceInterface"));
         // Uniqueness is per (assembly, display name) — NOT per display name. Two assemblies may
         // legitimately declare the same fully qualified name; both must survive classification.
         var keys = classified
             .Select(c => $"{c.Type.ContainingAssembly?.Name}|{c.Type.ToDisplayString()}")
             .ToList();
         Assert.Equal(keys.Distinct().Count(), classified.Count);
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_WriteCapableServiceInterface_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IGreetingService declares RecordGreetingAsync — a Task returning no data, which
+        // ImplementationComplexity.IsMutation reads as a command. The name is identical in shape to
+        // IUserService, so only the behavior of the implementation separates them. That is the point:
+        // the classification is rename-proof in both directions.
+        Assert.Contains(classified, c => c.Type.Name == "IGreetingService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IGreetingService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceWithNoImplementation_KeepsFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // ICampBillingService declares only `int BalanceFor(int)` — read-shaped — but nothing in the
+        // solution implements it. Demotion requires evidence of read-only-ness, and an unimplemented
+        // interface supplies none: the walk skips test projects and cannot see other assemblies, so
+        // "no implementation found" means unknown. Repricing surface on an analysis gap is the failure
+        // mode #51 fixed elsewhere, and this asserts it is not reintroduced here.
+        Assert.Contains(classified, c => c.Type.Name == "ICampBillingService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceInheritingWriteMembers_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IArchiveService declares only GetArchivedName. Its write — Persist — comes from the base
+        // IArchiveWriter<string>, and GetMembers() does not return inherited members, so reading only
+        // the declared surface demotes an interface whose consumers get a full set of writes.
+        Assert.Contains(classified, c => c.Type.Name == "IArchiveService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IArchiveService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceWithSettableProperty_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // Every METHOD on IRetentionService is read-shaped, so no body argues for a write. The setter
+        // on RetentionDays is the write commitment, and it is visible on the declaration — no
+        // implementation body could withdraw it.
+        Assert.Contains(classified, c => c.Type.Name == "IRetentionService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IRetentionService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceImplementedOnlyAbstractly_KeepsFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // LedgerServiceBase lists ILedgerService and leaves GetLedgerName abstract. The interface is
+        // therefore "implemented" in the AllInterfaces sense while no behavior is ever observed, and
+        // a bodyless data-returning declaration reads as a query under the shape heuristic. Demoting
+        // here would be repricing on an absence — the concrete override may be in a skipped test
+        // project or another assembly.
+        Assert.Contains(classified, c => c.Type.Name == "ILedgerService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "ILedgerService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceWithWritingGetter_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IQuotaService publishes one getter-only property. Nothing on the declaration is a write and
+        // a getter cannot be judged by shape — it returns data by definition — so only QuotaService's
+        // getter body, which calls SaveChanges(), says otherwise.
+        Assert.Contains(classified, c => c.Type.Name == "IQuotaService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IQuotaService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_WritingExpressionBodiedIndexer_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // ShelfService implements IShelfService's getter-only indexer as `=> _db.SaveChanges() + slot`.
+        // An indexer's declaration is IndexerDeclarationSyntax, not PropertyDeclarationSyntax, so
+        // reading only the latter's ExpressionBody found no body — and a bodyless getter declared in
+        // source is read as an auto-property, i.e. a complete read-only observation.
+        Assert.Contains(classified, c => c.Type.Name == "IShelfService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IShelfService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ReadingExpressionBodiedIndexer_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // Negative control for the test above: same shape, same arrow, a getter that commits nothing.
+        // Without this, treating every indexer as unreadable would satisfy that test just as well.
+        Assert.Contains(classified, c => c.Type.Name == "IRackService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_PublicStaticCommand_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IPurgeService.ClearAll() is callable with no instance and no implementing type. A static
+        // member with a body carries it on the interface, so this is decided in the declaration pass —
+        // skipping every static member let a published command go unseen.
+        Assert.Contains(classified, c => c.Type.Name == "IPurgeService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IPurgeService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_PublicStaticQuery_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // Negative control for the test above: a public static method that returns data, so the
+        // command shape does not apply. "Any public static method is a write" would pass that test too.
+        Assert.Contains(classified, c => c.Type.Name == "ITallyService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_StaticAbstractCommand_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // No body on the interface to read, so IStampService is decided on StampService.Stamp, which
+        // commits — the same implementation path an instance method takes.
+        Assert.Contains(classified, c => c.Type.Name == "IStampService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_StaticAbstractQuery_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // Control for the static abstract path itself: this demotes only if PollService.Poll was
+        // actually resolved and read. Had that lookup failed, the member would count as unobserved and
+        // the interface would stay full — which is indistinguishable from the test above passing.
+        Assert.Contains(classified, c => c.Type.Name == "IPollService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_PrivateSetter_IsNotWriteSurface()
+    {
+        var classified = await ClassifyAsync();
+
+        // IVaultService.Value is `get => 0; private set { }`. Every consumer can read it and none can
+        // write it, so matching any non-null SetMethod read a read-only interface as write surface.
+        Assert.Contains(classified, c => c.Type.Name == "IVaultService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_StaticOnlyReadInterface_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // IClockService publishes one static query and has no implementer at all. Its whole surface is
+        // decidable on the interface, so requiring an implementation would keep a definitively
+        // read-only interface classified as a write forever.
+        Assert.Contains(classified, c => c.Type.Name == "IClockService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_WritingStaticGetter_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IMeterService.Current is callable with no instance and its body commits. Static METHODS were
+        // scanned while static getters were not, so this demoted on the strength of its one read-only
+        // instance member.
+        Assert.Contains(classified, c => c.Type.Name == "IMeterService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IMeterService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ReadingStaticGetter_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // Negative control for the test above: same shape, a body that reads.
+        Assert.Contains(classified, c => c.Type.Name == "IDialService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_StaticVirtualOverrideThatWrites_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IBeaconService's static virtual default reads, and BeaconService replaces it with one that
+        // commits. Splitting static members into abstract and non-abstract put every static VIRTUAL one
+        // on the declaration side, where its replaceable body was read as the final answer.
+        Assert.Contains(classified, c => c.Type.Name == "IBeaconService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IBeaconService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_StaticVirtualOverrideThatReads_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // Negative control: same shape, an override that reads. "Any static virtual member is
+        // unknowable" would pass the test above too.
+        Assert.Contains(classified, c => c.Type.Name == "IChimeService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_CommittingFieldInitializer_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IFuseService.Blown is readonly, so no consumer can assign through it — but the first access
+        // runs its initializer, which commits. ISettledService is the standing control: readonly and
+        // const fields with literal initializers still demote.
+        Assert.Contains(classified, c => c.Type.Name == "IFuseService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IFuseService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceImplementedPrivately_IsStillObserved()
+    {
+        var classified = await ClassifyAsync();
+
+        // ILookupService's only implementer is LookupFactory.Impl — private, nested, and therefore not
+        // scored surface. It is still implementation evidence: the interface is implemented in this
+        // solution and read-only. Skipping private types made the pass answer "unknown" about a type
+        // it was looking straight at, which is the opposite of the conservatism it was aiming for.
+        Assert.Contains(classified, c => c.Type.Name == "ILookupService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "ILookupService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_DeeplyNestedImplementer_IsStillObserved()
+    {
+        var classified = await ClassifyAsync();
+
+        // IBadgeService's only implementer is BadgeHost.Inner.Impl — two levels of nesting. Type
+        // enumeration used to yield a top-level type and its immediate children only, so this was
+        // invisible to every pass, not just the demotion one.
+        Assert.Contains(classified, c => c.Type.Name == "ILookupService" && c.Tags.Contains("readServiceInterface"));
+        Assert.Contains(classified, c => c.Type.Name == "IBadgeService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IBadgeService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_EnumeratesNestedTypesToAnyDepth()
+    {
+        var classified = await ClassifyAsync();
+
+        // The corpus itself, not just the demotion decision: a nested-in-nested type is a type this
+        // solution declares, and every rule that sizes or scores a section needs to see it. Asserted at
+        // depth TWO on purpose — BadgeHost.Inner is an immediate child, which the one-level walk already
+        // yielded, so asserting on it would pass either way and prove nothing.
+        Assert.Contains(classified, c => c.Type.ToDisplayString() == "SampleSolution.Core.BadgeHost.Inner.Impl");
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_PartialMethodImplementation_IsStillObserved()
+    {
+        var classified = await ClassifyAsync();
+
+        // ManifestService implements IManifestService with a partial method: the defining declaration
+        // carries no body and may be enumerated first, so reading DeclaringSyntaxReferences[0] alone
+        // reported a gap for a member that is fully implemented and read-only.
+        Assert.Contains(classified, c => c.Type.Name == "IManifestService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IManifestService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_AbstractImplementerDoesNotBlockDemotion()
+    {
+        var classified = await ClassifyAsync();
+
+        // Completeness is required of every CONCRETE implementer of an interface, because one fully
+        // read implementation says nothing about a second one. RosterServiceBase is abstract and
+        // implements nothing, so requiring it to account for the surface too would block demotion for
+        // every interface that has an abstract base — SeasonRosterService is the implementation, and it
+        // is read-only.
+        Assert.Contains(classified, c => c.Type.Name == "IRosterService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IRosterService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Theory]
+    [InlineData("IGaugeService")]
+    [InlineData("ISlotService")]
+    public async Task ClassifyAsync_WritableRefReturn_StaysFullService(string interfaceName)
+    {
+        var classified = await ClassifyAsync();
+
+        // Neither has a setter, and neither implementation commits — `=> ref _current` contains no
+        // persistence call and reads as a query. But `svc.Current = 5` and `svc.GetSlot(0) = 5` both
+        // compile and write through to the backing state, so the write is in the declaration.
+        Assert.Contains(classified, c => c.Type.Name == interfaceName && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == interfaceName && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_RefReadonlyReturn_Demotes()
+    {
+        var classified = await ClassifyAsync();
+
+        // The negative control for the rule above. A `ref readonly` reference cannot be assigned
+        // through, so IReadingService is a read surface — without this the rule would be "any ref",
+        // which would re-inflate the write population it exists to shrink.
+        Assert.Contains(classified, c => c.Type.Name == "IReadingService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IReadingService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_MutableInterfaceField_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // An interface can declare a static field since C# 8, and `IStateService.Current = 5` writes
+        // straight through it. Every method here is read-shaped and StateService commits nothing.
+        Assert.Contains(classified, c => c.Type.Name == "IStateService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IStateService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ReadonlyAndConstInterfaceFields_Demote()
+    {
+        var classified = await ClassifyAsync();
+
+        // The negative control for the rule above: neither `const` nor `static readonly` can be written,
+        // so the rule must not widen to "any field".
+        Assert.Contains(classified, c => c.Type.Name == "ISettledService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "ISettledService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_NonPublicInterfaceMembers_AreNotContractSurface()
+    {
+        var classified = await ClassifyAsync();
+
+        // IDigestService declares a private helper and a public static method, both command-shaped. No
+        // consumer can call the private one and no implementer can supply either, so counting them
+        // would invent a write — or report a gap for a member nothing was ever going to fill — for an
+        // API whose only reachable instance member is `GetDigest`.
+        Assert.Contains(classified, c => c.Type.Name == "IDigestService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IDigestService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_PublicTypeInsidePrivateType_StaysOutOfCorpus()
+    {
+        var classified = await ClassifyAsync();
+
+        // VisibilityHost.Hidden is private, so Hidden.Exposed is private in every sense that matters
+        // despite being declared public. Recursive enumeration is what first made it reachable, so
+        // checking only its own modifier would quietly admit a class of types the corpus never had —
+        // and charge its section for them.
+        Assert.DoesNotContain(classified, c => c.Type.Name == "Exposed");
+        Assert.DoesNotContain(classified, c => c.Type.Name == "Hidden");
     }
 
     [Fact]
