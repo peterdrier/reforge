@@ -80,3 +80,14 @@ public interface IManifestService
 {
     string GetManifest(int id);
 }
+
+/// <summary>
+/// Fixture for the abstract-exemption path. Its declared implementer is an abstract class that leaves
+/// the member abstract; the concrete derived class fills it in, read-only. Completeness is required of
+/// every CONCRETE implementer, and holding the abstract base to that standard too would block
+/// demotion for every interface that has one — so this must demote.
+/// </summary>
+public interface IRosterService
+{
+    string GetRosterName(int id);
+}

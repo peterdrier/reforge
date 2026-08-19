@@ -83,3 +83,19 @@ public static class BadgeHost
         }
     }
 }
+
+/// <summary>
+/// Declares <see cref="IRosterService"/> and implements none of it. Abstract implementers are exempt
+/// from the completeness requirement — they are partial implementations whose gaps their derived
+/// classes fill, and each of those is checked in its own right.
+/// </summary>
+public abstract class RosterServiceBase : IRosterService
+{
+    public abstract string GetRosterName(int id);
+}
+
+/// <summary>The concrete implementer that actually accounts for the surface, read-only.</summary>
+public class SeasonRosterService : RosterServiceBase
+{
+    public override string GetRosterName(int id) => $"roster-{id}";
+}

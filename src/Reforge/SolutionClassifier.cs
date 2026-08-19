@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -153,6 +154,7 @@ public static class SolutionClassifier
         if (candidates.Count == 0) return;
 
         var observed = new HashSet<string>(StringComparer.Ordinal);
+        var incomplete = new HashSet<string>(StringComparer.Ordinal);
         var writes = new HashSet<string>(StringComparer.Ordinal);
 
         // Pass A -- write capability that needs no implementation to see. A settable property or an
@@ -201,13 +203,25 @@ public static class SolutionClassifier
                     }
                 }
 
+                // Completeness is required of every CONCRETE implementer, not of any one. An
+                // interface with two implementations is only known to be read-only if both are
+                // accounted for: one fully-read implementation says nothing about a second whose
+                // members arrive from a referenced binary and could commit anything.
+                //
+                // Abstract classes are exempt from the requirement but not from the write scan. An
+                // abstract class is not an implementation — it is a partial one whose gaps its
+                // derived classes fill, and each of those is checked here in its own right. Holding
+                // an abstract base to the same standard would block demotion for every interface
+                // that has one.
+                if (type.IsAbstract) continue;
                 if (complete) observed.Add(key);
+                else incomplete.Add(key);
             }
         }
 
         foreach (var (key, tags) in candidates)
         {
-            if (!observed.Contains(key) || writes.Contains(key)) continue;
+            if (!observed.Contains(key) || incomplete.Contains(key) || writes.Contains(key)) continue;
             tags.Remove("fullServiceInterface");
             tags.Add("readServiceInterface");
         }
@@ -227,12 +241,59 @@ public static class SolutionClassifier
     private static bool ObserveMethod(
         INamedTypeSymbol type, IMethodSymbol member, string key, HashSet<string> writes, CancellationToken ct)
     {
-        if (type.FindImplementationForInterfaceMember(member) is not IMethodSymbol { IsAbstract: false } impl)
-            return false;
+        if (type.FindImplementationForInterfaceMember(member) is not IMethodSymbol mapped) return false;
+        if (MostDerived(type, mapped) is not { IsAbstract: false } impl) return false;
         if (MethodBody(impl, ct) is not { } syntax) return false;
 
         if (ImplementationComplexity.IsMutation(impl, syntax)) writes.Add(key);
         return true;
+    }
+
+    /// <summary>
+    /// The member an instance of <paramref name="type"/> actually runs for a mapped interface member:
+    /// the most derived override of it, or the mapped member itself when nothing overrides it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>FindImplementationForInterfaceMember</c> answers with the entry in the interface map, which
+    /// for <c>class Derived : Base</c> where <c>Base</c> declares the interface is a member of
+    /// <c>Base</c> — and if that member is <c>abstract</c>, the answer has no body at all. Taken at
+    /// face value that reads as "nothing observed", so <b>no interface implemented through an abstract
+    /// base could ever be judged</b>. The abstract-base-plus-concrete-derived shape is common enough
+    /// that the pass would have been close to inert on it.
+    /// </para>
+    /// <para>
+    /// The walk starts at <paramref name="type"/> and climbs, so the first match is the most derived
+    /// override — which is the one an instance of that type dispatches to.
+    /// </para>
+    /// </remarks>
+    private static TSymbol? MostDerived<TSymbol>(INamedTypeSymbol type, TSymbol mapped)
+        where TSymbol : class, ISymbol
+    {
+        if (mapped is { IsAbstract: false, IsVirtual: false }) return mapped;
+
+        for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
+            foreach (var member in t.GetMembers(mapped.Name))
+                if (member is TSymbol candidate && OverridesTransitively(candidate, mapped))
+                    return candidate;
+
+        return mapped;
+    }
+
+    /// <summary>Whether <paramref name="member"/> overrides <paramref name="target"/>, at any depth.</summary>
+    private static bool OverridesTransitively(ISymbol member, ISymbol target)
+    {
+        for (var current = OverriddenBy(member); current is not null; current = OverriddenBy(current))
+            if (SymbolEqualityComparer.Default.Equals(current, target)) return true;
+        return false;
+
+        static ISymbol? OverriddenBy(ISymbol s) => s switch
+        {
+            IMethodSymbol m => m.OverriddenMethod,
+            IPropertySymbol p => p.OverriddenProperty,
+            IEventSymbol e => e.OverriddenEvent,
+            _ => null
+        };
     }
 
     /// <summary>
@@ -272,8 +333,8 @@ public static class SolutionClassifier
     private static bool ObserveGetter(
         INamedTypeSymbol type, IPropertySymbol member, string key, HashSet<string> writes, CancellationToken ct)
     {
-        if (type.FindImplementationForInterfaceMember(member) is not IPropertySymbol { IsAbstract: false } impl)
-            return false;
+        if (type.FindImplementationForInterfaceMember(member) is not IPropertySymbol mapped) return false;
+        if (MostDerived(type, mapped) is not { IsAbstract: false } impl) return false;
         if (impl.GetMethod is null) return true; // set-only: nothing to read, and a setter is a write anyway
 
         var body = GetterBody(impl, ct);
@@ -297,24 +358,33 @@ public static class SolutionClassifier
     /// </summary>
     private static SyntaxNode? GetterBody(IPropertySymbol impl, CancellationToken ct)
     {
-        foreach (var reference in impl.GetMethod!.DeclaringSyntaxReferences)
+        // A partial PROPERTY splits the same way a partial method does: the defining declaration
+        // carries no accessor body and the implementing one does. Both halves are searched, and the
+        // implementation part first, so a bodyless definition never shadows a real getter.
+        foreach (var property in new[] { impl.PartialImplementationPart, impl })
         {
-            switch (reference.GetSyntax(ct))
-            {
-                case AccessorDeclarationSyntax accessor:
-                    var body = (SyntaxNode?)accessor.Body ?? accessor.ExpressionBody?.Expression;
-                    if (body is not null) return body;
-                    break;
-                case PropertyDeclarationSyntax { ExpressionBody.Expression: { } arrow }:
-                    return arrow;
-            }
-        }
+            if (property is null) continue;
 
-        // An expression-bodied property's getter may report the PROPERTY as its declaration only
-        // indirectly, so fall back to the property's own syntax before concluding there is no body.
-        foreach (var reference in impl.DeclaringSyntaxReferences)
-            if (reference.GetSyntax(ct) is PropertyDeclarationSyntax { ExpressionBody.Expression: { } arrow })
-                return arrow;
+            foreach (var reference in (property.GetMethod?.DeclaringSyntaxReferences
+                                       ?? ImmutableArray<SyntaxReference>.Empty))
+            {
+                switch (reference.GetSyntax(ct))
+                {
+                    case AccessorDeclarationSyntax accessor:
+                        var body = (SyntaxNode?)accessor.Body ?? accessor.ExpressionBody?.Expression;
+                        if (body is not null) return body;
+                        break;
+                    case PropertyDeclarationSyntax { ExpressionBody.Expression: { } arrow }:
+                        return arrow;
+                }
+            }
+
+            // An expression-bodied property's getter may report the PROPERTY as its declaration only
+            // indirectly, so check the property's own syntax before concluding there is no body.
+            foreach (var reference in property.DeclaringSyntaxReferences)
+                if (reference.GetSyntax(ct) is PropertyDeclarationSyntax { ExpressionBody.Expression: { } arrow })
+                    return arrow;
+        }
 
         return null;
     }

@@ -45,8 +45,23 @@ Demoted interfaces are not exempted either — they score `readServiceInterfaceM
 `fullServiceInterfaceMethod` (8). A published read facade is real surface; it is just not a write
 commitment.
 
+Completeness is required of **every concrete implementer**, not of any one: an interface with two
+implementations is only known to be read-only if both are accounted for, since one fully-read
+implementation says nothing about a second whose members arrive from a referenced binary. Abstract
+classes are exempt from the requirement but not from the write scan — an abstract class is a partial
+implementation whose gaps its derived classes fill, and each of those is checked in its own right.
+
+The member read for a mapped interface member is the **most derived override**, not the interface-map
+entry. `FindImplementationForInterfaceMember` answers with the map entry, which for
+`class Derived : Base` where `Base` declares the interface is a member of `Base` — and if that member
+is `abstract`, the answer has no body. Taken at face value that reads as "nothing observed", so **no
+interface implemented through an abstract base could ever be judged**, which is a common enough shape
+that the pass was close to inert on it. This one was caught by a fixture written for a different rule,
+not by review.
+
 A method's body is also looked for across **every** declaration and across
-`PartialImplementationPart`, not just `DeclaringSyntaxReferences[0]`. A `partial` method has a
+`PartialImplementationPart`, not just `DeclaringSyntaxReferences[0]`. Partial *properties* split the
+same way and are followed the same way. A `partial` method has a
 bodyless defining declaration and a separate implementing one, and Roslyn may enumerate the bodyless
 one first — which read a fully implemented member as a gap.
 
@@ -55,8 +70,9 @@ nesting before. An implementation nested inside a nested factory was invisible t
 not just this one. Measured: +5 types on the sample solution, +0 on Humans, `surfaceTotal` unchanged on
 both — a correctness fix that moves no score, which is why it ships here rather than as its own change.
 
-The inherited-member, accessor, getter-body, private-implementer, nested-type, partial-method, and
-partial-observation rules **change no number on Humans** — the demoted interface set is byte-identical
+Every refinement above — inherited members, accessors, getter bodies, partial members, private and
+deeply nested implementers, most-derived overrides, and per-implementer completeness — **changes no
+number on Humans** — the demoted interface set is byte-identical
 with and without them, all 45 full / 68 read either way. They are correctness fixes for shapes Humans does not currently
 contain, and the sample-solution fixtures below are what exercises them. A clean corpus is not evidence
 that a predicate is right, only that this corpus does not reach the wrong part of it.
@@ -92,7 +108,7 @@ Following dependency calls one level would fix both and risks the opposite failu
 a service that writes becomes a write surface, which re-inflates the population the change exists to
 shrink. Left as-is deliberately, and recorded rather than hidden.
 
-Sample solution: `surfaceTotal` 2,055 → 2,023. One fixture per branch of the rule, so a future change
+Sample solution: `surfaceTotal` 2,068 → 2,034. One fixture per branch of the rule, so a future change
 to any branch moves a test rather than a number:
 
 | fixture | expected | why |
@@ -106,13 +122,15 @@ to any branch moves a test rather than a number:
 | `IQuotaService` | stays full | getter-only property whose getter commits |
 | `IBadgeService` | demote | implementer nested two levels deep — now reachable |
 | `IManifestService` | demote | implemented by a partial method whose body is on the other half |
+| `IRosterService` | demote | declared by an abstract base, accounted for by the concrete derived class |
 | `ILedgerService` | stays full | only implementer is abstract, so no body is observed |
 
-One branch has **no fixture**: a getter reached from a referenced *binary*, where the implementation
-property has no syntax to read. Every project in the sample solution is a `ProjectReference`, so Roslyn
-hands back source symbols and the shape cannot be reproduced there. The code distinguishes it — a
-bodyless getter counts as observed only when the property is declared in source — but that line is
-covered by reading, not by a test, and is recorded here rather than left to look tested.
+Two branches have **no fixture**, both for the same reason: a getter reached from a referenced
+*binary*, and a concrete implementer whose member arrives from one. Every project in the sample solution is a `ProjectReference`, so
+Roslyn hands back source symbols and neither shape can be reproduced there; a concrete class written in
+source must give every member a body. Both lines are covered by reading, not by a test, and are
+recorded here rather than left to look tested. The abstract-exemption half of the second one *is*
+fixtured (`IRosterService`), which is what guards against the over-strict reading of the rule.
 
 The last five each fail against the commit before the one that added them.
 

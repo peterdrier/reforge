@@ -160,6 +160,20 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_AbstractImplementerDoesNotBlockDemotion()
+    {
+        var classified = await ClassifyAsync();
+
+        // Completeness is required of every CONCRETE implementer of an interface, because one fully
+        // read implementation says nothing about a second one. RosterServiceBase is abstract and
+        // implements nothing, so requiring it to account for the surface too would block demotion for
+        // every interface that has an abstract base — SeasonRosterService is the implementation, and it
+        // is read-only.
+        Assert.Contains(classified, c => c.Type.Name == "IRosterService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IRosterService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
     public async Task ClassifyAsync_SameTypeNameInTwoAssemblies_KeepsBoth()
     {
         var classified = await ClassifyAsync();
