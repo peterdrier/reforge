@@ -37,7 +37,12 @@ points (5.2% of `fullServiceInterfaceMethod`), filed as #54; the report-side amb
   more mappers the structural test missed. A refinement does work — non-mapper, returns a
   scalar/bool/enum/string, synchronous — landing at **26 candidates at roughly 70% precision**, with
   the residue a nameable class (`Render*` / `Format*` / `Display*`). Recommended for one more round,
-  not for a weight.
+  not for a weight. Two of #19's own scope conditions are not in the firing test and were measured
+  separately: the entity/DTO parameter condition is nearly free (24 of the 26 already satisfy it), but
+  **"touch only that type's members" read literally leaves 3 of the 26** — everything else does some
+  work through another receiver, the worst at 33 other-receiver touches against 18 on the parameter it
+  supposedly envies. So the 26-hit, ~73%-precision figure is a *looser* rule than #19 specifies, and
+  the next round has to pick a reading first: 3 hits, 23, or 26.
 - **`publicWriteSurface`.** 47 **exported** write interfaces across 24 of the 44 scored sections — 37
   across 18 sections once the read-only classifications are audited out, which is the population the
   rule is meant to price and the one the modelled costs use. Reporting it is **blocked behind #54 in

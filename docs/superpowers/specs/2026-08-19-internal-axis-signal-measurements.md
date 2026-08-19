@@ -60,9 +60,21 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
   looks only for member accesses misses every null-conditional read — the form nullable DTO and
   entity handling uses constantly);
   `selfTouches` counts explicit `this.X` accesses plus unqualified names resolving to an instance
-  member of the containing type (implicit `this`). Fires when
+  member of the containing type (implicit `this`); `otherTouches` counts accesses through any *other*
+  receiver — another parameter, a local, a field, an injected dependency. Fires when
   `targetTouches >= 3 && targetTouches > selfTouches * 2`. Binding to the receiver rather than to the
   member's declaring type is load-bearing — see the correction recorded under Signal B.
+  - **Two of #19's own scope conditions are measured separately rather than built into the firing
+    test, because both turn out to matter more than the firing test does.** #19 scopes the signal to
+    methods whose primary parameter is "an entity or DTO" and which "touch **only** that type's
+    members". The firing test enforces neither: it admits any solution-declared class or struct, and
+    it compares target touches against *self* touches only, ignoring `otherTouches` entirely. Both
+    are reported under "#19's scope conditions, measured" below, and the exclusivity one changes the
+    headline result.
+  - *entity or DTO* — tested structurally: the type declares no ordinary methods of its own beyond
+    object overrides and `Deconstruct`. Deliberately **not** reforge's `*Dto` / `*Info` / `*Request`
+    name patterns — this same document measures that style of classification at 79% precision on this
+    corpus, so using it to scope a precision measurement would be circular.
   - *mapper* — the method's return type (unwrapped one level through `Task<T>` / `ValueTask<T>` /
     a single-type-argument generic) differs from the parameter's type, and the body contains an
     `ObjectCreationExpressionSyntax` or `ImplicitObjectCreationExpressionSyntax` of that return type.
@@ -372,6 +384,49 @@ Two things about the residue:
   far as the language allows. A scored rule should exclude them, or it charges people for having
   complied. One instance here, but it is a definitional exclusion rather than a tuning knob.
 
+### #19's scope conditions, measured — and one of them changes the answer
+
+#19 scopes the signal twice over, and neither condition is in the firing test:
+
+> "For each **entity or DTO**, count external methods whose primary parameter is that type and which
+> **touch only that type's members**"
+
+Both measured against all three populations:
+
+| population | entity/DTO param | **no other-receiver touches** | both | other-receiver touches exceed target |
+|---|---:|---:|---:|---:|
+| raw (361) | 306 (85%) | **76 (21%)** | 68 | 129 (36%) |
+| non-mapper (190) | 170 (89%) | **15 (8%)** | 12 | 85 (45%) |
+| refined (26) | 24 (92%) | **3 (12%)** | 3 | 3 |
+
+**The entity/DTO condition is nearly free.** 85% of raw candidates and 24 of the refined 26 already
+have a data-carrier first parameter. The two exceptions in the refined set are `Shift`
+(`CalculateScore`) and `EventSettings` (`GetAvailableEeSlots`) — EF entities that declare methods, so
+they fail the strict structural test while being entities in #19's sense. Applying it changes nothing
+material.
+
+**The exclusivity condition is not free at all — it is the whole finding.** Read literally, "touch
+only that type's members" leaves **3 of the 26**: `GateAdmissionRules.Evaluate(GateScanContext)`,
+`CalendarOccurrenceViewExtensions.ShouldHideTimeLabel(CalendarOccurrence)`, and
+`UserService.HasRequiredNameFields(Profile)`. Everything else does at least some work through another
+receiver. The worst case in the refined set is
+`AgentPromptAssembler.BuildUserContextTail(AgentUserSnapshot)` at **33 other-receiver touches against
+18 target touches** — it does nearly twice as much work elsewhere as on the parameter it supposedly
+envies, and moving it onto `AgentUserSnapshot` would drag all of that onto a DTO.
+
+So the refinement's headline depends entirely on how "touch only" is read:
+
+| reading of "touch only that type's members" | refined candidates |
+|---|---:|
+| literal — zero other-receiver touches | **3** |
+| `otherTouches <= targetTouches` | 23 |
+| ignored, as the firing test does | 26 |
+
+**The 26 figure elsewhere in this document is the third row.** It is a real population and the manual
+audit of it stands, but it is a *looser* rule than #19 specifies, and this table is the honest version
+of the precision claim. Under #19 as written the signal fires 3 times on a 157,860-line corpus — which
+is a different problem from imprecision, and a worse one for a rule meant to carry an axis.
+
 ### Decision
 
 **Reject as specified in #19. Recommend the refined form for a follow-up measurement round, not yet
@@ -383,9 +438,15 @@ Concretely:
   This is the same class of result as the rejected duplication rule: a plausible signal whose top
   hits are the wrong thing.
 - The refined form (non-mapper + scalar/bool/enum/string return + synchronous) is a usable signal at
-  ~70% precision and a tractable 26 hits.
-- Before it earns a weight it needs: a decision on the `Render*`/`Format*` class, and a re-measure
-  against a second corpus, because 26 hits on one codebase is a thin basis for a weight.
+  ~70% precision and a tractable 26 hits — **but only under the loose reading of "touch only that
+  type's members"**. Under #19's literal reading it fires 3 times on 157,860 lines. Whoever takes the
+  next round has to pick a reading first, because the two differ by 8×, and the loose one is what the
+  ~73% precision figure was measured against.
+- Before it earns a weight it needs: **a decision on how strictly to read exclusivity** (3 hits or 23
+  or 26), a decision on the `Render*`/`Format*` class, and a re-measure against a second corpus,
+  because 26 hits on one codebase is a thin basis for a weight and 3 is no basis at all.
+- The entity/DTO scope condition can be adopted for free — 24 of the 26 already satisfy it — so it
+  should be, if only to stop the rule firing on contexts and view models.
 - If it lands as a **credit** rather than a penalty, precision matters more, not less — a credit
   firing on a mapper pays for a dependency inversion. The refined form is the only version safe to
   consider as a credit.
