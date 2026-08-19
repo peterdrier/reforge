@@ -24,9 +24,20 @@ scored DTO, which already pays for its own. A property redeclared in a derived t
 once, and an inherited entry says where it came from:
 `Title (inherited from ReportEnvelopeBase)`.
 
-One consequence in the other direction, and it is correct: a type inheriting a public **method** is
-no longer a pure data carrier, because a consumer can call it. Declared behaviour has always
-disqualified a type; inherited behaviour is not different.
+One consequence in the other direction, and it is correct: a type inheriting behaviour is no longer
+a pure data carrier, because a consumer can reach it. That covers inherited public **methods**,
+inherited public **events** (subscribing is calling), and non-abstract **default interface
+methods** — behaviour the type never declares anywhere, so no walk over declarations can see it.
+Declared behaviour has always disqualified a type; inherited behaviour is not different.
+
+This predicate is deliberately **not** delegated to `CanonicalReadDtoSet.IsDataCarrier`, which
+answers nearly the same question with a better-designed allowlist. That one walks base types
+without stopping at the solution boundary, and delegating measured **+5 points on Humans** — all of
+it a single EF migration class, `ExpenseLineProofRows : Migration`, admitted as published DTO
+surface because EF's `Migration` base declares public properties. A framework base's members are
+not this section's surface to withdraw. That the other predicate walks into framework bases at all
+is arguably its own bug; it belongs to the canonical-read-DTO subsystem and is filed separately
+rather than changed from here.
 
 **Measured on Humans: no change at all** — surface 17,379 and internal 3,162 before and after. The
 corpus contains zero DTO-shaped types with a base class, so nobody has taken this path. That is the

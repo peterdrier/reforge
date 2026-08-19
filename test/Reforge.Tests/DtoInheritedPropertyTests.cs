@@ -119,4 +119,27 @@ public class DtoInheritedPropertyTests
 
         Assert.Equal(2, indexers.Count);
     }
+
+    [Fact]
+    public async Task InheritedEvent_DisqualifiesTheTypeAsADataCarrier()
+    {
+        var report = await ScoreDefaultAsync();
+
+        // An event is behaviour a consumer can subscribe to. CanonicalReadDtoSet.IsDataCarrier has
+        // always treated it so; this predicate did not, and once the walk climbs base types that
+        // gap would admit a DTO-named class whose base publishes an event.
+        Assert.DoesNotContain(Entries(report), e =>
+            e.Rule == "publicDtoType" && e.Symbol == "EventingReportInfo");
+    }
+
+    [Fact]
+    public async Task ADefaultInterfaceMethod_DisqualifiesTheTypeAsADataCarrier()
+    {
+        var report = await ScoreDefaultAsync();
+
+        // Behaviour the type never declares anywhere, reachable through the interface.
+        Assert.DoesNotContain(Entries(report), e =>
+            e.Rule == "publicDtoType" && e.Symbol == "DefaultMethodReportInfo");
+    }
+
 }

@@ -71,3 +71,28 @@ public sealed class IndexedReportInfo
     public string this[int index] => "";
     public string this[string key] => "";
 }
+
+// An event is behaviour a consumer can subscribe to, just as a method is behaviour it can call.
+// With the walk climbing base types, ignoring events would admit this type as a pure data carrier
+// on the strength of the inherited property alone.
+public class EventingEnvelopeBase
+{
+    public Guid Id { get; set; }
+    public event EventHandler? Changed;
+}
+
+public sealed class EventingReportInfo : EventingEnvelopeBase
+{
+}
+
+// A default interface method is behaviour the type never declares anywhere, so no walk over
+// declarations can see it — a consumer can still call it through the interface.
+public interface IHasDefaultBehaviour
+{
+    string Describe() => "";
+}
+
+public sealed class DefaultMethodReportInfo : IHasDefaultBehaviour
+{
+    public string Title { get; set; } = "";
+}

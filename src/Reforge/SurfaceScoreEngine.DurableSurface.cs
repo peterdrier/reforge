@@ -160,6 +160,17 @@ public sealed partial class SurfaceScoreEngine
     /// Whether a type is a pure data carrier: public properties and no behaviour.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Not</b> delegated to <see cref="CanonicalReadDtoSet.IsDataCarrier"/>, despite the two
+    /// answering nearly the same question, and the difference is load-bearing: that one walks base
+    /// types without stopping at the solution boundary. Delegating measured +5 points on Humans,
+    /// all of it one EF migration class — <c>ExpenseLineProofRows : Migration</c> — admitted as
+    /// published DTO surface because EF's <c>Migration</c> base declares public properties. A
+    /// framework base's members are not this section's surface to withdraw. (That the other
+    /// predicate walks into framework bases at all is arguably its own bug; it belongs to the
+    /// canonical-read-DTO subsystem and is filed separately rather than changed from here.)
+    /// </para>
+    /// </remarks>
     /// Counted over the type <b>and its solution-declared base chain</b>. Counting only the type's
     /// own members left a cheaper version of the hole #29 (3b) describes: hoisting every property
     /// to a base drops the type's own property count to zero, it stops looking like a data carrier
@@ -173,12 +184,14 @@ public sealed partial class SurfaceScoreEngine
         if (type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
 
         int publicProps = 0;
-        int publicMethods = 0;
+        int publicBehaviour = 0;
         for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
         {
             if (!ReferenceEquals(t, type))
             {
-                if (t.SpecialType == SpecialType.System_Object) break;
+                // Object and ValueType carry universal members rather than a published API choice,
+                // and a base outside the solution is not this section's surface either way.
+                if (t.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType) break;
                 if (!t.Locations.Any(l => l.IsInSource)) break;
             }
 
@@ -192,15 +205,33 @@ public sealed partial class SurfaceScoreEngine
                     case IPropertySymbol:
                         publicProps++;
                         break;
+                    // An event is behaviour a consumer can subscribe to, exactly as a method is
+                    // behaviour a consumer can call. `CanonicalReadDtoSet.IsDataCarrier` has always
+                    // treated it that way; this predicate did not, and once the walk climbs base
+                    // types that gap admits an empty DTO-named class whose base publishes an event.
+                    case IEventSymbol:
+                        publicBehaviour++;
+                        break;
                     case IMethodSymbol method
                         when method.MethodKind == MethodKind.Ordinary
                           && method.AssociatedSymbol is null:
-                        publicMethods++;
+                        publicBehaviour++;
                         break;
                 }
             }
         }
-        return publicProps >= 1 && publicMethods == 0;
+        // A default interface method is behaviour the type never declares anywhere, so no walk over
+        // declarations can see it. Only NON-abstract members count: an abstract one is either
+        // implemented on the type (already judged above) or unimplementable, and every record
+        // implements IEquatable<T>, so counting abstract interface members would disqualify every
+        // record in the solution.
+        foreach (var iface in type.AllInterfaces)
+            foreach (var m in iface.GetMembers())
+                if (m is { IsAbstract: false, IsStatic: false, DeclaredAccessibility: Accessibility.Public }
+                    and (IMethodSymbol or IEventSymbol))
+                    return false;
+
+        return publicProps >= 1 && publicBehaviour == 0;
     }
 
     private void ScoreInterfaceMethods(ClassifiedType c, string ruleKey, ScoreReport report)
