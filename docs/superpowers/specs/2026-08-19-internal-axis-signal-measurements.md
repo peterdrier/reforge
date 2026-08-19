@@ -87,23 +87,21 @@ extract-to-satisfy-the-linter artifact. Needed as a counterweight if any size ru
 
 ### Distribution
 
-1,319 **private** methods with bodies, by number of references in their declaring assembly:
+1,319 **private** methods with bodies, by number of **distinct callers** in their declaring assembly:
 
-| refs | methods | share | median LOC |
+| callers | methods | share | median LOC |
 |---:|---:|---:|---:|
-| 0 | 31 | 2.4% | 5 |
-| **1** | **640** | **48.5%** | 16 |
-| 2 | 372 | 28.2% | 12 |
-| 3 | 116 | 8.8% | 9 |
-| 4 | 56 | 4.2% | 7 |
-| 5+ | 104 | 7.9% | 7 |
+| 0 | 38 | 2.9% | 6 |
+| **1** | **760** | **57.6%** | 15 |
+| 2 | 330 | 25.0% | 11 |
+| 3 | 79 | 6.0% | 10 |
+| 4 | 34 | 2.6% | 8 |
+| 5+ | 78 | 5.9% | 8 |
 
-282 of the 640 single-reference helpers are under 15 LOC. Highest counts: Analyzers 66, Users 66,
-Shifts 60, GoogleIntegration 50, Web 40.
+359 of the 760 single-caller helpers are under 15 LOC.
 
-**Two corrections from review, both of which this table already reflects.** The first pass measured
-the wrong population and undercounted references, and both errors pushed methods *into* the
-one-reference bucket:
+**Three corrections from review, all of which this table already reflects.** The first pass measured
+the wrong population, undercounted references, and then counted the wrong thing entirely:
 
 - It included `internal` and `protected internal` while counting only within the declaring assembly.
   Neither is assembly-private in practice — `internal` is reachable from friend assemblies through
@@ -114,16 +112,22 @@ one-reference bucket:
   delegate or event handler (`x.Changed += Bar`, `Foo = Bar`). Counting *name nodes* catches call
   sites and method groups alike, once each.
 
-The corrected figure is **48.5%** against the first pass's 48.9% — the flaws were real but the
-aggregate barely moved, which is itself worth recording: the conclusion did not depend on them.
+- It counted **references**, not **callers**. A helper invoked twice from one method has one caller
+  and landed in the two-reference bucket — which understates exactly the population #19's rule
+  targets. References are now grouped by the member enclosing them.
+
+The population and counting fixes moved the figure barely (48.9% → 48.5%). Grouping by caller moved
+it a lot: **57.6%**. Worth separating those, because they say different things. The first two were
+flaws that happened not to matter in aggregate; the third was measuring a different quantity than the
+one under discussion, and correcting it made the finding *stronger*.
 
 ### Reading
 
-**The base rate is 48.5%.** Nearly half of all private methods in this codebase have exactly one
-reference — in a corpus nobody has accused of extract-method fragmentation, and much of which
-predates any LLM involvement.
+**The base rate is 57.6%.** Well over half of all private methods in this codebase have exactly one
+caller — in a corpus nobody has accused of extract-method fragmentation, and much of which predates
+any LLM involvement.
 
-A rule charging per standing single-reference helper would therefore charge roughly half of all
+A rule charging per standing single-caller helper would therefore charge the majority of all
 private methods in any codebase. That is not a smell detector; it is a tax on decomposition, and it points
 an agent at *inlining private methods back into their callers* — which is the opposite of the design
 sense the axis is supposed to reward. A single-caller private helper with a good name is one of the
@@ -224,7 +228,7 @@ Two further conditions, each with a stated reason:
 
 Manual read of all 26:
 
-| genuine feature envy (19) | presentation / formatting (6) |
+| genuine feature envy (19) | presentation / formatting (7) |
 |---|---|
 | `ProfileCompletion.ComputePercent(ProfileInfo)` / `(Profile)` | `AgentPromptAssembler.BuildUserContextTail(AgentUserSnapshot)` |
 | `GateAdmissionRules.Evaluate(GateScanContext)` | `AgentPromptAssembler.RenderShiftEntry(UpcomingShiftEntry)` |
@@ -232,6 +236,7 @@ Manual read of all 26:
 | `ShiftManagementService.CalculateScore(Shift)` | `PersonSearchMatcher.DisplayLabel(ContactFieldInfo)` |
 | `GoogleWorkspaceSyncService.IsDirectManagedPermission(DrivePermission)` | `TeamAdminController.BuildResourceLinkError(LinkResourceResult)` |
 | `GoogleWorkspaceSyncService.IsAnyUserPermission(DrivePermission)` | `SurveyCsvExportBuilder.QuestionHeader(SurveyExportQuestion)` |
+| | `ProfileCardViewComponent.GetDisplayName(TeamInfo)` |
 | `SurveyBranchingEvaluator.IsVisible(BranchCondition)` / `Matches(BranchClause)` | |
 | `CantinaRosterAssembler.HasAnyAllergyOrIntolerance(RosterPersonDto)` | |
 | `EarlyEntryCapacityCalculator.GetAvailableEeSlots(EventSettings)` | |
@@ -244,7 +249,9 @@ Manual read of all 26:
 | `UserService.HasRequiredNameFields(Profile)` | |
 | `CalendarOccurrenceViewExtensions.ShouldHideTimeLabel(CalendarOccurrence)` | |
 
-**≈73% precision at 26 hits across 44 sections.** `SurveyBranchingEvaluator.IsVisible(BranchCondition)`
+**≈73% precision at 26 hits across 44 sections** (19 + 7 — an earlier draft listed only 25 because
+the harness table was capped at 25 rows while the count said 26, so `GetDisplayName` was measured but
+never displayed; the audit is now over all of them). `SurveyBranchingEvaluator.IsVisible(BranchCondition)`
 and `UserStateClassifier.Classify(User)` are the shape the rule was proposed for: a predicate or
 classification about a data type, living somewhere else.
 
@@ -325,9 +332,17 @@ thing:
 "charge for exporting write capability" would produce. Worth settling before the rule is written,
 not after.
 
-Either way, the calibration problem stands: past the binary split, all remaining discriminating
-power is one observation — Users declares sixteen write interfaces, three times the next section.
-That is a real and interesting finding, and it is **n = 1**.
+The outlier matters to **one** of those readings, not both, and an earlier draft of this document
+conflated them. Under the per-interface reading, past the binary split all remaining discriminating
+power is a single observation — Users declares sixteen write interfaces, three times the next section
+— so a weight fitted to that distribution is fitted to **n = 1**. Under the per-section reading Users
+contributes exactly one charge like the other 23 positive sections, and there is no n = 1 problem at
+all.
+
+What the per-section reading is left with is a different question, and a milder one: is 24-of-44
+prevalence a property of Humans or of sectioned codebases? The weight itself is policy — every weight
+in the config is — and the measurement's contribution is the prevalence and the cost table below,
+not a number.
 
 ### Question 1 — does it double-charge `fullServiceInterfaceMethod`?
 
@@ -399,8 +414,16 @@ A **per-interface** charge measures the dimension `fullServiceInterfaceMethod` a
 coarser — that one *is* a weight change wearing a new name, and it contradicts the crossed-the-line
 rationale by charging one section sixteen times for one decision.
 
-What cannot be answered from this corpus either way is the **weight**: past the binary split the
-distribution is a single outlier, so any number picked here is fitted to Users.
+What is left open differs by reading, and it is worth being exact since the recommendation turns on
+it. **Per interface**, the weight cannot be calibrated here at all: past the binary split the
+distribution is one outlier, so any number is fitted to Users. **Per section**, there is no such
+obstacle — the weight is policy, like every weight in the config, and the measurement supplies the
+prevalence (24 of 44) and the cost table rather than a number.
+
+So the case for waiting is weaker under the reading I recommend, and it should be stated as what it
+is: **one corpus cannot say whether 55% prevalence is normal**, and a rule that fires on the majority
+of sections is worth sanity-checking against a second codebase before it ships. That is a reason to
+confirm, not the harder n = 1 objection that applies to the per-interface form.
 
 That is precisely the failure Gate 2 exists to prevent, so the gate should hold.
 

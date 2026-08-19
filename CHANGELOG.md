@@ -12,8 +12,8 @@ transform. Measured against Humans: 44 sections, 3,448 types, 157,860 prod LOC.
 **All three signals are recommended against in the form they were proposed**, which is the gate
 working rather than failing. One deletion is recommended and is free.
 
-- **Single-reference private helper.** 640 of 1,319 private methods have exactly one reference — a
-  **48.5% base rate**. As a stock this is not a smell detector, it is a tax on decomposition, and it
+- **Single-caller private helper.** 760 of 1,319 private methods have exactly one caller — a
+  **57.6% base rate**. As a stock this is not a smell detector, it is a tax on decomposition, and it
   would point an agent at inlining private methods back into their callers. Confirms the spec's
   existing position that the signal is meaningful only as a net-new delta, and supplies the evidence
   for why: the stock is half the population.
