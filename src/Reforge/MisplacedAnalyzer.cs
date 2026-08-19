@@ -699,9 +699,45 @@ public static class MisplacedAnalyzer
                 _ => null
             }
         };
-        if (receiver is null) return null;
+        // `row is { Id: > 0 }` binds `Id` to the property with no receiver expression anywhere near it:
+        // the receiver is the pattern's INPUT. Unresolved, reads of a configured DTO written as a
+        // property pattern were judged by whichever base declares the property.
+        if (receiver is null)
+            return PatternInputType(node, doc, ct)?.OriginalDefinition as INamedTypeSymbol;
 
         return doc.Model.GetTypeInfo(receiver, ct).Type?.OriginalDefinition as INamedTypeSymbol;
+    }
+
+    /// <summary>
+    /// The type a property-pattern subpattern is matched against, or null if this node is not one.
+    /// </summary>
+    /// <remarks>
+    /// The input is stated in one of four places, and the nearest one wins: the pattern's own type
+    /// (<c>is Row { … }</c>), the enclosing subpattern's property (<c>{ Row: { … } }</c>), or the
+    /// expression the whole pattern matches — an <c>is</c> operand, a switch expression's governing
+    /// expression, or a switch statement's.
+    /// </remarks>
+    private static ITypeSymbol? PatternInputType(SyntaxNode node, SolutionDocument doc, CancellationToken ct)
+    {
+        if (node.Parent is not (NameColonSyntax or ExpressionColonSyntax)) return null;
+        if (node.Ancestors().OfType<RecursivePatternSyntax>().FirstOrDefault() is not { } pattern) return null;
+        if (pattern.Type is { } declared) return doc.Model.GetTypeInfo(declared, ct).Type;
+
+        foreach (var ancestor in pattern.Ancestors())
+            switch (ancestor)
+            {
+                case SubpatternSyntax { NameColon.Name: { } outerName }:
+                    return (doc.Model.GetSymbolInfo(outerName, ct).Symbol as IPropertySymbol)?.Type;
+                case RecursivePatternSyntax { Type: { } outerType }:
+                    return doc.Model.GetTypeInfo(outerType, ct).Type;
+                case IsPatternExpressionSyntax isPattern:
+                    return doc.Model.GetTypeInfo(isPattern.Expression, ct).Type;
+                case SwitchExpressionSyntax switchExpression:
+                    return doc.Model.GetTypeInfo(switchExpression.GoverningExpression, ct).Type;
+                case SwitchStatementSyntax switchStatement:
+                    return doc.Model.GetTypeInfo(switchStatement.Expression, ct).Type;
+            }
+        return null;
     }
 
     /// <summary>
@@ -765,6 +801,26 @@ public static class MisplacedAnalyzer
         if (a is IPointerTypeSymbol pointerA)
             return b is IPointerTypeSymbol pointerB
                 && SameParameterType(pointerA.PointedAtType, pointerB.PointedAtType);
+
+        // A function pointer's identity is its whole signature, RETURN TYPE INCLUDED — unlike a
+        // method's, which is why this compares what SameSignature deliberately does not. Without it
+        // `delegate*<T, void>` and `delegate*<U, void>` fell through to symbol equality and read as
+        // different, turning a decisive collision into a near-miss.
+        if (a is IFunctionPointerTypeSymbol funcA)
+        {
+            if (b is not IFunctionPointerTypeSymbol funcB) return false;
+            var (sigA, sigB) = (funcA.Signature, funcB.Signature);
+            if (sigA.Parameters.Length != sigB.Parameters.Length) return false;
+            if (sigA.CallingConvention != sigB.CallingConvention) return false;
+            if (sigA.RefKind != sigB.RefKind) return false;
+            if (!SameParameterType(sigA.ReturnType, sigB.ReturnType)) return false;
+            for (int i = 0; i < sigA.Parameters.Length; i++)
+            {
+                if (sigA.Parameters[i].RefKind != sigB.Parameters[i].RefKind) return false;
+                if (!SameParameterType(sigA.Parameters[i].Type, sigB.Parameters[i].Type)) return false;
+            }
+            return true;
+        }
 
         if (a is INamedTypeSymbol { IsGenericType: true } namedA
             && b is INamedTypeSymbol { IsGenericType: true } namedB)

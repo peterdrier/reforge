@@ -194,3 +194,34 @@ public class SlotWeight
 
     public static explicit operator int(SlotWeight value) => value.Value;
 }
+
+/// <summary>
+/// The destination half of the function-pointer collision fixture. A function pointer's identity is its
+/// whole signature, so <c>delegate*&lt;U, void&gt;</c> here and <c>delegate*&lt;T, void&gt;</c> on the
+/// moving method are one C# signature — compared by symbol equality they read as different.
+/// </summary>
+public class PointerPassthroughService
+{
+    public unsafe string PointerPassthrough<U>(delegate*<U, void> callback) => callback is null ? "" : "set";
+
+    /// <summary>Ordinary behavior, so a caller can make this type the dominant destination.</summary>
+    public string Describe(int value) => $"pointer {value}";
+}
+
+/// <summary>
+/// A configured-only DTO whose properties are inherited and read through a property pattern.
+/// </summary>
+public class PatternedRowBase
+{
+    public int Id { get; init; }
+    public string Slug { get; init; } = "";
+    public string Code { get; init; } = "";
+
+    public string Recompute() => Slug;
+}
+
+/// <summary>A configured-only DTO read by pattern rather than by member access.</summary>
+public class PatternedSummaryResult : PatternedRowBase
+{
+    public string Label { get; init; } = "";
+}

@@ -697,3 +697,31 @@ public class OverridingPipe : OverriddenPipeBase
 {
     public override string DescribeVirtually(int value) => base.DescribeVirtually(value) + "!";
 }
+
+/// <summary>
+/// Three reads of a configured DTO's <i>inherited</i> properties written as a property pattern. A
+/// pattern name has no receiver expression beside it — the receiver is the pattern's input — so the
+/// reads were judged against the unconfigured base that declares them.
+/// </summary>
+public class PatternReadingRowMapper
+{
+    public bool SummarizePatternedRow(PatternedSummaryResult row) =>
+        row is { Id: > 0, Slug: not null, Code: not null };
+}
+
+/// <summary>
+/// A dominant pipe whose namesake at the destination differs only in the name of a type parameter
+/// inside a function-pointer parameter. C# calls that one signature.
+/// </summary>
+public class PointerPassthroughReporter
+{
+    private readonly PointerPassthroughService _pointers = new();
+
+    public unsafe string PointerPassthrough<T>(delegate*<T, void> callback)
+    {
+        var first = _pointers.Describe(1);
+        var second = _pointers.Describe(2);
+        var third = _pointers.Describe(3);
+        return callback is null ? first : $"{second}{third}";
+    }
+}

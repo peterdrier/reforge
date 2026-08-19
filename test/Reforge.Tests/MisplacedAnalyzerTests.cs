@@ -615,4 +615,34 @@ public class MisplacedAnalyzerTests
         Assert.Equal(MisplacedVerdict.Blocked, finding.Verdict);
         Assert.Contains("overridden by OverridingPipe", finding.BlockedBy);
     }
+
+    [Fact]
+    public async Task Analyze_PropertyPatternReadsOfAConfiguredDto_AreData()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizePatternedRow");
+
+        // `row is { Id: > 0 }` binds `Id` to the property with no receiver expression beside it — the
+        // receiver is the pattern's input. Unresolved, reads of a configured DTO written as a pattern
+        // were judged against whichever base declares the property, so a mapper read as a move.
+        Assert.NotNull(finding);
+        Assert.Equal(MisplacedVerdict.Mapper, finding.Verdict);
+        Assert.Equal(3, finding.TargetDataTouches);
+        Assert.Equal(0, finding.TargetBehaviorTouches);
+    }
+
+    [Fact]
+    public async Task Analyze_NamesakeDifferingOnlyInsideAFunctionPointer_IsADecisiveCollision()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "PointerPassthrough");
+
+        // A function pointer's identity is its whole signature, so `delegate*<T, void>` and
+        // `delegate*<U, void>` are one C# signature. Falling through to symbol equality made the two
+        // type parameters look different and reported a near-miss instead of a collision.
+        Assert.NotNull(finding);
+        Assert.Equal(MisplacedVerdict.MoveWouldDuplicate, finding.Verdict);
+        Assert.NotNull(finding.DuplicateOf);
+        Assert.DoesNotContain("different parameter", finding.DuplicateOf);
+    }
 }
