@@ -14,6 +14,13 @@ because the copies share a *shape* rather than lines.
 `SolutionWalker.ProductionDocumentsAsync` is that loop, once. The four commands keep only their
 innermost body and lose a nesting level each.
 
+One thing the extraction had to get right and did not at first: **cancellation throws, it does not
+end the sequence.** Ending it early turns a cancelled walk into a normal end-of-input, and every one
+of these commands accumulates findings and then formats them — so a Ctrl+C mid-audit would print
+partial results and exit 0, which anything automated reads as "no findings". That is the S001 failure
+mode with a new cause. Before extraction the next `GetCompilationAsync` saw the cancelled token and
+threw; that behaviour is preserved, and two tests pin it.
+
 **The interesting part is what it did to reforge's own score**, because #31 proposed this as "the
 first honest test of whether the score responds to a change that genuinely improves the code":
 
