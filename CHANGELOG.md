@@ -35,7 +35,8 @@ points (5.2% of `fullServiceInterfaceMethod`), filed as #54; the report-side amb
   mapper, the refactor the rule implies (move it onto the type it reads) is a dependency inversion:
   the entity would depend on its own projection. A manual read of the non-mapper top 15 finds five
   more mappers the structural test missed. A refinement does work — non-mapper, returns a
-  scalar/bool/enum/string, synchronous — landing at **26 candidates at roughly 70% precision**, with
+  any primitive or enum (including nullable), synchronous — landing at **26 candidates at roughly 70%
+  precision**, with
   the residue a nameable class (`Render*` / `Format*` / `Display*`). Recommended for one more round,
   not for a weight. Two of #19's own scope conditions are not in the firing test and were measured
   separately. The entity/DTO condition is **not established**: 24 of the 26 pass a data-carrier proxy,

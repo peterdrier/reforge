@@ -82,9 +82,18 @@ than left implicit in code that no longer exists. Each is a few lines of Roslyn 
   - *mapper* — the method's return type (unwrapped one level through `Task<T>` / `ValueTask<T>` /
     a single-type-argument generic) differs from the parameter's type, and the body contains an
     `ObjectCreationExpressionSyntax` or `ImplicitObjectCreationExpressionSyntax` of that return type.
-  - *scalar result* — return type is an enum or one of `bool`, `string`, `int`, `long`, `decimal`,
-    `double`, `float`, `DateTime`, after unwrapping **only** `Task<T>` / `ValueTask<T>`. Not any
-    single-argument generic: unwrapping those would reduce `IEnumerable<string>`, `List<int>` or
+  - *scalar result* — return type is an enum or **any primitive `SpecialType`** (`bool`, `string`,
+    `char`, `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `decimal`, `double`,
+    `float`, `DateTime`), after unwrapping `Task<T>` / `ValueTask<T>` **and `Nullable<T>`**. The first
+    cut listed eight primitives that came to mind, which silently excluded `byte`, `short`, `char`,
+    `uint`, `ulong` and every nullable primitive or enum — all of which have exactly the
+    answers-a-question-about-the-parameter shape this filter selects for. `Nullable<T>` is the one
+    generic worth unwrapping alongside the await wrappers, because `bool?` and `MyEnum?` are the same
+    answer with a third "unknown" case, whereas `List<T>` is a container. **Correcting this changed
+    nothing on this corpus** — 36 intermediate and 26 refined, with identical membership — because
+    Humans returns none of the omitted primitives from a feature-envy candidate. Recorded because the
+    predicate was wrong even though the number was right, which is the second time that has happened
+    to this same filter. Not any other single-argument generic: unwrapping those would reduce `IEnumerable<string>`, `List<int>` or
     `Result<MyEnum>` to their argument and call them scalar, and a method returning a container is a
     projection — the population this refinement exists to exclude. (Correcting this moved the
     intermediate scalar set 38 → 36 and left the refined 26 unchanged, because the container-returning
