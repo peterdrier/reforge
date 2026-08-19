@@ -281,12 +281,17 @@ public static class SectionMetricsAnalyzer
             {
                 _cognitive.Add(m.Cognitive);
                 _cyclomatic.Add(m.Cyclomatic);
-                if (m.Cognitive > _maxCognitive)
+                // Set on the first sample, then only on a strict improvement. A section of
+                // straight-line code scores 0 everywhere, and `0 > 0` never fires — so a strict
+                // comparison alone left a non-empty distribution claiming max 0 held by no method,
+                // which is not what the field promises. Ties go to the first method seen, which is
+                // deterministic because the classified corpus is.
+                if (_maxCognitiveMethod.Length == 0 || m.Cognitive > _maxCognitive)
                 {
                     _maxCognitive = m.Cognitive;
                     _maxCognitiveMethod = m.Name;
                 }
-                if (m.Cyclomatic > _maxCyclomatic)
+                if (_maxCyclomaticMethod.Length == 0 || m.Cyclomatic > _maxCyclomatic)
                 {
                     _maxCyclomatic = m.Cyclomatic;
                     _maxCyclomaticMethod = m.Name;

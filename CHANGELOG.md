@@ -82,6 +82,10 @@ Three corrections from review, all of which the metrics pass made newly load-bea
   the symbol in hand therefore found a bodyless declaration and dropped the method entirely.
   Resolving through the implementation part, and preferring whichever declaration carries a body,
   covers that and the partial-type ordering case with it.
+- **A distribution with samples always names the method holding its max.** The max was tracked
+  with a strict comparison against a 0 seed, so a section of straight-line code — every cognitive
+  score 0 — never updated the name, and reported `max: 0` held by nobody. Ties now go to the first
+  method sampled, which is deterministic because the classified corpus is.
 - **`--list-groups` covers sections that scored nothing.** A section whose types are all unscored
   has metrics and no `GroupScore`, so enumerating only the scored groups dropped it — precisely the
   section a size-ranked listing needs to show. The listing (and a new `sections` array in the JSON)

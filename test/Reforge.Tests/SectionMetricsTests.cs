@@ -260,6 +260,26 @@ public class SectionMetricsTests
         Assert.Equal(solution.Methods, bySection.Values.Sum(m => m.Methods));
     }
 
+    [Fact]
+    public async Task Analyze_NamesAMaxMethodEvenWhenEveryScoreIsZero()
+    {
+        var report = await ScoreDefaultAsync();
+
+        // A section of straight-line code scores 0 for every method, and `0 > 0` never fires — so
+        // a strict comparison alone left a non-empty distribution claiming a max held by no method.
+        foreach (var (section, m) in report.MetricsBySection)
+        {
+            if (m.Methods == 0) continue;
+            Assert.False(string.IsNullOrEmpty(m.Cognitive.MaxMethod),
+                $"{section} samples {m.Methods} methods but names no cognitive max");
+            Assert.False(string.IsNullOrEmpty(m.Cyclomatic.MaxMethod),
+                $"{section} samples {m.Methods} methods but names no cyclomatic max");
+        }
+
+        // The sample solution really does contain such a section — otherwise this test proves nothing.
+        Assert.Contains(report.MetricsBySection.Values, m => m.Methods > 0 && m.Cognitive.Max == 0);
+    }
+
     // ---------------- Output ----------------
 
     [Fact]
