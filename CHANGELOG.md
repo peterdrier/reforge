@@ -12,12 +12,12 @@ transform. Measured against Humans: 44 sections, 3,448 types, 157,860 prod LOC.
 **All three signals are recommended against in the form they were proposed**, which is the gate
 working rather than failing. One deletion is recommended and is free.
 
-- **Single-caller private helper.** 706 of 1,444 non-public methods have exactly one caller — a
-  **48.9% base rate**. As a stock this is not a smell detector, it is a tax on decomposition, and it
+- **Single-reference private helper.** 640 of 1,319 private methods have exactly one reference — a
+  **48.5% base rate**. As a stock this is not a smell detector, it is a tax on decomposition, and it
   would point an agent at inlining private methods back into their callers. Confirms the spec's
   existing position that the signal is meaningful only as a net-new delta, and supplies the evidence
   for why: the stock is half the population.
-- **Feature envy.** 385 candidates as specified, of which **184 (47.8%) are mappers** — and for a
+- **Feature envy.** 360 candidates as specified, of which **170 (47.2%) are mappers** — and for a
   mapper, the refactor the rule implies (move it onto the type it reads) is a dependency inversion:
   the entity would depend on its own projection. A manual read of the non-mapper top 15 finds five
   more mappers the structural test missed. A refinement does work — non-mapper, returns a

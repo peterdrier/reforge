@@ -35,15 +35,18 @@ project, excluding `obj/`, `Migrations/`, `*.g.cs` and `*.Designer.cs`.
 The harness is not committed, so the **signal definitions are stated as predicates** below rather
 than left implicit in code that no longer exists. Each is a few lines of Roslyn over the same walk:
 
-- **Single-caller helper.** A method declaration whose symbol is `private` / `internal` /
-  `protected internal`, has a body, and whose `OriginalDefinition` is the resolved target of exactly
-  one `InvocationExpressionSyntax` or method-group `ArgumentSyntax` in its declaring assembly.
-  (Counting per assembly is exact for private members, which cannot be called from outside it.)
+- **Single-reference private helper.** A method declaration whose symbol is `private`, has a body,
+  and whose `OriginalDefinition` is the resolved symbol of exactly one `SimpleNameSyntax` node in its
+  declaring assembly (excluding the declaration's own name). Counting name nodes rather than
+  invocations is what makes a method group — a delegate assignment, an event subscription — count as
+  a reference; counting per assembly is exact for `private`, which nothing outside can reach.
 - **Feature envy.** A method with at least one parameter, whose first parameter's type is a
-  solution-declared class or struct other than the containing type; counting
-  `MemberAccessExpressionSyntax` nodes in the body whose resolved symbol's `ContainingType` is that
-  parameter's type (`targetTouches`) versus the containing type (`selfTouches`); fires when
-  `targetTouches >= 3 && targetTouches > selfTouches * 2`.
+  solution-declared class or struct other than the containing type. `targetTouches` counts
+  `MemberAccessExpressionSyntax` nodes whose **receiver resolves to that first parameter**;
+  `selfTouches` counts explicit `this.X` accesses plus unqualified names resolving to an instance
+  member of the containing type (implicit `this`). Fires when
+  `targetTouches >= 3 && targetTouches > selfTouches * 2`. Binding to the receiver rather than to the
+  member's declaring type is load-bearing — see the correction recorded under Signal B.
   - *mapper* — the method's return type (unwrapped one level through `Task<T>` / `ValueTask<T>` /
     a single-type-argument generic) differs from the parameter's type, and the body contains an
     `ObjectCreationExpressionSyntax` or `ImplicitObjectCreationExpressionSyntax` of that return type.
@@ -84,28 +87,44 @@ extract-to-satisfy-the-linter artifact. Needed as a counterweight if any size ru
 
 ### Distribution
 
-1,444 non-public methods with bodies, by number of call sites in their declaring assembly:
+1,319 **private** methods with bodies, by number of references in their declaring assembly:
 
-| callers | methods | share | median LOC |
+| refs | methods | share | median LOC |
 |---:|---:|---:|---:|
-| 0 | 50 | 3.5% | 7 |
-| **1** | **706** | **48.9%** | 16 |
-| 2 | 402 | 27.8% | 12 |
-| 3 | 117 | 8.1% | 9 |
-| 4 | 56 | 3.9% | 7 |
-| 5+ | 113 | 7.8% | 7 |
+| 0 | 31 | 2.4% | 5 |
+| **1** | **640** | **48.5%** | 16 |
+| 2 | 372 | 28.2% | 12 |
+| 3 | 116 | 8.8% | 9 |
+| 4 | 56 | 4.2% | 7 |
+| 5+ | 104 | 7.9% | 7 |
 
-315 of the 706 single-caller helpers are under 15 LOC. Highest counts: Shifts 86, Users 67,
-Analyzers 66, GoogleIntegration 55, Web 41.
+282 of the 640 single-reference helpers are under 15 LOC. Highest counts: Analyzers 66, Users 66,
+Shifts 60, GoogleIntegration 50, Web 40.
+
+**Two corrections from review, both of which this table already reflects.** The first pass measured
+the wrong population and undercounted references, and both errors pushed methods *into* the
+one-reference bucket:
+
+- It included `internal` and `protected internal` while counting only within the declaring assembly.
+  Neither is assembly-private in practice — `internal` is reachable from friend assemblies through
+  `InternalsVisibleTo` (the test projects this walk excludes), `protected internal` by deriving from
+  another assembly — so their callers could not be counted from here at all. #19 proposes a
+  **private** helper rule; that is now the population.
+- It counted invocations plus argument-position identifiers, which misses a method group used as a
+  delegate or event handler (`x.Changed += Bar`, `Foo = Bar`). Counting *name nodes* catches call
+  sites and method groups alike, once each.
+
+The corrected figure is **48.5%** against the first pass's 48.9% — the flaws were real but the
+aggregate barely moved, which is itself worth recording: the conclusion did not depend on them.
 
 ### Reading
 
-**The base rate is 48.9%.** Nearly half of all non-public methods in this codebase have exactly one
-caller — in a corpus nobody has accused of extract-method fragmentation, and much of which predates
-any LLM involvement.
+**The base rate is 48.5%.** Nearly half of all private methods in this codebase have exactly one
+reference — in a corpus nobody has accused of extract-method fragmentation, and much of which
+predates any LLM involvement.
 
-A rule charging per standing single-caller helper would therefore charge roughly half of all private
-methods in any codebase. That is not a smell detector; it is a tax on decomposition, and it points
+A rule charging per standing single-reference helper would therefore charge roughly half of all
+private methods in any codebase. That is not a smell detector; it is a tax on decomposition, and it points
 an agent at *inlining private methods back into their callers* — which is the opposite of the design
 sense the axis is supposed to reward. A single-caller private helper with a good name is one of the
 cheapest legitimate things in programming.
@@ -139,7 +158,7 @@ on the wrong shape pays an agent to do the wrong thing.
 Criteria: primary parameter is a solution-declared class or struct other than the containing type;
 the body touches its members at least 3 times; and at least twice as often as the containing type's.
 
-**385 candidates.**
+**360 candidates.**
 
 Manual read of the top 15 — the gate's requirement — finds the population dominated by one shape:
 
@@ -163,13 +182,31 @@ rule implies is actively wrong for this shape, and this shape is most of the pop
 
 Excluding methods that construct their own return type from the parameter:
 
-- **184 of 385 (47.8%) are mappers** by that structural test.
-- 201 remain.
+- **170 of 360 (47.2%) are mappers** by that structural test.
+- 190 remain.
 
 But a manual read of the *non-mapper* top 15 still finds `MapDetailIssue`, `MapList`,
 `MapTeamSummary`, `CloneUserInfoFields` and `EventSettingsFormMapper.Apply` — at least 5 of 15 are
 mappers the structural test missed, because they build collections, mutate an existing instance, or
 construct through a helper. **True precision after this filter is well under 50%.**
+
+### A correction that mattered here more than in Signal A
+
+The first pass counted a "touch" as any member access whose *declaring type* was the parameter's
+type, regardless of the receiver — so a second `T`-valued local, field or static counted toward the
+numerator. And it counted `selfTouches` only from `MemberAccessExpressionSyntax`, missing implicit
+`this` access entirely, which is how most self-access is actually written. Both biases point the
+same way: toward firing.
+
+Touches are now bound to the receiver (the member access must be *on the first parameter*), and
+implicit-`this` names count toward `selfTouches`. Raw candidates fell 385 → 360 and the mapper share
+barely moved, but **membership changed at the margins** — the case I had held up as the textbook hit,
+`MailerAdminController.DriftedMoreThanTenPercent`, drops out under receiver binding. Its 18 touches
+were not all on its parameter.
+
+That is the useful lesson: the aggregate was robust to the flaw, the individual findings were not.
+Anyone weighting this rule would have been weighting the aggregate, but anyone *acting* on it reads
+the list.
 
 ### Refinement 2 — non-mapper, scalar result, synchronous
 
@@ -183,19 +220,19 @@ Two further conditions, each with a stated reason:
   persistence and IO — `UpdateLineItemAsync`, `SyncFolderBasedDocumentAsync`, `UpsertContactAsync`.
   Moving those onto the data type would put IO on a DTO.
 
-**385 → 201 → 38 → 26 candidates.**
+**360 → 190 → 38 → 26 candidates.**
 
 Manual read of all 26:
 
-| genuine feature envy (≈19) | presentation / formatting (≈7) |
+| genuine feature envy (19) | presentation / formatting (6) |
 |---|---|
-| `MailerAdminController.DriftedMoreThanTenPercent(ImportPlanCounts)` | `AgentPromptAssembler.BuildUserContextTail(AgentUserSnapshot)` |
-| `ProfileCompletion.ComputePercent(ProfileInfo)` / `(Profile)` | `AgentPromptAssembler.RenderShiftEntry(UpcomingShiftEntry)` |
-| `GateAdmissionRules.Evaluate(GateScanContext)` | `ProfileApiController.FormatContactFieldDetail(ContactFieldDto)` |
-| `FeedbackService.NeedsReply(FeedbackReport)` | `ProfileCardViewComponent.GetDisplayName(TeamInfo)` |
+| `ProfileCompletion.ComputePercent(ProfileInfo)` / `(Profile)` | `AgentPromptAssembler.BuildUserContextTail(AgentUserSnapshot)` |
+| `GateAdmissionRules.Evaluate(GateScanContext)` | `AgentPromptAssembler.RenderShiftEntry(UpcomingShiftEntry)` |
+| `FeedbackService.NeedsReply(FeedbackReport)` | `ProfileApiController.FormatContactFieldDetail(ContactFieldDto)` |
 | `ShiftManagementService.CalculateScore(Shift)` | `PersonSearchMatcher.DisplayLabel(ContactFieldInfo)` |
 | `GoogleWorkspaceSyncService.IsDirectManagedPermission(DrivePermission)` | `TeamAdminController.BuildResourceLinkError(LinkResourceResult)` |
-| `SurveyBranchingEvaluator.IsVisible(BranchCondition)` / `Matches(BranchClause)` | `SurveyCsvExportBuilder.QuestionHeader(SurveyExportQuestion)` |
+| `GoogleWorkspaceSyncService.IsAnyUserPermission(DrivePermission)` | `SurveyCsvExportBuilder.QuestionHeader(SurveyExportQuestion)` |
+| `SurveyBranchingEvaluator.IsVisible(BranchCondition)` / `Matches(BranchClause)` | |
 | `CantinaRosterAssembler.HasAnyAllergyOrIntolerance(RosterPersonDto)` | |
 | `EarlyEntryCapacityCalculator.GetAvailableEeSlots(EventSettings)` | |
 | `UserStateClassifier.Classify(User)` | |
@@ -203,16 +240,24 @@ Manual read of all 26:
 | `SurveyController.IsAnswerable(SurveyDetail)` | |
 | `ExpenseReportService.ResolveSyncState(HoldedExpenseOutboxEvent)` | |
 | `Service.ClassifyStripeSession(StoreCheckoutSessionData)` | |
-| `GoogleWorkspaceSyncService.IsAnyUserPermission(DrivePermission)` | |
 | `GateScanCardViewModel.TooEarlyReason(GateScanResult)` | |
+| `UserService.HasRequiredNameFields(Profile)` | |
+| `CalendarOccurrenceViewExtensions.ShouldHideTimeLabel(CalendarOccurrence)` | |
 
-**≈70% precision at 26 hits across 44 sections.** `DriftedMoreThanTenPercent(ImportPlanCounts)` — a
-predicate about a data type, living on a controller — is the textbook case the rule was proposed for.
+**≈73% precision at 26 hits across 44 sections.** `SurveyBranchingEvaluator.IsVisible(BranchCondition)`
+and `UserStateClassifier.Classify(User)` are the shape the rule was proposed for: a predicate or
+classification about a data type, living somewhere else.
 
-The residual false positives are a coherent, nameable class: `Render*` / `Format*` / `Display*` /
-`Build*Label`. Whether they are false positives at all is arguable — a display name for a `TeamInfo`
-is a fact about a `TeamInfo` — but pushing view concerns onto a DTO is a trade many teams refuse, so
-they should not be charged without the owner agreeing to that position.
+Two things about the residue:
+
+- The false positives are a coherent, nameable class — `Render*` / `Format*` / `Display*` /
+  `Build*Label`. Whether they are false positives at all is arguable: a display name for a `TeamInfo`
+  is a fact about a `TeamInfo`. But pushing view concerns onto a DTO is a trade many teams refuse, so
+  they should not be charged without the owner taking that position first.
+- **One of the 26 is already an extension method** (`ShouldHideTimeLabel`). An extension method is
+  C#'s idiom for "this belongs on the type and cannot be put there", i.e. the fix already applied as
+  far as the language allows. A scored rule should exclude them, or it charges people for having
+  complied. One instance here, but it is a definitional exclusion rather than a tuning knob.
 
 ### Decision
 
