@@ -621,3 +621,18 @@ public class CastingConduitReporter
         return $"{greeting}/{recent.Count}";
     }
 }
+
+/// <summary>
+/// Four calls into another section, none of them written as a member access: two additions, a negation
+/// and an explicit conversion, all user-defined on <c>SlotWeight</c>.
+/// </summary>
+public class OperatorUsingReporter
+{
+    public int SumSlotWeights(SlotWeight a, SlotWeight b, SlotWeight c)
+    {
+        var total = a + b;
+        total = total + c;
+        var negated = -total;
+        return (int)negated;
+    }
+}

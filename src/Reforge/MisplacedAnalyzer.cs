@@ -343,9 +343,15 @@ public static class MisplacedAnalyzer
             // ElementBindingExpression is the `[0]` in `table?[0]` — the conditional-access counterpart of
             // ElementAccessExpression, and a separate node type, so handling only the latter missed
             // null-safe indexer reads the same way the conduit walk once missed `?.` calls.
+            // A user-defined operator hangs off the OPERATOR expression, the same way a constructor hangs
+            // off the creation expression and an indexer off the element access: `left + right` has no
+            // identifier that binds to `op_Addition`, so working on a foreign section through its
+            // operators measured as nothing at all. Conversions included — `(int)weight` can be a call.
             if (node is not (IdentifierNameSyntax or GenericNameSyntax
                 or BaseObjectCreationExpressionSyntax
-                or ElementAccessExpressionSyntax or ElementBindingExpressionSyntax)) continue;
+                or ElementAccessExpressionSyntax or ElementBindingExpressionSyntax
+                or BinaryExpressionSyntax or PrefixUnaryExpressionSyntax or PostfixUnaryExpressionSyntax
+                or AssignmentExpressionSyntax or CastExpressionSyntax)) continue;
             if (IsInsideNameOf(node)) continue;
 
             // A type name inside `new T(...)` would otherwise be counted a second time, once as the
@@ -356,6 +362,14 @@ public static class MisplacedAnalyzer
             var touched = doc.Model.GetSymbolInfo(node, ct).Symbol;
             if (touched is null) continue;
             if (touched is not (IMethodSymbol or IPropertySymbol or IFieldSymbol or IEventSymbol)) continue;
+
+            // Operator-shaped nodes are only a touch when the operator is USER-DEFINED. `int + int`
+            // resolves to a builtin on System.Int32 and `x as T` to nothing; `_dep!` and a reference
+            // cast are wrappers this walk already reads through elsewhere, not calls.
+            if (node is BinaryExpressionSyntax or PrefixUnaryExpressionSyntax or PostfixUnaryExpressionSyntax
+                    or AssignmentExpressionSyntax or CastExpressionSyntax
+                && touched is not IMethodSymbol
+                    { MethodKind: MethodKind.UserDefinedOperator or MethodKind.Conversion }) continue;
 
             // A local function's body is walked here too, but the local function symbol itself is
             // not another type's member and carries no section.

@@ -174,3 +174,23 @@ public class IndexedSummaryResult : IndexedRowBase
 {
     public string Label { get; init; } = "";
 }
+
+/// <summary>
+/// Behavior reached through <b>operators</b> rather than through named members. The operator symbol hangs
+/// off the operator expression, so a name-only walk measured uses of <c>+</c> as nothing at all.
+/// <c>Describe</c> keeps this off the structural data-carrier path — it is behavior, not a row.
+/// </summary>
+public class SlotWeight
+{
+    public SlotWeight(int value) => Value = value;
+
+    public int Value { get; }
+
+    public string Describe() => $"weight {Value}";
+
+    public static SlotWeight operator +(SlotWeight left, SlotWeight right) => new(left.Value + right.Value);
+
+    public static SlotWeight operator -(SlotWeight value) => new(-value.Value);
+
+    public static explicit operator int(SlotWeight value) => value.Value;
+}

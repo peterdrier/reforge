@@ -555,4 +555,19 @@ public class MisplacedAnalyzerTests
             Assert.Equal(3, finding.TargetBehaviorTouches);
         }
     }
+
+    [Fact]
+    public async Task Analyze_UserDefinedOperatorUses_AreMeasured()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SumSlotWeights");
+
+        // `a + b` carries `op_Addition` on the binary expression, the same way `new T()` carries its
+        // constructor and `t[0]` its indexer. Measured by name only, a method whose entire body works
+        // on another section through operators touched nothing at all and never appeared.
+        Assert.NotNull(finding);
+        Assert.Equal("Services", finding.TargetSection);
+        Assert.Equal(4, finding.TargetBehaviorTouches);
+        Assert.Equal(0, finding.OwnTouches);
+    }
 }
