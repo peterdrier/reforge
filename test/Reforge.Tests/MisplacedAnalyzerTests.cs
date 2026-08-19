@@ -222,6 +222,51 @@ public class MisplacedAnalyzerTests
     }
 
     [Fact]
+    public async Task Analyze_NamesakeDifferingOnlyInRefKind_IsADecisiveCollision()
+    {
+        var report = await AnalyzeAsync();
+        var finding = report.Findings.FirstOrDefault(f =>
+            f.Method.Contains("RefKindClashReporter", StringComparison.Ordinal));
+
+        Assert.NotNull(finding);
+        Assert.Equal(MisplacedVerdict.MoveWouldDuplicate, finding.Verdict);
+        // C# refuses two declarations differing only in ref/out/in (CS0663), so `TryPassthrough(ref string)`
+        // cannot join a type declaring `TryPassthrough(out string)`. Comparing the RefKind enum exactly
+        // rejected the match and then reported it as "different parameter types".
+        Assert.Contains("same signature", finding.DuplicateOf!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Analyze_InheritedPropertiesOfAConfiguredDto_AreData()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "MapInheritedSummary");
+
+        Assert.NotNull(finding);
+        // A member's containing type is where it is DECLARED, not what the caller holds. Three of these
+        // four reads resolve to BehaviorfulRowBase, which no config rule names, so they counted as
+        // behavior calls on the base and made a mapper into a move.
+        Assert.Equal(MisplacedVerdict.Mapper, finding.Verdict);
+        Assert.Equal(0, finding.TargetBehaviorTouches);
+        Assert.Equal(4, finding.TargetDataTouches);
+    }
+
+    [Fact]
+    public async Task Analyze_ContractSuppliedToADerivedType_IsBlocked()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "RenderInheritedAsync");
+
+        Assert.NotNull(finding);
+        // InheritedContractReporter : Base, IInheritedContractReport is served by the inherited Base
+        // method. Base.AllInterfaces is empty, so asked from the declaring type there is no contract to
+        // find — while moving the method would leave the derived type without an implementation.
+        Assert.Equal(MisplacedVerdict.Blocked, finding.Verdict);
+        Assert.Contains("IInheritedContractReport", finding.BlockedBy!, StringComparison.Ordinal);
+        Assert.Contains("InheritedContractReporter", finding.BlockedBy!, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Analyze_MethodSpanningThreeSections_IsAnOrchestratorNotAMove()
     {
         var report = await AnalyzeAsync();

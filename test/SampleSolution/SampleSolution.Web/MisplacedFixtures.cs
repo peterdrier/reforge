@@ -353,3 +353,58 @@ public class LocalFunctionReporter
         }
     }
 }
+
+/// <summary>
+/// A pipe whose namesake at the destination differs only in how a parameter is passed
+/// (<c>ref</c> here, <c>out</c> there). C# cannot declare both, so this is a decisive collision.
+/// </summary>
+public class RefKindClashReporter
+{
+    private readonly RefKindTargetService _target = new();
+
+    public bool TryPassthrough(ref string value)
+    {
+        value = _target.Echo(value);
+        var again = _target.Echo(value);
+        var third = _target.Echo(again);
+        return third.Length > 0;
+    }
+}
+
+/// <summary>
+/// Reads three inherited properties of a configured DTO plus one it declares itself. All four are data
+/// reads: the config rule names the type the caller is holding, and inheritance does not turn a property
+/// into behavior.
+/// </summary>
+public class InheritedDtoRowMapper
+{
+    public string MapInheritedSummary(InheritedSummaryResult summary) =>
+        $"{summary.Id}|{summary.Slug}|{summary.Id}|{summary.Label}";
+}
+
+/// <summary>
+/// The delegating pipe again, declared on a base whose <b>derived</b> type is what binds it to an
+/// interface. Asked from this class there is no contract to find, which is why the analyzer needs an
+/// index built from every type rather than a lookup on the declaring one.
+/// </summary>
+public class InheritedContractReporterBase
+{
+    private readonly GreetingService _greetings = new();
+
+    public async Task<string> RenderInheritedAsync(int userId)
+    {
+        var greeting = await _greetings.GetGreetingAsync(userId);
+        var recent = await _greetings.GetRecentGreetingsAsync(userId);
+        await _greetings.RecordGreetingAsync(userId, greeting);
+        return $"{greeting}/{recent.Count}";
+    }
+}
+
+public interface IInheritedContractReport
+{
+    Task<string> RenderInheritedAsync(int userId);
+}
+
+public class InheritedContractReporter : InheritedContractReporterBase, IInheritedContractReport
+{
+}

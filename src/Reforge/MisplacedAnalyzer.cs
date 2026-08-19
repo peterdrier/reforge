@@ -182,6 +182,12 @@ public static class MisplacedAnalyzer
             classified.Where(c => c.Tags.Contains("dto")).Select(c => SolutionClassifier.TypeKey(c.Type)),
             StringComparer.Ordinal);
 
+        // Contracts a method satisfies for some OTHER type. `Derived : Base, IFoo` can be served by an
+        // inherited `Base.M`, and Base.AllInterfaces does not mention IFoo — so a dominant Base.M read as
+        // freely movable, when relocating it leaves Derived without its IFoo.M and the solution will not
+        // compile. Built once here because the question cannot be answered from the declaring type alone.
+        var inheritedContracts = BuildInheritedContractIndex(classified, ct);
+
         // Phase 1 — measure every method's touches. No verdicts yet: the section dependency graph is
         // a property of the whole solution, and a verdict that consults it cannot be reached until
         // every method has been counted.
@@ -207,7 +213,7 @@ public static class MisplacedAnalyzer
 
         // Phase 2 — verdicts, now that "is this target a foundation?" is answerable.
         var findings = measured
-            .Select(m => Judge(m, sections, foundationRatio))
+            .Select(m => Judge(m, sections, inheritedContracts, foundationRatio))
             .OfType<MisplacedMethod>()
             .OrderByDescending(f => f.TargetBehaviorTouches + f.TargetDataTouches)
             .ThenBy(f => f.File, StringComparer.Ordinal)
@@ -346,7 +352,7 @@ public static class MisplacedAnalyzer
                 continue;
             }
 
-            if (IsData(owner.OriginalDefinition, touched, configuredDtos))
+            if (IsData(owner.OriginalDefinition, AccessedThrough(node, doc, ct), touched, configuredDtos))
             {
                 data[section] = data.TryGetValue(section, out var d) ? d + 1 : 1;
                 continue;
@@ -384,6 +390,7 @@ public static class MisplacedAnalyzer
     private static MisplacedMethod? Judge(
         MethodTouches m,
         Dictionary<string, SectionDependencyProfile> sections,
+        Dictionary<string, string> inheritedContracts,
         int foundationRatio)
     {
         if (m.TouchedSections.Count >= OrchestratorFanOut)
@@ -435,7 +442,7 @@ public static class MisplacedAnalyzer
             (dataTouches > 0 ? $" plus {dataTouches} read(s) of its data" : "") +
             $", {Touches(m.OwnTouches)} on {m.Section}; {reach}";
 
-        if (Contract(m.Symbol) is { } blockedBy)
+        if (Contract(m.Symbol, inheritedContracts) is { } blockedBy)
             return Finding(m, target, behaviorTouches, dataTouches, MisplacedVerdict.Blocked, evidence,
                 blockedBy: blockedBy);
 
@@ -513,6 +520,17 @@ public static class MisplacedAnalyzer
     }
 
     /// <summary>
+    /// Whether a parameter is passed by reference, in the sense that matters to overload resolution.
+    /// </summary>
+    /// <remarks>
+    /// C# refuses two declarations that differ only in <c>ref</c> vs <c>out</c> vs <c>in</c> (CS0663), so
+    /// all of them collapse to one answer here: by reference, or by value. Comparing the enum exactly
+    /// rejected such a pair as a near-miss and then reported a decisive collision as "different parameter
+    /// types" — the same class of error as comparing return types.
+    /// </remarks>
+    private static bool IsByReference(RefKind kind) => kind != RefKind.None;
+
+    /// <summary>
     /// Whether this touch is a data read rather than a behavior call: the touched member carries data on
     /// a type the active config classifies as a DTO, or the type's shape says it carries data and
     /// nothing else.
@@ -533,10 +551,45 @@ public static class MisplacedAnalyzer
     /// behavior at all, so on a type that passes it there is no behavior to miscount.
     /// </para>
     /// </remarks>
-    private static bool IsData(INamedTypeSymbol type, ISymbol touched, HashSet<string> configuredDtos) =>
+    private static bool IsData(
+        INamedTypeSymbol type, INamedTypeSymbol? through, ISymbol touched, HashSet<string> configuredDtos) =>
         CanonicalReadDtoSet.IsDataCarrier(type)
         || (touched is IPropertySymbol or IFieldSymbol
-            && configuredDtos.Contains(SolutionClassifier.TypeKey(type)));
+            && (configuredDtos.Contains(SolutionClassifier.TypeKey(type))
+                || (through is not null && configuredDtos.Contains(SolutionClassifier.TypeKey(through)))));
+
+    /// <summary>
+    /// The type this member was reached <i>through</i> — the static type of the receiver in
+    /// <c>receiver.Member</c> — or null when the access has no receiver to read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Needed because a member's containing type is where it is <b>declared</b>, not what the caller is
+    /// holding. A configured DTO that inherits <c>Id</c> from a base the config does not name reports
+    /// that base as the containing type, so <c>result.Id</c> read as a behavior call on the base and
+    /// could turn a mapper into a move.
+    /// </para>
+    /// <para>
+    /// Used only for the configured-DTO test. The section a touch is attributed to still comes from the
+    /// declaring type, which is the existing treatment of every inherited member and is not narrowed to
+    /// DTOs here.
+    /// </para>
+    /// </remarks>
+    private static INamedTypeSymbol? AccessedThrough(SyntaxNode node, SolutionDocument doc, CancellationToken ct)
+    {
+        // `receiver.Member`, and `receiver?.Member` where the name sits under a member binding and the
+        // receiver hangs off the enclosing conditional access.
+        var receiver = node.Parent switch
+        {
+            MemberAccessExpressionSyntax access when access.Name == node => access.Expression,
+            MemberBindingExpressionSyntax binding when binding.Name == node =>
+                binding.Ancestors().OfType<ConditionalAccessExpressionSyntax>().FirstOrDefault()?.Expression,
+            _ => null
+        };
+        if (receiver is null) return null;
+
+        return doc.Model.GetTypeInfo(receiver, ct).Type?.OriginalDefinition as INamedTypeSymbol;
+    }
 
     /// <summary>
     /// Whether two methods collide as C# declarations.
@@ -555,7 +608,7 @@ public static class MisplacedAnalyzer
         for (int i = 0; i < a.Parameters.Length; i++)
         {
             var (x, y) = (a.Parameters[i], b.Parameters[i]);
-            if (x.RefKind != y.RefKind) return false;
+            if (IsByReference(x.RefKind) != IsByReference(y.RefKind)) return false;
             if (!SameParameterType(x.Type, y.Type)) return false;
         }
         return true;
@@ -688,7 +741,7 @@ public static class MisplacedAnalyzer
     /// member it overrides. Such a method cannot move alone: the declaration would have to move too,
     /// which is a different and larger change than relocating a file.
     /// </summary>
-    private static string? Contract(IMethodSymbol symbol)
+    private static string? Contract(IMethodSymbol symbol, Dictionary<string, string> inheritedContracts)
     {
         // A default interface method is not bound BY a contract, it IS one. Neither branch below catches
         // it — an override it is not, and `AllInterfaces` excludes the interface a member is declared on —
@@ -720,7 +773,9 @@ public static class MisplacedAnalyzer
                         symbol.ContainingType.FindImplementationForInterfaceMember(candidate), symbol))
                     return $"implements {iface.Name}.{candidate.Name}";
 
-        return null;
+        // Last, because it is the only branch needing an index: the contract may belong to a type further
+        // down the hierarchy rather than to this one.
+        return inheritedContracts.TryGetValue(MethodKey(symbol), out var inherited) ? inherited : null;
     }
 
     /// <summary><c>1 touch</c> / <c>4 touches</c>. The output is read by people and by models.</summary>
@@ -730,6 +785,62 @@ public static class MisplacedAnalyzer
         type.ContainingAssembly?.Name is { } assembly && sectionByAssembly.TryGetValue(assembly, out var section)
             ? section
             : null;
+
+    /// <summary>
+    /// Methods that implement an interface member <b>for some type other than the one declaring them</b>,
+    /// mapped to the description that says so.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>class Derived : Base, IFoo</c> can satisfy <c>IFoo.M</c> with an inherited <c>Base.M</c>. Asked
+    /// from <c>Base</c>, there is no interface to find — <c>Base.AllInterfaces</c> is empty — so the
+    /// method reads as movable while moving it would leave <c>Derived</c> without an implementation.
+    /// The relationship is only visible from the derived type, so it has to be indexed from every type
+    /// rather than looked up per method.
+    /// </para>
+    /// <para>
+    /// Keyed by a string rather than by symbol on purpose: <c>classified</c> is collected from each
+    /// project's own compilation, and the symbol a document's model produces for the same method in a
+    /// referencing project is a different instance that <see cref="SymbolEqualityComparer"/> would miss.
+    /// </para>
+    /// </remarks>
+    private static Dictionary<string, string> BuildInheritedContractIndex(
+        IReadOnlyList<ClassifiedType> classified, CancellationToken ct)
+    {
+        var index = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var c in classified)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (c.Type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) continue;
+
+            foreach (var iface in c.Type.AllInterfaces)
+                foreach (var member in iface.GetMembers())
+                {
+                    if (member is not IMethodSymbol candidate) continue;
+                    if (c.Type.FindImplementationForInterfaceMember(candidate) is not IMethodSymbol impl) continue;
+
+                    // Declared on this very type is the case Contract already answers without an index.
+                    if (SymbolEqualityComparer.Default.Equals(impl.ContainingType, c.Type)) continue;
+
+                    index.TryAdd(
+                        MethodKey(impl),
+                        $"implements {iface.Name}.{candidate.Name} for {c.Type.Name}");
+                }
+        }
+
+        return index;
+    }
+
+    /// <summary>
+    /// Identifies a method across compilations: declaring type, name, and parameter types. Parameter
+    /// types are included because two overloads of one name need not have the same answer — one may
+    /// implement an interface member while the other does not.
+    /// </summary>
+    private static string MethodKey(IMethodSymbol method) =>
+        $"{SolutionClassifier.TypeKey(method.ContainingType)}|{method.Name}|" +
+        string.Join(",", method.Parameters.Select(p => p.Type.ToDisplayString())) +
+        $"|{method.TypeParameters.Length}";
 
     /// <summary>
     /// Whether the node sits inside a <c>nameof(...)</c> argument. <c>nameof</c> is not a keyword, so
