@@ -40,7 +40,13 @@ public static class SolutionWalker
     {
         foreach (var project in solution.Projects)
         {
-            if (ct.IsCancellationRequested) yield break;
+            // Throw, do not `yield break`. Ending the sequence early turns cancellation into a
+            // normal end-of-input, and every caller here accumulates findings and then formats
+            // them — so a Ctrl+C mid-walk would print a partial audit and exit 0, which reads as
+            // "no findings" to anything automated. Before this walk was extracted, the next
+            // GetCompilationAsync or model await saw the cancelled token and threw; that behaviour
+            // is preserved deliberately.
+            ct.ThrowIfCancellationRequested();
             if (IsTestProject(project)) continue;
 
             // Realizing the compilation is what makes the per-document semantic models cheap; it is
@@ -50,7 +56,7 @@ public static class SolutionWalker
 
             foreach (var document in project.Documents)
             {
-                if (ct.IsCancellationRequested) yield break;
+                ct.ThrowIfCancellationRequested();
 
                 var root = await document.GetSyntaxRootAsync(ct);
                 var model = await document.GetSemanticModelAsync(ct);
