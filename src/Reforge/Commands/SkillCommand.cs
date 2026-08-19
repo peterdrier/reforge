@@ -96,6 +96,14 @@ public static class SkillCommand
         `contracts`) and `multiplied`, and each group reports `mainSurfaceTotal` and
         `contractsSurfaceTotal` beside `surfaceTotal`.
 
+        **Each group reports its size beside its score.** A `metrics` block per group (plus a
+        solution rollup beside `typesAnalyzed`) carries `locProd`, `files`, `classes`,
+        `interfaces`, `methods`, cognitive and cyclomatic avg/p95/max with the method holding the
+        max, and `maxClassLoc` with its class. Read a score delta against it: points can fall
+        because the API shrank or because the code did, and the score alone cannot tell those
+        apart. The corpus is the scored corpus — no test projects, no generated code, complexity
+        over methods with a body. Informational only; no metric feeds a score.
+
         The config file is optional, searched for upward from the solution directory, and carries
         policy only. With no file present the built-in name-pattern classifications and default
         weights still produce a full score.

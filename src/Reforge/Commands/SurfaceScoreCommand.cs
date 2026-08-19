@@ -269,6 +269,8 @@ public static class SurfaceScoreCommand
     internal static void WriteCompact(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
     {
         Console.WriteLine($"surface-score: surface={report.SurfaceTotal} internalComplexity={report.InternalComplexityTotal} combined={report.Total} (informational) types={report.TypesAnalyzed} groups={report.Groups.Count} config={(report.ConfigPath ?? "(defaults)")}");
+        Console.WriteLine($"corpus{(groupFilter is null ? "" : $" ({groupFilter})")}: " +
+                          $"{MetricsLine(ScopedMetrics(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
 
         foreach (var d in report.Diagnostics)
             Console.WriteLine($"! {d.Level}: {d.Message}");
@@ -319,7 +321,7 @@ public static class SurfaceScoreCommand
         // Section totals first as a one-liner per group, then per-group detail blocks.
         Console.WriteLine();
         foreach (var g in orderedGroups)
-            Console.WriteLine($"  {g.Name,-30} {g.Total,5}");
+            Console.WriteLine($"  {g.Name,-30} {g.Total,5}  {MetricsSummary(g.Metrics)}");
 
         foreach (var g in orderedGroups)
         {
@@ -327,6 +329,7 @@ public static class SurfaceScoreCommand
             Console.WriteLine(g.ContractsSurfaceTotal != 0
                 ? $"{g.Name} ({g.Total}; surface {g.MainSurfaceTotal} main + {g.ContractsSurfaceTotal} contracts)"
                 : $"{g.Name} ({g.Total})");
+            Console.WriteLine($"  {MetricsLine(g.Metrics)}");
 
             foreach (var kv in g.ByRule.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
                 Console.WriteLine($"  {kv.Key,-40} {kv.Value,5}");
@@ -377,6 +380,8 @@ public static class SurfaceScoreCommand
         sb.AppendLine($"- **Internal Complexity Score**: {report.InternalComplexityTotal}");
         sb.AppendLine($"- **Combined Score** (informational, not an optimization target): {report.Total}");
         sb.AppendLine($"- **Types analyzed**: {report.TypesAnalyzed}");
+        sb.AppendLine($"- **Corpus**{(groupFilter is null ? "" : $" (`{groupFilter}`)")}: " +
+                      $"{MetricsLine(ScopedMetrics(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
         sb.AppendLine($"- **Groups**: {report.Groups.Count}");
         sb.AppendLine($"- **Config**: {(report.ConfigPath ?? "(defaults, no reforge.surface-score.json found)")}");
         sb.AppendLine();
@@ -418,10 +423,14 @@ public static class SurfaceScoreCommand
 
         sb.AppendLine("## Totals by group");
         sb.AppendLine();
-        sb.AppendLine("| Group | Score |");
-        sb.AppendLine("|---|---:|");
+        sb.AppendLine("| Group | Score | LOC | Files | Classes | Interfaces | Cognitive p95 | Cognitive max | Max class LOC |");
+        sb.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|");
         foreach (var g in orderedGroups)
-            sb.AppendLine($"| {g.Name} | {g.Total} |");
+        {
+            var m = g.Metrics;
+            sb.AppendLine($"| {g.Name} | {g.Total} | {m.LocProd} | {m.Files} | {m.Classes} | {m.Interfaces} | " +
+                          $"{m.Cognitive.P95} | {m.Cognitive.Max} | {m.MaxClassLoc} |");
+        }
         sb.AppendLine();
 
         // When the agent has filtered to one section, the solution-wide rule totals are
@@ -448,6 +457,8 @@ public static class SurfaceScoreCommand
         foreach (var g in orderedGroups)
         {
             sb.AppendLine($"## {g.Name} — surface {g.SurfaceTotal}, complexity {g.InternalComplexityTotal} (combined {g.Total})");
+            sb.AppendLine();
+            sb.AppendLine($"`{MetricsLine(g.Metrics)}`");
             sb.AppendLine();
 
             if (g.ByRule.Count > 0)
@@ -564,6 +575,7 @@ public static class SurfaceScoreCommand
                 contractsSurfaceTotal = g.ContractsSurfaceTotal,
                 internalComplexityTotal = g.InternalComplexityTotal,
                 total = g.Total,
+                metrics = MetricsJson(g.Metrics),
                 byRule = g.ByRule
                     .OrderByDescending(kv => kv.Value)
                     .ThenBy(kv => kv.Key, StringComparer.Ordinal)
@@ -641,6 +653,9 @@ public static class SurfaceScoreCommand
             internalComplexityTotal = report.InternalComplexityTotal,
             combinedTotal = report.Total,
             typesAnalyzed = report.TypesAnalyzed,
+            // Scoped like byRule below: with --group set, the solution-wide corpus would read as
+            // the section's. `scope` says which one this is.
+            metrics = MetricsJson(ScopedMetrics(report, filteredGroups, groupFilter)),
             build = new
             {
                 degraded = report.BuildHealth.Degraded,
@@ -710,7 +725,92 @@ public static class SurfaceScoreCommand
         Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
     }
 
+    // ----------------------- Metrics -----------------------
+
+    /// <summary>
+    /// The corpus the reader is actually looking at: the solution's, or — when <c>--group</c> is
+    /// set — that one section's. Mirrors how <c>byRule</c> and the rule glossary scope, for the
+    /// same reason: a report filtered to one section that quotes solution-wide numbers beside it
+    /// invites reading them as the section's.
+    /// </summary>
+    private static SectionMetrics ScopedMetrics(ScoreReport report, List<GroupScore> filteredGroups, string? groupFilter)
+    {
+        if (groupFilter is null) return report.Metrics;
+        // A section can exist with no scored entries and so no group; its metrics are still known.
+        if (report.MetricsBySection.TryGetValue(groupFilter, out var m)) return m;
+        return filteredGroups.Count > 0 ? filteredGroups[0].Metrics : SectionMetrics.Empty;
+    }
+
+    /// <summary>
+    /// Size/complexity of a scope, for the JSON report. Emitted for every group and once for the
+    /// solution. Informational — no key here participates in a score, so a consumer diffing totals
+    /// can ignore the whole object.
+    /// </summary>
+    private static object MetricsJson(SectionMetrics m) => new
+    {
+        locProd = m.LocProd,
+        files = m.Files,
+        classes = m.Classes,
+        interfaces = m.Interfaces,
+        methods = m.Methods,
+        cognitive = DistributionJson(m.Cognitive),
+        cyclomatic = DistributionJson(m.Cyclomatic),
+        maxClassLoc = m.MaxClassLoc,
+        maxClassLocName = m.MaxClassLocName
+    };
+
+    private static object DistributionJson(MetricDistribution d) => new
+    {
+        avg = d.Avg,
+        p95 = d.P95,
+        max = d.Max,
+        maxMethod = d.MaxMethod
+    };
+
+    /// <summary>
+    /// One-line size/complexity summary for the compact and markdown reports. Cognitive is the
+    /// figure carried inline because it is the metric the internal-complexity axis actually
+    /// scores; cyclomatic is in the JSON for continuity with the <c>snapshot</c> history series.
+    /// </summary>
+    private static string MetricsLine(SectionMetrics m) =>
+        $"loc={m.LocProd} files={m.Files} classes={m.Classes} interfaces={m.Interfaces} " +
+        $"methods={m.Methods} cognitive avg={m.Cognitive.Avg} p95={m.Cognitive.P95} max={m.Cognitive.Max}" +
+        (string.IsNullOrEmpty(m.Cognitive.MaxMethod) ? "" : $" ({m.Cognitive.MaxMethod})") +
+        $" maxClassLoc={m.MaxClassLoc}" +
+        (string.IsNullOrEmpty(m.MaxClassLocName) ? "" : $" ({m.MaxClassLocName})");
+
+    /// <summary>Terser form for the per-section summary list, where one line per section is the budget.</summary>
+    private static string MetricsSummary(SectionMetrics m) =>
+        $"loc={m.LocProd} cogP95={m.Cognitive.P95} cogMax={m.Cognitive.Max}";
+
     // ----------------------- --list-groups -----------------------
+
+    /// <summary>
+    /// Every section of the solution with its score and size, including sections that scored
+    /// nothing. A section whose types are all unscored (pure DTOs that fail the data-carrier
+    /// check, say) has metrics but no <see cref="GroupScore"/> — listing only the scored groups
+    /// would drop it, and it is exactly the section a size-ranked listing needs to show.
+    /// </summary>
+    private static List<(string Name, int Total, int Entries, SectionMetrics Metrics)> AllSections(ScoreReport report)
+    {
+        var names = new HashSet<string>(report.ConfiguredSections, StringComparer.OrdinalIgnoreCase);
+        foreach (var name in report.Groups.Keys) names.Add(name);
+
+        return names
+            .Select(name =>
+            {
+                var total = report.Groups.TryGetValue(name, out var g) ? g.Total : 0;
+                var entries = g?.Entries.Count ?? 0;
+                var metrics = report.MetricsBySection.TryGetValue(name, out var m) ? m : SectionMetrics.Empty;
+                return (Name: name, Total: total, Entries: entries, Metrics: metrics);
+            })
+            .OrderByDescending(s => s.Total)
+            .ThenBy(s => s.Name, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    internal static void WriteGroupListForTest(ScoreReport report, OutputFormat format)
+        => WriteGroupList(report, format);
 
     private static void WriteGroupList(ScoreReport report, OutputFormat format)
     {
@@ -721,19 +821,32 @@ public static class SurfaceScoreCommand
                 command = "surface-score",
                 listGroups = true,
                 configuredSections = report.ConfiguredSections,
+                // Every section, scored or not, with its size — the list to rank by. `discoveredGroups`
+                // below stays what it has always been (sections that scored) so consumers reading it
+                // are unaffected.
+                sections = AllSections(report)
+                    .Select(s => new { name = s.Name, total = s.Total, entries = s.Entries, locProd = s.Metrics.LocProd })
+                    .ToArray(),
                 discoveredGroups = report.Groups
                     .OrderByDescending(kv => kv.Value.Total)
                     .ThenBy(kv => kv.Key, StringComparer.Ordinal)
-                    .Select(kv => new { name = kv.Key, total = kv.Value.Total, entries = kv.Value.Entries.Count })
+                    .Select(kv => new
+                    {
+                        name = kv.Key,
+                        total = kv.Value.Total,
+                        entries = kv.Value.Entries.Count,
+                        locProd = kv.Value.Metrics.LocProd
+                    })
                     .ToArray()
             };
             Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
             return;
         }
 
-        Console.WriteLine($"Sections ({report.ConfiguredSections.Count}, one per assembly):");
-        foreach (var s in report.ConfiguredSections)
-            Console.WriteLine($"  {s}");
+        var sections = AllSections(report);
+        Console.WriteLine($"Sections ({sections.Count}, one per assembly):");
+        foreach (var s in sections)
+            Console.WriteLine($"  {s.Name,-30} total={s.Total,5} entries={s.Entries} loc={s.Metrics.LocProd}");
 
         Console.WriteLine();
         Console.WriteLine($"Discovered groups ({report.Groups.Count}):");
@@ -741,7 +854,7 @@ public static class SurfaceScoreCommand
             .OrderByDescending(kv => kv.Value.Total)
             .ThenBy(kv => kv.Key, StringComparer.Ordinal))
         {
-            Console.WriteLine($"  {kv.Key,-30} total={kv.Value.Total,5} entries={kv.Value.Entries.Count}");
+            Console.WriteLine($"  {kv.Key,-30} total={kv.Value.Total,5} entries={kv.Value.Entries.Count} loc={kv.Value.Metrics.LocProd}");
         }
     }
 

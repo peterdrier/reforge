@@ -150,6 +150,18 @@ public sealed partial class SurfaceScoreEngine
         report.ConservationAnchors = BuildConservationAnchors(architecture, report);
         report.HelperCandidates = BuildHelperCandidates(classified);
 
+        // Size/complexity metrics per section. Informational, and computed over the same
+        // classified corpus the rules ran on, so a score delta can be read against the size that
+        // produced it: a section's points can fall because its API shrank or because its code did,
+        // and the score alone cannot tell those apart.
+        var (metricsBySection, solutionMetrics) = SectionMetricsAnalyzer.Analyze(classified, ct);
+        report.Metrics = solutionMetrics;
+        foreach (var (section, metrics) in metricsBySection)
+        {
+            report.MetricsBySection[section] = metrics;
+            if (report.Groups.TryGetValue(section, out var group)) group.Metrics = metrics;
+        }
+
         // Build health: detect a degraded (unbuilt/erroring) compilation so a partial
         // score is never mistaken for a complete one. Reuses the per-project compilations
         // the passes above already realized (Roslyn caches them), so this is near-free.

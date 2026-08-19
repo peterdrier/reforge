@@ -2,6 +2,110 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Per-section size/complexity metrics beside the surface score
+
+`surface-score` reported three numbers per section — `total`, `surfaceTotal`,
+`internalComplexityTotal` — and nothing about the code they describe. That is not enough to read a
+delta with. A section's surface points fall when its API shrinks *or* when its code is deleted; its
+internal-complexity points fall when methods get simpler *or* when they move somewhere else. #19
+documents the sharper version of the problem: most internal-complexity points are satisfiable by
+edits that don't improve the code, so a score delta without a size delta beside it is a number a
+consumer can't act on. `snapshot` already computed all of this — but solution-wide, for the history
+CSV, which is the wrong grain for anything that ranks or compares sections.
+
+Each group now carries a `metrics` block (`locProd`, `files`, `classes`, `interfaces`, `methods`,
+cognitive + cyclomatic avg/p95/max with the method holding the max, `maxClassLoc` with its class),
+plus a solution-level rollup. Compact and markdown print LOC and a cognitive figure per section
+inline; JSON carries the whole block.
+
+**Both complexity metrics, for different reasons.** Cognitive is what the internal axis actually
+scores, so a section's `cognitiveComplexity` points and its cognitive p95 move together and can be
+read against each other. Cyclomatic is what `snapshot` has always recorded solution-wide, so a
+section's number is comparable to the history series it sits inside. They are the same walk over
+the same methods, so carrying both costs one field each.
+
+**The corpus is the scoring corpus, not the solution's file set.** Metrics are re-aggregated from
+the same `ClassifiedType` list the rules run over, which fixes the grain question the obvious
+implementation gets wrong: measuring files-on-disk per project would report growth the score has no
+way to explain. Consequences, all deliberate: no test LOC (test projects never enter the classifier,
+and attributing them to a section needs project-reference resolution — #36/#37 territory);
+generated code excluded exactly as the internal axis excludes it; complexity measured only over
+methods that have a body, because folding a 0 or a 1 in for every abstract declaration would drag a
+section's average toward whichever number the bodyless case produced.
+
+**Informational, and load-bearingly so.** The pass adds no score entries, so totals are
+byte-identical to before it existed — verified by diffing full `--format json --all` output across
+the change with the `metrics` keys stripped, not only asserted. Graph metrics (reach, core SCC,
+cycles, fan-out) stay out: they are global by nature, and a per-section subgraph variant is a
+design question, not an aggregation.
+
+`ImplementationComplexity.Cyclomatic` now holds the McCabe walk that lived privately in
+`SnapshotAnalyzer`, so the history series and the per-section number are one implementation rather
+than two that agree until one is edited.
+
+Measured against Humans (`Humans.slnx`, 3,448 types, 44 sections) before and after those five
+corrections, the metrics move and the score does not:
+
+| | before | after |
+|---|---:|---:|
+| `locProd` | 160,291 | **158,049** |
+| `files` | 1,695 | **1,695** |
+| `methods` | 5,425 | **5,523** |
+| `surfaceTotal` / `internalComplexityTotal` | 17,379 / 3,162 | 17,379 / 3,162 |
+
+2,242 net lines moved: 2,431 lines (1.5% of the corpus) of generated code were leaking in through
+partial types whose handwritten half happened to be the classifier's primary file, against 189
+lines of linked-file copies that were being dropped from the rollup; 98 method bodies — constructors,
+implemented partial methods, explicit interface implementations, operators and finalizers — were
+missing from both distributions.
+
+Three corrections from review, all of which the metrics pass made newly load-bearing:
+
+- **Deconstructing `foreach` was never counted.** `foreach (var (k, v) in xs)` parses as
+  `ForEachVariableStatementSyntax`, a *sibling* of `ForEachStatementSyntax` rather than a subtype,
+  so the McCabe switch — which matched only the latter — undercounted every one of them by 1. The
+  cognitive walker has always handled both, which is what makes this a slip rather than a policy.
+  Matching `CommonForEachStatementSyntax` covers the pair. This also corrects `snapshot`'s
+  cyclomatic figures on any solution that deconstructs in a loop; the history series shifts up
+  slightly at the point of this commit.
+- **Generated code is filtered per declaration, not per primary file.** A partial type is one symbol
+  spanning several files, so testing the classifier's primary file decided the whole type: a
+  handwritten class with a generated `.Designer.cs` half leaked the generated LOC and methods in
+  when the handwritten file happened to be primary, and dropped the handwritten half when it did
+  not. Each declaring syntax reference and each method is now filtered by its own tree.
+- **Constructors are in the sample.** The rollup filtered to `MethodKind.Ordinary`, which dropped
+  every constructor — while `snapshot` has always sampled `ConstructorDeclarationSyntax`. A
+  constructor that branches carries the same implementation cost as a method that does, so
+  excluding them both understated a section and made the cyclomatic figure incomparable with the
+  series it is meant to sit beside.
+- **Membership is stated as an exclusion, not an allowlist.** The sample first filtered to
+  `MethodKind.Ordinary`, then to Ordinary-plus-constructors, and each revision was still wrong for
+  a kind nobody had thought of — explicit interface implementations next, and operators and
+  finalizers behind them. An allowlist has to be right about every kind that can carry an
+  implementation, and every one it misses drops real code with no signal that anything is absent.
+  The rule now admits any member that declares a body and names the two things that are not written
+  implementation: property/event accessors (their bodies belong to the property) and
+  compiler-synthesized members.
+- **Implemented partial methods reached the sample at all.** A partial method is two symbols: the
+  defining declaration `partial void M();` is what `GetMembers()` returns and it has no body, while
+  the implementation hangs off `PartialImplementationPart`. Taking the first declaring reference on
+  the symbol in hand therefore found a bodyless declaration and dropped the method entirely.
+  Resolving through the implementation part, and preferring whichever declaration carries a body,
+  covers that and the partial-type ordering case with it.
+- **A distribution with samples always names the method holding its max.** The max was tracked
+  with a strict comparison against a 0 seed, so a section of straight-line code — every cognitive
+  score 0 — never updated the name, and reported `max: 0` held by nobody. Ties now go to the first
+  method sampled, which is deterministic because the classified corpus is.
+- **A linked file counts once per section it compiles into.** The same physical source file can be
+  linked into two projects, which compiles it into two assemblies and so into two sections — two
+  real copies, each of which the sections counted. The solution rollup deduplicated by path alone,
+  so it dropped the second copy's LOC while still counting its classes and methods: the rollup
+  stopped being the sum of its sections. Humans has four such copies (locProd 157,860 → 158,049).
+- **`--list-groups` covers sections that scored nothing.** A section whose types are all unscored
+  has metrics and no `GroupScore`, so enumerating only the scored groups dropped it — precisely the
+  section a size-ranked listing needs to show. The listing (and a new `sections` array in the JSON)
+  now spans every section; `discoveredGroups` still means what it always did.
+
 ## Unreleased - Gate 1 tranche 4: the two cross-section dependency rules
 
 Pairs for `crossSectionReadInterface` and `crossSectionFullService`, the first fixtures to use the

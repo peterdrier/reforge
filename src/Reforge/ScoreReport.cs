@@ -61,6 +61,13 @@ public sealed class GroupScore
     /// only summed into <see cref="SurfaceTotal"/>: a section can be small and publish a lot.
     /// </summary>
     public int ContractsSurfaceTotal { get; set; }
+
+    /// <summary>
+    /// Size and complexity of the section's corpus. Informational context for the score, never an
+    /// input to it — see <see cref="SectionMetrics"/>. <see cref="SectionMetrics.Empty"/> when the
+    /// report was built without a metrics pass (a hand-built report in a test, say).
+    /// </summary>
+    public SectionMetrics Metrics { get; set; } = SectionMetrics.Empty;
 }
 
 public sealed class ScoreReport
@@ -75,6 +82,16 @@ public sealed class ScoreReport
     public List<ScoreDiagnostic> Diagnostics { get; } = new();
     public string? ConfigPath { get; set; }
     public int TypesAnalyzed { get; set; }
+    /// <summary>
+    /// Solution-level size/complexity rollup, over the pooled sample rather than an average of the
+    /// sections' averages. Informational — the score formula never reads it.
+    /// </summary>
+    public SectionMetrics Metrics { get; set; } = SectionMetrics.Empty;
+    /// <summary>
+    /// Metrics for every section in the corpus, including sections that scored nothing and so have
+    /// no <see cref="GroupScore"/>. Keyed by section name.
+    /// </summary>
+    public Dictionary<string, SectionMetrics> MetricsBySection { get; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>
     /// Compilation health of the analyzed solution. Defaults to a non-degraded value
     /// so the JSON `build` object is always present. Populated by ScoreAsync.
