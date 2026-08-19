@@ -229,12 +229,33 @@ public static class SolutionClassifier
     {
         if (type.FindImplementationForInterfaceMember(member) is not IMethodSymbol { IsAbstract: false } impl)
             return false;
-        if (impl.DeclaringSyntaxReferences.Length == 0) return false;
-        if (impl.DeclaringSyntaxReferences[0].GetSyntax(ct) is not BaseMethodDeclarationSyntax syntax) return false;
-        if (syntax.Body is null && syntax.ExpressionBody is null) return false;
+        if (MethodBody(impl, ct) is not { } syntax) return false;
 
         if (ImplementationComplexity.IsMutation(impl, syntax)) writes.Add(key);
         return true;
+    }
+
+    /// <summary>
+    /// The declaration carrying a method's executable body, or null when none does.
+    /// </summary>
+    /// <remarks>
+    /// Not simply <c>DeclaringSyntaxReferences[0]</c>. A <c>partial</c> method has two declarations —
+    /// the defining one with a semicolon and the implementing one with the body — and Roslyn may
+    /// enumerate the bodyless one first, which would read a fully implemented member as unobserved.
+    /// <see cref="IMethodSymbol.PartialImplementationPart"/> is checked as well as every reference,
+    /// so the body is found whichever symbol and whichever declaration holds it.
+    /// </remarks>
+    private static BaseMethodDeclarationSyntax? MethodBody(IMethodSymbol impl, CancellationToken ct)
+    {
+        foreach (var candidate in new[] { impl, impl.PartialImplementationPart })
+        {
+            if (candidate is null) continue;
+            foreach (var reference in candidate.DeclaringSyntaxReferences)
+                if (reference.GetSyntax(ct) is BaseMethodDeclarationSyntax syntax
+                    && (syntax.Body is not null || syntax.ExpressionBody is not null))
+                    return syntax;
+        }
+        return null;
     }
 
     /// <summary>

@@ -148,6 +148,18 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_PartialMethodImplementation_IsStillObserved()
+    {
+        var classified = await ClassifyAsync();
+
+        // ManifestService implements IManifestService with a partial method: the defining declaration
+        // carries no body and may be enumerated first, so reading DeclaringSyntaxReferences[0] alone
+        // reported a gap for a member that is fully implemented and read-only.
+        Assert.Contains(classified, c => c.Type.Name == "IManifestService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IManifestService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
     public async Task ClassifyAsync_SameTypeNameInTwoAssemblies_KeepsBoth()
     {
         var classified = await ClassifyAsync();

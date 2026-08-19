@@ -70,3 +70,13 @@ public interface IBadgeService
 {
     string GetBadge(int id);
 }
+
+/// <summary>
+/// Fixture for the partial-method case. Its implementation is a public partial method whose defining
+/// declaration carries no body, so reading only the first declaration reports a gap for a member that
+/// is fully implemented and read-only.
+/// </summary>
+public interface IManifestService
+{
+    string GetManifest(int id);
+}

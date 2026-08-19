@@ -45,12 +45,17 @@ Demoted interfaces are not exempted either — they score `readServiceInterfaceM
 `fullServiceInterfaceMethod` (8). A published read facade is real surface; it is just not a write
 commitment.
 
+A method's body is also looked for across **every** declaration and across
+`PartialImplementationPart`, not just `DeclaringSyntaxReferences[0]`. A `partial` method has a
+bodyless defining declaration and a separate implementing one, and Roslyn may enumerate the bodyless
+one first — which read a fully implemented member as a gap.
+
 `SolutionClassifier` also enumerates nested types **recursively** now, where it stopped at one level of
 nesting before. An implementation nested inside a nested factory was invisible to every pass at once,
 not just this one. Measured: +5 types on the sample solution, +0 on Humans, `surfaceTotal` unchanged on
 both — a correctness fix that moves no score, which is why it ships here rather than as its own change.
 
-The inherited-member, accessor, getter-body, private-implementer, nested-type, and
+The inherited-member, accessor, getter-body, private-implementer, nested-type, partial-method, and
 partial-observation rules **change no number on Humans** — the demoted interface set is byte-identical
 with and without them, all 45 full / 68 read either way. They are correctness fixes for shapes Humans does not currently
 contain, and the sample-solution fixtures below are what exercises them. A clean corpus is not evidence
@@ -87,7 +92,7 @@ Following dependency calls one level would fix both and risks the opposite failu
 a service that writes becomes a write surface, which re-inflates the population the change exists to
 shrink. Left as-is deliberately, and recorded rather than hidden.
 
-Sample solution: `surfaceTotal` 2,018 → 1,990. One fixture per branch of the rule, so a future change
+Sample solution: `surfaceTotal` 2,055 → 2,023. One fixture per branch of the rule, so a future change
 to any branch moves a test rather than a number:
 
 | fixture | expected | why |
@@ -100,6 +105,7 @@ to any branch moves a test rather than a number:
 | `IRetentionService` | stays full | settable property, every method read-shaped |
 | `IQuotaService` | stays full | getter-only property whose getter commits |
 | `IBadgeService` | demote | implementer nested two levels deep — now reachable |
+| `IManifestService` | demote | implemented by a partial method whose body is on the other half |
 | `ILedgerService` | stays full | only implementer is abstract, so no body is observed |
 
 One branch has **no fixture**: a getter reached from a referenced *binary*, where the implementation
