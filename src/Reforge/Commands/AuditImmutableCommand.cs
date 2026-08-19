@@ -48,83 +48,67 @@ public static class AuditImmutableCommand
                     "ExecuteUpdate", "ExecuteDelete", "ExecuteUpdateAsync", "ExecuteDeleteAsync"
                 };
 
-                foreach (var project in solution.Projects)
+                await foreach (var (project, document, root, semanticModel) in
+                    SolutionWalker.ProductionDocumentsAsync(solution, cancellationToken))
                 {
-                    if (project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    var compilation = await project.GetCompilationAsync(cancellationToken);
-                    if (compilation is null)
-                        continue;
-
-                    foreach (var document in project.Documents)
+                    // 1. Check invocations for DbSet<T>.Remove/RemoveRange/Update/ExecuteUpdate/ExecuteDelete
+                    foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
                     {
-                        var tree = await document.GetSyntaxTreeAsync(cancellationToken);
-                        if (tree is null)
+                        if (invocation.Expression is not MemberAccessExpressionSyntax memberAccess)
                             continue;
 
-                        var root = await tree.GetRootAsync(cancellationToken);
-                        var semanticModel = compilation.GetSemanticModel(tree);
+                        var methodName = memberAccess.Name.Identifier.Text;
 
-                        // 1. Check invocations for DbSet<T>.Remove/RemoveRange/Update/ExecuteUpdate/ExecuteDelete
-                        foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+                        if (mutatingMethods.Contains(methodName))
                         {
-                            if (invocation.Expression is not MemberAccessExpressionSyntax memberAccess)
-                                continue;
-
-                            var methodName = memberAccess.Name.Identifier.Text;
-
-                            if (mutatingMethods.Contains(methodName))
+                            // Check if receiver is DbSet<T> where T is protected
+                            var receiverTypeInfo = semanticModel.GetTypeInfo(memberAccess.Expression);
+                            if (IsProtectedDbSet(receiverTypeInfo.Type, protectedNames))
                             {
-                                // Check if receiver is DbSet<T> where T is protected
-                                var receiverTypeInfo = semanticModel.GetTypeInfo(memberAccess.Expression);
-                                if (IsProtectedDbSet(receiverTypeInfo.Type, protectedNames))
-                                {
-                                    var entityTypeName = GetDbSetEntityTypeName(receiverTypeInfo.Type);
-                                    AddViolation(entries, invocation, tree, solutionDir,
-                                        $"{methodName} on append-only type {entityTypeName}");
-                                }
-                            }
-                            else if (bulkMutatingMethods.Contains(methodName))
-                            {
-                                // These can be called on IQueryable chains — check the root of the chain
-                                var rootReceiver = GetChainRoot(memberAccess);
-                                var rootTypeInfo = semanticModel.GetTypeInfo(rootReceiver);
-                                if (IsProtectedDbSet(rootTypeInfo.Type, protectedNames))
-                                {
-                                    var entityTypeName = GetDbSetEntityTypeName(rootTypeInfo.Type);
-                                    AddViolation(entries, invocation, tree, solutionDir,
-                                        $"{methodName} on append-only type {entityTypeName}");
-                                }
+                                var entityTypeName = GetDbSetEntityTypeName(receiverTypeInfo.Type);
+                                AddViolation(entries, invocation, root.SyntaxTree, solutionDir,
+                                    $"{methodName} on append-only type {entityTypeName}");
                             }
                         }
-
-                        // 2. Check property assignments on protected types
-                        foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+                        else if (bulkMutatingMethods.Contains(methodName))
                         {
-                            if (assignment.Left is not MemberAccessExpressionSyntax memberAccess)
-                                continue;
-
-                            var receiverSymbol = semanticModel.GetSymbolInfo(memberAccess.Expression).Symbol;
-                            ITypeSymbol? receiverType = receiverSymbol switch
+                            // These can be called on IQueryable chains — check the root of the chain
+                            var rootReceiver = GetChainRoot(memberAccess);
+                            var rootTypeInfo = semanticModel.GetTypeInfo(rootReceiver);
+                            if (IsProtectedDbSet(rootTypeInfo.Type, protectedNames))
                             {
-                                ILocalSymbol local => local.Type,
-                                IParameterSymbol param => param.Type,
-                                IFieldSymbol field => field.Type,
-                                IPropertySymbol prop => prop.Type,
-                                _ => null
-                            };
-
-                            if (receiverType is null || !IsProtectedType(receiverType, protectedNames))
-                                continue;
-
-                            // Allow assignments inside object initializers for Add/AddRange/AddAsync
-                            if (IsInsideAddInitializer(assignment))
-                                continue;
-
-                            AddViolation(entries, assignment, tree, solutionDir,
-                                $"property mutation on append-only type {receiverType.Name}");
+                                var entityTypeName = GetDbSetEntityTypeName(rootTypeInfo.Type);
+                                AddViolation(entries, invocation, root.SyntaxTree, solutionDir,
+                                    $"{methodName} on append-only type {entityTypeName}");
+                            }
                         }
+                    }
+
+                    // 2. Check property assignments on protected types
+                    foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+                    {
+                        if (assignment.Left is not MemberAccessExpressionSyntax memberAccess)
+                            continue;
+
+                        var receiverSymbol = semanticModel.GetSymbolInfo(memberAccess.Expression).Symbol;
+                        ITypeSymbol? receiverType = receiverSymbol switch
+                        {
+                            ILocalSymbol local => local.Type,
+                            IParameterSymbol param => param.Type,
+                            IFieldSymbol field => field.Type,
+                            IPropertySymbol prop => prop.Type,
+                            _ => null
+                        };
+
+                        if (receiverType is null || !IsProtectedType(receiverType, protectedNames))
+                            continue;
+
+                        // Allow assignments inside object initializers for Add/AddRange/AddAsync
+                        if (IsInsideAddInitializer(assignment))
+                            continue;
+
+                        AddViolation(entries, assignment, root.SyntaxTree, solutionDir,
+                            $"property mutation on append-only type {receiverType.Name}");
                     }
                 }
 
