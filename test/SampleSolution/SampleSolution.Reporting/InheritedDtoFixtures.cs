@@ -110,3 +110,10 @@ public sealed class ExplicitlyImplementedReportInfo : IExplicitBehaviour
     public string Title { get; set; } = "";
     string IExplicitBehaviour.Describe() => "";
 }
+
+// A DTO whose only published properties are indexers. It must not fall between the two halves of
+// the rule: not a data carrier (so no publicDtoType) yet never reached (so no per-indexer charge).
+public sealed class IndexerOnlyReportInfo
+{
+    public string this[int index] => "";
+}

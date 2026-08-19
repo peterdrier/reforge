@@ -111,13 +111,16 @@ public class DtoInheritedPropertyTests
     {
         var report = await ScoreDefaultAsync();
 
-        // Both indexers are named `Item`, so a name-only de-duplication key charges only the first.
+        // Both of IndexedReportInfo's indexers are named `Item`, so a name-only de-duplication key
+        // would charge only the first. The fixture file declares three published indexers in all —
+        // two overloads on IndexedReportInfo plus one on IndexerOnlyReportInfo — and a name-only key
+        // would collapse the pair and report two, so this count discriminates.
         var indexers = Entries(report)
             .Where(e => e.File.Contains("InheritedDtoFixtures"))
             .Where(e => e.Symbol == "this[]")
             .ToList();
 
-        Assert.Equal(2, indexers.Count);
+        Assert.Equal(3, indexers.Count);
     }
 
     [Fact]
@@ -152,5 +155,18 @@ public class DtoInheritedPropertyTests
         // predicate misses it from both directions — which is why this one is an allowlist.
         Assert.DoesNotContain(Entries(report), e =>
             e.Rule == "publicDtoType" && e.Symbol == "ExplicitlyImplementedReportInfo");
+    }
+
+    [Fact]
+    public async Task ADtoWhoseOnlyPropertiesAreIndexers_IsStillScored()
+    {
+        var report = await ScoreDefaultAsync();
+
+        // CanonicalReadDtoSet.IsCarriedData excludes indexers on purpose — an indexer is not a
+        // nameable fact and cannot become an inventory path. But ScoreDtoSurface charges indexers
+        // as published properties, so a type with only indexers would otherwise be scored as
+        // nothing at all: not a data carrier, and never reached.
+        Assert.Contains(Entries(report), e =>
+            e.Rule == "publicDtoType" && e.Symbol == "IndexerOnlyReportInfo");
     }
 }

@@ -110,6 +110,21 @@ public sealed partial class SurfaceScoreEngine
     }
 
     /// <summary>
+    /// A public instance indexer. <see cref="CanonicalReadDtoSet.IsCarriedData"/> excludes these on
+    /// purpose — an indexer is not a nameable fact, so it cannot become an inventory path — but
+    /// <see cref="ScoreDtoSurface"/> does charge indexers as published properties, and a type whose
+    /// only properties are indexers would otherwise be scored as nothing at all: not a data carrier,
+    /// so no <c>publicDtoType</c>, and never reached, so no per-indexer charge either. Counting it
+    /// here keeps the predicate and the scorer describing the same set.
+    /// </summary>
+    private static bool IsPublishedIndexer(ISymbol m) =>
+        m is IPropertySymbol
+        {
+            IsStatic: false, Parameters.Length: > 0,
+            DeclaredAccessibility: Accessibility.Public, GetMethod: not null
+        };
+
+    /// <summary>
     /// Identity of a published property for de-duplication across a base chain: its name plus, for
     /// an indexer, its parameter types. A derived declaration shadowing or overriding a base one
     /// collapses; two indexer overloads do not.
@@ -197,7 +212,7 @@ public sealed partial class SurfaceScoreEngine
 
             foreach (var m in t.GetMembers())
             {
-                if (CanonicalReadDtoSet.IsCarriedData(m)) { props++; continue; }
+                if (CanonicalReadDtoSet.IsCarriedData(m) || IsPublishedIndexer(m)) { props++; continue; }
                 if (CanonicalReadDtoSet.IsInvisibleToConsumers(m)) continue;
                 return false;
             }
