@@ -200,6 +200,54 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_MutableInterfaceField_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // An interface can declare a static field since C# 8, and `IStateService.Current = 5` writes
+        // straight through it. Every method here is read-shaped and StateService commits nothing.
+        Assert.Contains(classified, c => c.Type.Name == "IStateService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IStateService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ReadonlyAndConstInterfaceFields_Demote()
+    {
+        var classified = await ClassifyAsync();
+
+        // The negative control for the rule above: neither `const` nor `static readonly` can be written,
+        // so the rule must not widen to "any field".
+        Assert.Contains(classified, c => c.Type.Name == "ISettledService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "ISettledService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_NonPublicInterfaceMembers_AreNotContractSurface()
+    {
+        var classified = await ClassifyAsync();
+
+        // IDigestService declares a private helper and a public static method, both command-shaped. No
+        // consumer can call the private one and no implementer can supply either, so counting them
+        // would invent a write — or report a gap for a member nothing was ever going to fill — for an
+        // API whose only reachable instance member is `GetDigest`.
+        Assert.Contains(classified, c => c.Type.Name == "IDigestService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IDigestService" && c.Tags.Contains("fullServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_PublicTypeInsidePrivateType_StaysOutOfCorpus()
+    {
+        var classified = await ClassifyAsync();
+
+        // VisibilityHost.Hidden is private, so Hidden.Exposed is private in every sense that matters
+        // despite being declared public. Recursive enumeration is what first made it reachable, so
+        // checking only its own modifier would quietly admit a class of types the corpus never had —
+        // and charge its section for them.
+        Assert.DoesNotContain(classified, c => c.Type.Name == "Exposed");
+        Assert.DoesNotContain(classified, c => c.Type.Name == "Hidden");
+    }
+
+    [Fact]
     public async Task ClassifyAsync_SameTypeNameInTwoAssemblies_KeepsBoth()
     {
         var classified = await ClassifyAsync();

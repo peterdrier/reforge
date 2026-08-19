@@ -121,3 +121,37 @@ public class ReadingService : IReadingService
 
     public ref readonly int GetReading(int index) => ref _readings[index];
 }
+
+/// <summary>Read-only implementers of the interface-field and non-public-member fixtures.</summary>
+public class StateService : IStateService
+{
+    public string GetState() => "steady";
+}
+
+/// <summary>Implements the readonly/const negative control.</summary>
+public class SettledService : ISettledService
+{
+    public string GetSetting() => "settled";
+}
+
+/// <summary>Implements the private-helper fixture; only the public member is implementable.</summary>
+public class DigestService : IDigestService
+{
+    public string GetDigest(int id) => $"digest-{id}";
+}
+
+/// <summary>
+/// Fixture for effective accessibility. <c>Hidden</c> is <c>private</c>, so <c>Hidden.Exposed</c> is
+/// private in every sense that matters despite its own modifier — the recursive walk is what first made
+/// it reachable, and it must not enter the scored corpus.
+/// </summary>
+public static class VisibilityHost
+{
+    private static class Hidden
+    {
+        public sealed class Exposed
+        {
+            public int Value => 1;
+        }
+    }
+}

@@ -117,3 +117,40 @@ public interface IReadingService
 
     ref readonly int GetReading(int index);
 }
+
+/// <summary>
+/// Fixture for the mutable-interface-field case. Every method is read-shaped, but
+/// <c>IStateService.Current = 5</c> writes straight through the static field — an interface may declare
+/// one since C# 8.
+/// </summary>
+public interface IStateService
+{
+    public static int Current = 0;
+
+    string GetState();
+}
+
+/// <summary>
+/// Negative control for the field rule: <c>readonly</c> and <c>const</c> cannot be written, so this
+/// must still demote.
+/// </summary>
+public interface ISettledService
+{
+    public const int Limit = 10;
+    public static readonly int Ceiling = 20;
+
+    string GetSetting();
+}
+
+/// <summary>
+/// Fixture for the non-public-member case. C# 8 allows a private helper on an interface; no consumer
+/// can call it, and it is command-shaped, so counting it would invent a write for a read-only API.
+/// </summary>
+public interface IDigestService
+{
+    string GetDigest(int id);
+
+    private void ResetCounters() { }
+
+    public static void ClearAll() { }
+}

@@ -66,7 +66,12 @@ public static class SolutionClassifier
                 // Internal types stay in the corpus on purpose: their implementation is still
                 // complexity the section carries, and the sizing rules must see it. What they no
                 // longer do is score as surface — see ClassifiedType.IsExported.
-                if (type.DeclaredAccessibility == Accessibility.Private) continue;
+                //
+                // EFFECTIVE accessibility, not the declared modifier. A `public` type nested inside a
+                // `private` one is private in every sense that matters, and the recursive walk above is
+                // what first made it reachable — so checking only the declaration would have quietly
+                // admitted a class of types the corpus never contained, and charged sections for them.
+                if (IsEffectivelyPrivate(type)) continue;
 
                 var primaryLocation = type.Locations.First(l => l.IsInSource);
                 var filePath = primaryLocation.SourceTree?.FilePath ?? "";
@@ -168,6 +173,7 @@ public static class SolutionClassifier
             foreach (var member in PublishedMembers(c.Type))
             {
                 ct.ThrowIfCancellationRequested();
+                if (!IsReachableByConsumers(member)) continue;
                 if (PublishesWriteByDeclaration(member))
                 {
                     writes.Add(key);
@@ -188,6 +194,13 @@ public static class SolutionClassifier
                 bool complete = true;
                 foreach (var member in PublishedMembers(iface))
                 {
+                    // Only what a consumer can reach, and only what an implementer can supply. Since
+                    // C# 8 an interface may declare private and static members: a consumer cannot call
+                    // either, `ScoreInterfaceMethods` already excludes them, and a static member has no
+                    // implementation to find — so counting one would either invent a write or report a
+                    // gap for a member no implementation was ever going to fill.
+                    if (!IsReachableByConsumers(member) || member.IsStatic) continue;
+
                     switch (member)
                     {
                         case IMethodSymbol { MethodKind: MethodKind.Ordinary } m:
@@ -228,6 +241,15 @@ public static class SolutionClassifier
     }
 
     /// <summary>
+    /// Whether an interface member is part of the contract a consumer sees. Members without a modifier
+    /// are implicitly public, so this is only false for the ones C# 8 added — <c>private</c> helpers and
+    /// explicitly non-public default implementations, which no consumer can call and which
+    /// <c>ScoreInterfaceMethods</c> already excludes.
+    /// </summary>
+    private static bool IsReachableByConsumers(ISymbol member) =>
+        member.DeclaredAccessibility == Accessibility.Public;
+
+    /// <summary>
     /// Whether a member hands consumers a mutation on the strength of its <b>declaration alone</b>, so
     /// that no implementation body could withdraw it.
     /// </summary>
@@ -236,6 +258,9 @@ public static class SolutionClassifier
     /// <list type="bullet">
     ///   <item>A <b>settable property</b> — including <c>init</c>, and including indexers.</item>
     ///   <item>An <b>event</b>, whose add/remove mutate the subscriber list.</item>
+    ///   <item>A <b>mutable field</b>. An interface can declare a static field since C# 8, and
+    ///         <c>IStateService.Current = 5</c> writes straight through it. <c>readonly</c> and
+    ///         <c>const</c> do not qualify.</item>
     ///   <item>A member <b>returned by writable reference</b>. <c>ref int Current { get; }</c> has no
     ///         setter, but <c>svc.Current = 5</c> compiles and writes through to the backing state;
     ///         the implementation is <c>=&gt; ref _current</c>, which contains no persistence call and
@@ -250,6 +275,7 @@ public static class SolutionClassifier
         IPropertySymbol { ReturnsByRef: true } => true,
         IMethodSymbol { ReturnsByRef: true } => true,
         IEventSymbol => true,
+        IFieldSymbol { IsReadOnly: false, IsConst: false } => true,
         _ => false
     };
 
@@ -460,6 +486,17 @@ public static class SolutionClassifier
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// Whether a type is private once its containers are accounted for: itself <c>private</c>, or nested
+    /// at any depth inside something that is.
+    /// </summary>
+    private static bool IsEffectivelyPrivate(INamedTypeSymbol type)
+    {
+        for (INamedTypeSymbol? t = type; t is not null; t = t.ContainingType)
+            if (t.DeclaredAccessibility == Accessibility.Private) return true;
+        return false;
     }
 
     /// <summary>

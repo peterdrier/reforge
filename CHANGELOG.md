@@ -12,14 +12,21 @@ mutates state, reusing the existing `ImplementationComplexity.IsMutation` rather
 write detector.
 
 For **methods** the question is only decidable at the implementation — an interface method has no body
-— which is why this could not be fixed in the classification rules alone. Three member shapes are
+— which is why this could not be fixed in the classification rules alone. Four member shapes are
 decidable on the declaration and are read there instead: a **settable property** (including `init`, and
-including indexers), an **event**, and anything **returned by writable reference**. Each hands every
+including indexers), an **event**, a **mutable field** (an interface may declare a static one since
+C# 8, and `IStateService.Current = 5` writes straight through it), and anything **returned by writable
+reference**. Each hands every
 consumer a mutation that no implementation body can withdraw, so one is sufficient on its own, with no
 implementation needed. `ref int Current { get; }` has no setter and its implementation is
 `=> ref _current` — no persistence call, so it reads as a query — but `svc.Current = 5` compiles and
-writes through. `ref readonly` does not qualify, and has its own negative-control fixture so the rule
-cannot silently widen to "any ref". A **getter-only property** is read at the implementation like
+writes through. `ref readonly` does not qualify, and neither do `readonly` and `const` fields; both
+have negative-control fixtures so the rules cannot silently widen to "any ref" and "any field".
+
+Only members a consumer can actually reach are read. Since C# 8 an interface may declare `private` and
+`static` members: no consumer can call a private one, `ScoreInterfaceMethods` already excludes them, and
+a static member has no implementation to find — so counting one would either invent a write or report a
+gap for a member nothing was ever going to fill. A **getter-only property** is read at the implementation like
 a method, but only for the definitive signal — a persistence commit in the getter body. The
 command-shape heuristic is meaningless for an accessor, since a getter returns data by definition, so
 `ImplementationComplexity.CommitsPersistentWrite` is now exposed separately from `IsMutation` for this.
@@ -71,8 +78,19 @@ one first — which read a fully implemented member as a gap.
 
 `SolutionClassifier` also enumerates nested types **recursively** now, where it stopped at one level of
 nesting before. An implementation nested inside a nested factory was invisible to every pass at once,
-not just this one. Measured: +5 types on the sample solution, +0 on Humans, `surfaceTotal` unchanged on
-both — a correctness fix that moves no score, which is why it ships here rather than as its own change.
+not just this one. Isolated on one tree, this is **+1 type and +6 surface on the sample solution, +0 and
++0 on Humans**, with internal complexity unmoved on both. The +6 is a genuinely public depth-two type
+that the corpus should always have contained.
+
+An earlier revision of this entry claimed "+5 types, `surfaceTotal` unchanged on both". That was
+measured by comparing a build with recursion *and* a new fixture against one with neither, and
+attributing the whole result to the recursion — two changes, one cause credited. The figures above come
+from toggling only the enumeration on a fixed tree.
+
+Because recursion reaches further, the corpus filter now tests **effective** accessibility: a `public`
+type nested inside a `private` one is private in every sense that matters, and the walk had begun
+admitting exactly the class of types that had never been in the corpus — and charging its section for
+them. It still counts as implementation evidence, like any private type.
 
 Every refinement above — inherited members, accessors, getter bodies, partial members, private and
 deeply nested implementers, most-derived overrides, and per-implementer completeness — **changes no
@@ -112,7 +130,7 @@ Following dependency calls one level would fix both and risks the opposite failu
 a service that writes becomes a write surface, which re-inflates the population the change exists to
 shrink. Left as-is deliberately, and recorded rather than hidden.
 
-Sample solution: `surfaceTotal` 2,118 → 2,082. One fixture per branch of the rule, so a future change
+Sample solution: `surfaceTotal` 2,189 → 2,147. One fixture per branch of the rule, so a future change
 to any branch moves a test rather than a number:
 
 | fixture | expected | why |
@@ -125,7 +143,10 @@ to any branch moves a test rather than a number:
 | `IRetentionService` | stays full | settable property, every method read-shaped |
 | `IQuotaService` | stays full | getter-only property whose getter commits |
 | `IGaugeService`, `ISlotService` | stays full | writable `ref` return — assignable with no setter |
-| `IReadingService` | demote | `ref readonly` return — the negative control for the rule above |
+| `IStateService` | stays full | mutable static field — writable with no setter |
+| `IReadingService` | demote | `ref readonly` return — negative control for the ref rule |
+| `ISettledService` | demote | `const` and `static readonly` fields — negative control for the field rule |
+| `IDigestService` | demote | its command-shaped members are `private` and `static`, so unreachable |
 | `IBadgeService` | demote | implementer nested two levels deep — now reachable |
 | `IManifestService` | demote | implemented by a partial method whose body is on the other half |
 | `IRosterService` | demote | declared by an abstract base, accounted for by the concrete derived class |
