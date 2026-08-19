@@ -50,12 +50,13 @@ corrections, the metrics move and the score does not:
 |---|---:|---:|
 | `locProd` | 160,291 | **157,860** |
 | `files` | 1,695 | **1,691** |
-| `methods` | 5,425 | **5,493** |
+| `methods` | 5,425 | **5,523** |
 | `surfaceTotal` / `internalComplexityTotal` | 17,379 / 3,162 | 17,379 / 3,162 |
 
 2,431 lines (1.5% of the corpus) were generated code leaking in through partial types whose
-handwritten half happened to be the classifier's primary file; 68 method bodies — constructors and
-implemented partial methods — were missing from both distributions.
+handwritten half happened to be the classifier's primary file; 98 method bodies — constructors,
+implemented partial methods, explicit interface implementations, operators and finalizers — were
+missing from both distributions.
 
 Three corrections from review, all of which the metrics pass made newly load-bearing:
 
@@ -76,6 +77,14 @@ Three corrections from review, all of which the metrics pass made newly load-bea
   constructor that branches carries the same implementation cost as a method that does, so
   excluding them both understated a section and made the cyclomatic figure incomparable with the
   series it is meant to sit beside.
+- **Membership is stated as an exclusion, not an allowlist.** The sample first filtered to
+  `MethodKind.Ordinary`, then to Ordinary-plus-constructors, and each revision was still wrong for
+  a kind nobody had thought of — explicit interface implementations next, and operators and
+  finalizers behind them. An allowlist has to be right about every kind that can carry an
+  implementation, and every one it misses drops real code with no signal that anything is absent.
+  The rule now admits any member that declares a body and names the two things that are not written
+  implementation: property/event accessors (their bodies belong to the property) and
+  compiler-synthesized members.
 - **Implemented partial methods reached the sample at all.** A partial method is two symbols: the
   defining declaration `partial void M();` is what `GetMembers()` returns and it has no body, while
   the implementation hangs off `PartialImplementationPart`. Taking the first declaring reference on

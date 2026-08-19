@@ -163,13 +163,14 @@ public static class SectionMetricsAnalyzer
         foreach (var member in c.Type.GetMembers())
         {
             if (member is not IMethodSymbol m) continue;
-            // Constructors included: `snapshot` has always sampled ConstructorDeclarationSyntax,
-            // and a constructor that branches carries the same implementation cost as a method
-            // that does. Excluding them understated a section and made the cyclomatic figure
-            // incomparable with the history series it is meant to sit beside.
-            if (m.MethodKind is not (MethodKind.Ordinary or MethodKind.Constructor or MethodKind.StaticConstructor))
-                continue;
-            // Property/event accessors and compiler-synthesized members are not written code.
+            // Anything that declares a body counts, stated as an exclusion rather than an allowlist
+            // of MethodKinds. An allowlist has to be right about every kind that can carry an
+            // implementation — ordinary methods, constructors, static constructors, explicit
+            // interface implementations, operators, finalizers — and each one it misses silently
+            // drops real code out of both distributions with no signal that anything is absent.
+            // Two exclusions, both "not written implementation" rather than "not interesting":
+            // property/event accessors (their bodies belong to the property, and `AssociatedSymbol`
+            // is what marks them), and compiler-synthesized members.
             if (m.AssociatedSymbol is not null) continue;
             if (m.IsImplicitlyDeclared) continue;
 
@@ -193,7 +194,11 @@ public static class SectionMetricsAnalyzer
             methods);
     }
 
-    /// <summary>Snapshot-style display name: <c>Type.Method</c>, and <c>Type.ctor</c> for constructors.</summary>
+    /// <summary>
+    /// Snapshot-style display name: <c>Type.Method</c>, with <c>Type.ctor</c> / <c>Type.cctor</c>
+    /// for constructors. An explicitly implemented interface method carries its interface in
+    /// <see cref="ISymbol.Name"/> already (<c>IFoo.Run</c>), so the default arm reads correctly.
+    /// </summary>
     private static string MethodDisplay(string typeName, IMethodSymbol m) => m.MethodKind switch
     {
         MethodKind.Constructor => $"{typeName}.ctor",
