@@ -2,6 +2,58 @@
 
 What changed and why. Newest first.
 
+## Unreleased - A DTO's published shape includes what it inherits
+
+#29 (3b). `ScoreDtoSurface` iterated `c.Type.GetMembers()`, which does not return inherited
+members, so a DTO was charged only for the properties it declared. Moving them up to a base class
+whose name matches no DTO pattern therefore zeroed the charge — and changed nothing a consumer can
+see, which is the whole test a surface rule has to pass.
+
+The hole had two depths, and fixing only the first would have left the cheaper one open:
+
+1. **Hoist some properties.** The derived type keeps one of its own, still looks like a data
+   carrier, still pays `publicDtoType` — but pays per-property only for what it declares.
+2. **Hoist all of them.** The type's own public property count drops to zero, so
+   `LooksLikeDataCarrier` stops recognising it as a DTO at all and `publicDtoType` disappears too.
+   Strictly cheaper than (1) and strictly more effective.
+
+Both are closed. Property scoring and the data-carrier check now walk the base chain, stopping at
+`object`, at the first base declared outside the solution (a framework base's properties are not
+this section's surface to withdraw), and — for scoring — at a base that is itself a separately
+scored DTO, which already pays for its own. A property redeclared in a derived type is charged
+once, and an inherited entry says where it came from:
+`Title (inherited from ReportEnvelopeBase)`.
+
+One consequence in the other direction, and it is correct: a type inheriting behaviour is no longer
+a pure data carrier, because a consumer can reach it. That covers inherited public **methods**,
+inherited public **events** (subscribing is calling), and non-abstract **default interface
+methods** — behaviour the type never declares anywhere, so no walk over declarations can see it.
+Declared behaviour has always disqualified a type; inherited behaviour is not different.
+
+**The predicate is now an allowlist**, and that change is the substantive one. It used to ask "which
+member shapes are behaviour?" and reject those — a framing that lost four times in a row under
+review: ordinary methods, then inherited events, then non-abstract default interface methods, then
+explicit interface implementations (which Roslyn reports as `private` while anyone who casts can call
+them, so both an accessibility filter and an interface scan miss them). Each miss silently published
+a behavioural type as DTO surface. It now asks the closed question instead — is every member carried
+data, or invisible to a consumer? — reusing `CanonicalReadDtoSet`'s `IsCarriedData` and
+`IsInvisibleToConsumers`, so an unrecognised member shape disqualifies by default and the next shape
+nobody thought of fails safe.
+
+One deliberate difference from `CanonicalReadDtoSet.IsDataCarrier` survives: this walk **stops at the
+solution boundary**. Delegating wholesale measured **+5 points on Humans**, all of it one EF
+migration class — `ExpenseLineProofRows : Migration` — admitted as published DTO surface because EF's
+`Migration` base declares public properties. A framework base's members are not this section's
+surface to withdraw. That the other predicate has no such stop is filed as #49 rather than changed
+from here, because it decides canonical read DTOs and reopens a judgment call the fix would have to
+settle.
+
+**Measured on Humans: no change at all** — surface 17,379 and internal 3,113 before and after, with
+no type changing classification in either direction, including after the allowlist rebuild. The
+corpus contains zero DTO-shaped types with a base class, so nobody has taken this path. That is the
+useful reading: the fix is preventive, it closes a Gate 1 hole before it is walked through, and it
+costs no score churn to adopt. The sample solution carries the fixtures that do move
+(`InheritedDtoFixtures.cs`), and three of the four new tests fail without the fix.
 ## Unreleased - Cognitive complexity: charge the structure, name the code
 
 Two findings from the dogfooding read in #31, both about `cognitiveComplexity` describing a member

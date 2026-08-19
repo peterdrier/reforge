@@ -8,6 +8,14 @@ public sealed partial class SurfaceScoreEngine
 {
     private void ScoreDurableSurface(List<ClassifiedType> classified, ScoreReport report)
     {
+        // Types that get their own ScoreDtoSurface call. A DTO deriving from another scored DTO
+        // must not be charged for the base's properties as well — the base already pays for them.
+        var scoredDtos = new HashSet<string>(
+            classified
+                .Where(x => x.IsExported && x.Tags.Contains("dto") && LooksLikeDataCarrier(x.Type))
+                .Select(x => SolutionClassifier.TypeKey(x.Type.OriginalDefinition)),
+            StringComparer.Ordinal);
+
         foreach (var c in classified)
         {
             // Durable surface is what the assembly exports. An internal type's members cannot be
@@ -16,7 +24,7 @@ public sealed partial class SurfaceScoreEngine
             if (!c.IsExported) continue;
 
             if (c.Tags.Contains("dto") && LooksLikeDataCarrier(c.Type))
-                ScoreDtoSurface(c, report);
+                ScoreDtoSurface(c, report, scoredDtos);
 
             if (c.Tags.Contains("readServiceInterface"))
                 ScoreInterfaceMethods(c, "readServiceInterfaceMethod", report);
@@ -44,22 +52,87 @@ public sealed partial class SurfaceScoreEngine
         }
     }
 
-    private void ScoreDtoSurface(ClassifiedType c, ScoreReport report)
+    /// <summary>
+    /// Charges a DTO's published shape: the type itself, and every public property a consumer can
+    /// read off it — declared on the type or <b>inherited</b>.
+    /// </summary>
+    /// <remarks>
+    /// Inherited properties are charged because they are published just as surely as declared ones,
+    /// and scoring only <c>GetMembers()</c> (which does not return inherited members) made the
+    /// charge avoidable by moving the properties up to a base class whose name matches no DTO
+    /// pattern. Nothing about the exported shape changes under that edit — see issue #29 (3b).
+    /// <para>
+    /// The walk stops at three places, each for its own reason: at <c>object</c>; at the first base
+    /// declared outside the solution, because a framework base's properties are not this section's
+    /// surface to withdraw; and at a base that is itself a separately scored DTO, which already
+    /// pays for its own properties. A property redeclared in a derived type is charged once.
+    /// </para>
+    /// </remarks>
+    private void ScoreDtoSurface(ClassifiedType c, ScoreReport report, HashSet<string> scoredDtos)
     {
         AddEntry(report, c.Group, "publicDtoType", _config.Weight("publicDtoType"), c.Type, c.File, c.Line, null);
 
-        foreach (var member in c.Type.GetMembers())
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (INamedTypeSymbol? t = c.Type; t is not null; t = t.BaseType)
         {
-            if (member is not IPropertySymbol prop) continue;
-            if (prop.DeclaredAccessibility != Accessibility.Public) continue;
+            if (!ReferenceEquals(t, c.Type))
+            {
+                if (t.SpecialType == SpecialType.System_Object) break;
+                if (!t.Locations.Any(l => l.IsInSource)) break;
+                // OriginalDefinition: a constructed generic base (`BaseResponse<int>`) has a
+                // different display string from the declaration the set was built from
+                // (`BaseResponse<T>`), so querying with the constructed form misses and the
+                // derived DTO pays a second time for properties the base already paid for.
+                if (scoredDtos.Contains(SolutionClassifier.TypeKey(t.OriginalDefinition))) break;
+            }
 
-            var loc = prop.Locations.FirstOrDefault(l => l.IsInSource);
-            var (file, line) = LocateMember(loc, c);
+            foreach (var member in t.GetMembers())
+            {
+                if (member is not IPropertySymbol prop) continue;
+                if (prop.DeclaredAccessibility != Accessibility.Public) continue;
+                // Keyed on the signature, not the name. Indexer overloads (`this[int]`,
+                // `this[string]`) are all named `Item`, and they are distinct published
+                // properties — a name-only key would charge only the first. Ordinary properties
+                // have no parameters, so an override or `new` declaration still collapses.
+                if (!seen.Add(PropertyKey(prop))) continue;
 
-            var (rule, weight) = ClassifyDtoProperty(prop);
-            AddEntry(report, c.Group, rule, weight, prop, file, line, prop.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat));
+                var loc = prop.Locations.FirstOrDefault(l => l.IsInSource);
+                var (file, line) = LocateMember(loc, c);
+
+                var (rule, weight) = ClassifyDtoProperty(prop);
+                var detail = prop.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+                // Name the base so a reader is not left wondering why a type is charged for a
+                // property its own declaration does not contain.
+                if (!ReferenceEquals(t, c.Type)) detail += $" (inherited from {t.Name})";
+                AddEntry(report, c.Group, rule, weight, prop, file, line, detail);
+            }
         }
     }
+
+    /// <summary>
+    /// A public instance indexer. <see cref="CanonicalReadDtoSet.IsCarriedData"/> excludes these on
+    /// purpose — an indexer is not a nameable fact, so it cannot become an inventory path — but
+    /// <see cref="ScoreDtoSurface"/> does charge indexers as published properties, and a type whose
+    /// only properties are indexers would otherwise be scored as nothing at all: not a data carrier,
+    /// so no <c>publicDtoType</c>, and never reached, so no per-indexer charge either. Counting it
+    /// here keeps the predicate and the scorer describing the same set.
+    /// </summary>
+    private static bool IsPublishedIndexer(ISymbol m) =>
+        m is IPropertySymbol
+        {
+            IsStatic: false, Parameters.Length: > 0,
+            DeclaredAccessibility: Accessibility.Public, GetMethod: not null
+        };
+
+    /// <summary>
+    /// Identity of a published property for de-duplication across a base chain: its name plus, for
+    /// an indexer, its parameter types. A derived declaration shadowing or overriding a base one
+    /// collapses; two indexer overloads do not.
+    /// </summary>
+    private static string PropertyKey(IPropertySymbol prop) =>
+        prop.Parameters.Length == 0
+            ? prop.Name
+            : $"{prop.Name}({string.Join(",", prop.Parameters.Select(p => p.Type.ToDisplayString()))})";
 
     private (string Rule, int Weight) ClassifyDtoProperty(IPropertySymbol prop)
     {
@@ -98,31 +171,64 @@ public sealed partial class SurfaceScoreEngine
     /// no business-logic methods. This prevents static command-registration classes,
     /// service classes that happen to match a name pattern, etc. from inflating the DTO score.
     /// </summary>
+    /// <summary>
+    /// Whether a type is a pure data carrier: carried data, and nothing a consumer can invoke.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Stated as an <b>allowlist</b> — is every member carried data, or invisible to a consumer? —
+    /// rather than as a list of behaviour shapes to reject. The reject-list framing loses, and lost
+    /// here four times in a row: ordinary methods, then inherited events, then non-abstract default
+    /// interface methods, then explicit interface implementations (which Roslyn reports as
+    /// <c>private</c> while anyone who casts can call them). Each miss silently published a
+    /// behavioural type as DTO surface. Asking the closed question instead means an unrecognised
+    /// member shape disqualifies by default, so the next one nobody thought of fails safe.
+    /// <see cref="CanonicalReadDtoSet.IsCarriedData"/> and
+    /// <see cref="CanonicalReadDtoSet.IsInvisibleToConsumers"/> are the shared answer.
+    /// </para>
+    /// <para>
+    /// The one deliberate difference from <see cref="CanonicalReadDtoSet.IsDataCarrier"/>: this walk
+    /// <b>stops at the solution boundary</b>. Letting it climb into framework bases measured +5
+    /// points on Humans, all of it one EF migration class — <c>ExpenseLineProofRows : Migration</c> —
+    /// admitted as published DTO surface because EF's <c>Migration</c> base declares public
+    /// properties. A framework base's members are not this section's surface to withdraw. That the
+    /// other predicate has no such stop is filed as its own issue rather than changed from here.
+    /// </para>
+    /// </remarks>
     private static bool LooksLikeDataCarrier(INamedTypeSymbol type)
     {
         if (type.IsStatic) return false;
         if (type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
 
-        int publicProps = 0;
-        int publicMethods = 0;
-        foreach (var m in type.GetMembers())
+        int props = 0;
+        for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
         {
-            if (m.IsImplicitlyDeclared) continue;
-            if (m.DeclaredAccessibility != Accessibility.Public) continue;
-
-            switch (m)
+            if (!ReferenceEquals(t, type))
             {
-                case IPropertySymbol:
-                    publicProps++;
-                    break;
-                case IMethodSymbol method
-                    when method.MethodKind == MethodKind.Ordinary
-                      && method.AssociatedSymbol is null:
-                    publicMethods++;
-                    break;
+                // Object and ValueType carry universal members rather than a published API choice.
+                if (t.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType) break;
+                if (!t.Locations.Any(l => l.IsInSource)) break;
+            }
+
+            foreach (var m in t.GetMembers())
+            {
+                if (CanonicalReadDtoSet.IsCarriedData(m) || IsPublishedIndexer(m)) { props++; continue; }
+                if (CanonicalReadDtoSet.IsInvisibleToConsumers(m)) continue;
+                return false;
             }
         }
-        return publicProps >= 1 && publicMethods == 0;
+
+        // A default interface method is behaviour the type never declares anywhere, so no walk over
+        // declarations can see it. Only NON-abstract members count: an abstract one is either
+        // implemented on the type (judged above) or unimplementable, and every record implements
+        // IEquatable<T>, so counting abstract interface members would disqualify every record.
+        foreach (var iface in type.AllInterfaces)
+            foreach (var m in iface.GetMembers())
+                if (m is { IsAbstract: false, IsStatic: false, DeclaredAccessibility: Accessibility.Public }
+                    and (IMethodSymbol or IEventSymbol))
+                    return false;
+
+        return props >= 1;
     }
 
     private void ScoreInterfaceMethods(ClassifiedType c, string ruleKey, ScoreReport report)
