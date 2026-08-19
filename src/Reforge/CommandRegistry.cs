@@ -89,6 +89,7 @@ public static class CommandRegistry
         new("audit-downstream", RelayEligible: true),
         new("surface-score", RelayEligible: true),
         new("section-shape", RelayEligible: true),
+        new("misplaced", RelayEligible: true),
 
         // Help & setup — never relayed (see CommandSpec.RelayEligible)
         new("skill", RelayEligible: false),
@@ -225,6 +226,7 @@ public static class CommandRegistry
         "audit-downstream" => AuditDownstreamCommand.Create(o.Solution, o.Format, o.Limit),
         "surface-score" => SurfaceScoreCommand.Create(o.Solution, o.Format, o.Limit),
         "section-shape" => SectionShapeCommand.Create(o.Solution, o.Format, o.Limit),
+        "misplaced" => MisplacedCommand.Create(o.Solution, o.Format, o.Limit),
 
         "skill" => SkillCommand.Create(),
         "install" => InstallCommand.Create(),
