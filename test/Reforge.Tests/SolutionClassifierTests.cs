@@ -60,6 +60,44 @@ public class SolutionClassifierTests
     }
 
     [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceInheritingWriteMembers_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IArchiveService declares only GetArchivedName. Its write — Persist — comes from the base
+        // IArchiveWriter<string>, and GetMembers() does not return inherited members, so reading only
+        // the declared surface demotes an interface whose consumers get a full set of writes.
+        Assert.Contains(classified, c => c.Type.Name == "IArchiveService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IArchiveService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceWithSettableProperty_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // Every METHOD on IRetentionService is read-shaped, so no body argues for a write. The setter
+        // on RetentionDays is the write commitment, and it is visible on the declaration — no
+        // implementation body could withdraw it.
+        Assert.Contains(classified, c => c.Type.Name == "IRetentionService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IRetentionService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceImplementedOnlyAbstractly_KeepsFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // LedgerServiceBase lists ILedgerService and leaves GetLedgerName abstract. The interface is
+        // therefore "implemented" in the AllInterfaces sense while no behavior is ever observed, and
+        // a bodyless data-returning declaration reads as a query under the shape heuristic. Demoting
+        // here would be repricing on an absence — the concrete override may be in a skipped test
+        // project or another assembly.
+        Assert.Contains(classified, c => c.Type.Name == "ILedgerService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "ILedgerService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
     public async Task ClassifyAsync_SameTypeNameInTwoAssemblies_KeepsBoth()
     {
         var classified = await ClassifyAsync();

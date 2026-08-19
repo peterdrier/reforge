@@ -93,19 +93,38 @@ public static class SolutionClassifier
     /// is issue #54.
     /// </para>
     /// <para>
-    /// The test is behavioral, not nominal: it reuses <see cref="ImplementationComplexity.IsMutation"/>,
-    /// which decides from the implementation body (a persistence-commit call) or the method's shape
-    /// (returns no data, non-query verb). That is what makes this rename-proof, and it is why the
-    /// interface's own declarations cannot answer it — an interface member has no body, so the
-    /// question is only decidable at the implementation.
+    /// For methods the test is behavioral, not nominal: it reuses
+    /// <see cref="ImplementationComplexity.IsMutation"/>, which decides from the implementation body
+    /// (a persistence-commit call) or the method's shape (returns no data, non-query verb). That is
+    /// what makes this rename-proof, and it is why a method's own declaration cannot answer it — an
+    /// interface method has no body, so the question is only decidable at the implementation.
+    /// </para>
+    /// <para>
+    /// Two member shapes ARE decidable on the declaration and are checked there: a <b>settable
+    /// property</b> and an <b>event</b>. Either hands every consumer a mutation directly, and no
+    /// implementation body can withdraw it, so one of those is sufficient on its own — no
+    /// implementation need be found at all.
+    /// </para>
+    /// <para>
+    /// Membership is read from the interface <b>and its base interfaces</b>. <c>GetMembers()</c>
+    /// returns only what a type declares itself, so <c>IOrderService : ICrudService&lt;Order&gt;</c>
+    /// would look empty and demote while its consumers get a full set of writes.
     /// </para>
     /// <para>
     /// Demotion requires <b>evidence of read-only-ness</b>, not merely absence of evidence of writing.
-    /// An interface with no implementation in the analyzed solution keeps its classification: the walk
-    /// skips test projects and cannot see other assemblies, so "no implementation found" means
-    /// unknown, and silently repricing surface on an analysis gap is the failure this codebase has
-    /// been bitten by before (see <see cref="SurfaceVisibility"/> and issue #51).
+    /// Two gaps therefore preserve the name-derived classification rather than repricing on nothing —
+    /// silently repricing surface on an analysis gap is the failure this codebase has been bitten by
+    /// before (see <see cref="SurfaceVisibility"/> and issue #51):
     /// </para>
+    /// <list type="bullet">
+    ///   <item><b>No implementation in the solution.</b> The walk skips test projects and cannot see
+    ///         other assemblies, so "not found" means unknown, not read-only.</item>
+    ///   <item><b>No implementing type accounts for the whole surface.</b> An abstract class may list
+    ///         the interface and leave its members abstract; a bodyless data-returning declaration
+    ///         reads as a query under the shape heuristic, which would demote on an absence. Evidence
+    ///         of <i>writing</i> still counts from a partial observation — it is only the read-only
+    ///         conclusion that needs every member accounted for by some one implementer.</item>
+    /// </list>
     /// <para>
     /// Demoted interfaces are not exempted — they still score, at <c>readServiceInterfaceMethod</c>
     /// rather than <c>fullServiceInterfaceMethod</c>. A published read facade is real surface; it is
@@ -122,9 +141,29 @@ public static class SolutionClassifier
                 candidates[TypeKey(c.Type)] = c.Tags;
         if (candidates.Count == 0) return;
 
-        var implemented = new HashSet<string>(StringComparer.Ordinal);
+        var observed = new HashSet<string>(StringComparer.Ordinal);
         var writes = new HashSet<string>(StringComparer.Ordinal);
 
+        // Pass A -- write capability that needs no implementation to see. A settable property or an
+        // event ON the interface is already the write commitment: the declaration hands every
+        // consumer a mutation, and no body could withdraw it.
+        foreach (var c in collected)
+        {
+            if (c.Type.TypeKind != TypeKind.Interface) continue;
+            var key = TypeKey(c.Type);
+            if (!candidates.ContainsKey(key)) continue;
+            foreach (var member in PublishedMembers(c.Type))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (member is IPropertySymbol { SetMethod: not null } or IEventSymbol)
+                {
+                    writes.Add(key);
+                    break;
+                }
+            }
+        }
+
+        // Pass B -- everything else is decided at the implementation.
         foreach (var c in collected)
         {
             if (c.Type.TypeKind == TypeKind.Interface) continue;
@@ -133,29 +172,61 @@ public static class SolutionClassifier
                 ct.ThrowIfCancellationRequested();
                 var key = TypeKey(iface.OriginalDefinition);
                 if (!candidates.ContainsKey(key)) continue;
-                implemented.Add(key);
-                if (writes.Contains(key)) continue;
 
-                foreach (var member in iface.GetMembers())
+                bool complete = true;
+                foreach (var member in PublishedMembers(iface))
                 {
-                    if (member is not IMethodSymbol m || m.MethodKind != MethodKind.Ordinary) continue;
-                    if (c.Type.FindImplementationForInterfaceMember(m) is not IMethodSymbol impl) continue;
-                    var syntax = impl.DeclaringSyntaxReferences.Length > 0
+                    if (member is not IMethodSymbol { MethodKind: MethodKind.Ordinary } m) continue;
+
+                    // An abstract or bodyless implementation is not a behavioral observation. An
+                    // abstract class may list the interface and leave every member abstract, and the
+                    // shape heuristic would then read a data-returning declaration as a read and
+                    // demote on nothing. The concrete override may be in a skipped test project or
+                    // another assembly entirely.
+                    var impl = c.Type.FindImplementationForInterfaceMember(m) as IMethodSymbol;
+                    var syntax = impl is { IsAbstract: false } && impl.DeclaringSyntaxReferences.Length > 0
                         ? impl.DeclaringSyntaxReferences[0].GetSyntax(ct) as BaseMethodDeclarationSyntax
                         : null;
-                    if (!ImplementationComplexity.IsMutation(impl, syntax)) continue;
-                    writes.Add(key);
-                    break;
+                    if (syntax is null || (syntax.Body is null && syntax.ExpressionBody is null))
+                    {
+                        complete = false;
+                        continue;
+                    }
+
+                    // Evidence of writing counts from a partial observation too -- it is only the
+                    // read-only conclusion that needs the whole surface accounted for.
+                    if (ImplementationComplexity.IsMutation(impl!, syntax)) writes.Add(key);
                 }
+
+                if (complete) observed.Add(key);
             }
         }
 
         foreach (var (key, tags) in candidates)
         {
-            if (!implemented.Contains(key) || writes.Contains(key)) continue;
+            if (!observed.Contains(key) || writes.Contains(key)) continue;
             tags.Remove("fullServiceInterface");
             tags.Add("readServiceInterface");
         }
+    }
+
+    /// <summary>
+    /// Every member an interface publishes to a consumer, its own and its base interfaces'.
+    /// </summary>
+    /// <remarks>
+    /// <c>GetMembers()</c> returns only what a type declares itself, so
+    /// <c>IOrderService : ICrudService&lt;Order&gt;</c> appears to declare nothing at all. Reading
+    /// only the declared members would demote it while <c>ICrudService&lt;Order&gt;</c> hands its
+    /// consumers a full set of writes. The base interfaces come from <see cref="INamedTypeSymbol.AllInterfaces"/>
+    /// on the CONSTRUCTED interface, so type arguments are already substituted and each member can be
+    /// handed to <c>FindImplementationForInterfaceMember</c> as-is.
+    /// </remarks>
+    private static IEnumerable<ISymbol> PublishedMembers(INamedTypeSymbol iface)
+    {
+        foreach (var member in iface.GetMembers()) yield return member;
+        foreach (var baseInterface in iface.AllInterfaces)
+            foreach (var member in baseInterface.GetMembers())
+                yield return member;
     }
 
     /// <summary>

@@ -11,15 +11,35 @@ such an interface as `readServiceInterface` when no implementation of any of its
 mutates state, reusing the existing `ImplementationComplexity.IsMutation` rather than adding a second
 write detector.
 
-The question is only decidable at the implementation — an interface member has no body — which is why
-this could not be fixed in the classification rules alone.
+For **methods** the question is only decidable at the implementation — an interface method has no body
+— which is why this could not be fixed in the classification rules alone. Two member shapes are
+decidable on the declaration and are read there instead: a **settable property** and an **event**.
+Either hands every consumer a mutation that no implementation body can withdraw, so one is sufficient
+on its own, with no implementation needed. Membership is read from the interface **and its base
+interfaces**, because `GetMembers()` returns only what a type declares itself — `IOrderService :
+ICrudService<Order>` would otherwise look empty and demote while its consumers get a full set of writes.
 
-**Demotion requires evidence of read-only-ness, not absence of evidence of writing.** An interface with
-no implementation in the analyzed solution keeps its classification: the walk skips test projects and
-cannot see other assemblies, so "no implementation found" means unknown. Repricing surface on an
-analysis gap is the failure #51 fixed elsewhere. Demoted interfaces are not exempted either — they
-score `readServiceInterfaceMethod` (6) instead of `fullServiceInterfaceMethod` (8). A published read
-facade is real surface; it is just not a write commitment.
+**Demotion requires evidence of read-only-ness, not absence of evidence of writing.** Two gaps
+therefore preserve the name-derived classification rather than repricing on nothing — repricing surface
+on an analysis gap is the failure #51 fixed elsewhere:
+
+- **No implementation in the analyzed solution.** The walk skips test projects and cannot see other
+  assemblies, so "not found" means unknown, not read-only.
+- **No implementing type accounts for the whole surface.** An abstract class may list the interface and
+  leave its members abstract; a bodyless data-returning declaration reads as a query under the shape
+  heuristic, so demoting there would be concluding from an absence. Evidence of *writing* still counts
+  from a partial observation — only the read-only conclusion needs every member accounted for by some
+  one implementer.
+
+Demoted interfaces are not exempted either — they score `readServiceInterfaceMethod` (6) instead of
+`fullServiceInterfaceMethod` (8). A published read facade is real surface; it is just not a write
+commitment.
+
+The inherited-member, accessor, and partial-observation rules **change no number on either corpus** —
+verified by diffing the demoted interface set with and without them, empty in both directions. They are
+correctness fixes for shapes Humans does not currently contain, and the sample-solution fixtures below
+are what exercises them. A clean corpus is not evidence that a predicate is right, only that this
+corpus does not reach the wrong part of it.
 
 Measured against Humans (`113061bcf5f6`): **48 of 93 classified service interfaces reclassified**, and
 `surfaceTotal` **17,379 → 17,129**.
@@ -52,10 +72,13 @@ Following dependency calls one level would fix both and risks the opposite failu
 a service that writes becomes a write surface, which re-inflates the population the change exists to
 shrink. Left as-is deliberately, and recorded rather than hidden.
 
-Sample solution: `surfaceTotal` 1,939 → 1,913. `IUserService` (two `Get*` methods) and both
-`IGateRegistrar*Service` fixtures (`int Count()`) demote; `IGreetingService` (`RecordGreetingAsync`)
-stays full; `ICampBillingService` keeps its classification because nothing implements it. Three tests
-cover exactly those three behaviors.
+Sample solution: `surfaceTotal` 2,002 → 1,976. `IUserService` (two `Get*` methods) and both
+`IGateRegistrar*Service` fixtures (`int Count()`) demote. Five fixtures stay full, one per rule above:
+`IGreetingService` (`RecordGreetingAsync` writes), `ICampBillingService` (nothing implements it),
+`IArchiveService` (its write is inherited from `IArchiveWriter<T>`), `IRetentionService` (settable
+property, every method read-shaped), and `ILedgerService` (its only implementer is abstract, so no
+behavior is observed). Six tests cover exactly those behaviors; the last three each fail against the
+first cut of this pass.
 
 ## Unreleased - Gate 2 measurements for the internal-axis candidate signals
 
