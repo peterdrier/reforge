@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace Reforge;
 
@@ -498,11 +499,19 @@ public static class MisplacedAnalyzer
         return best;
     }
 
+    /// <summary>
+    /// Whether two methods collide as C# declarations.
+    /// </summary>
+    /// <remarks>
+    /// The RETURN TYPE is deliberately not compared. C# does not permit overloading on return type, so two
+    /// methods alike in name and parameters but differing in what they return are a compile-time collision,
+    /// not a pair of overloads — and comparing it made the analyzer reject the match and then report
+    /// "different parameter types", which was doubly wrong: the wrong verdict and a false reason.
+    /// </remarks>
     private static bool SameSignature(IMethodSymbol a, IMethodSymbol b)
     {
         if (a.Parameters.Length != b.Parameters.Length) return false;
         if (a.TypeParameters.Length != b.TypeParameters.Length) return false;
-        if (!SymbolEqualityComparer.Default.Equals(a.ReturnType, b.ReturnType)) return false;
 
         for (int i = 0; i < a.Parameters.Length; i++)
         {
@@ -568,8 +577,12 @@ public static class MisplacedAnalyzer
                     && !string.Equals(section, ownSection, StringComparison.OrdinalIgnoreCase);
             }
 
-            // Only keep climbing while there is a wrapper that leaves this node the receiver.
-            if (current.Parent is MemberAccessExpressionSyntax or ParenthesizedExpressionSyntax)
+            // Only keep climbing while there is a wrapper that leaves this node the receiver. `_dep!` is
+            // such a wrapper: the null-forgiving operator changes nothing about what is being reached,
+            // and `_dep!.Method()` is the same delegation as `_dep.Method()`.
+            if (current.Parent is MemberAccessExpressionSyntax
+                or ParenthesizedExpressionSyntax
+                or PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.SuppressNullableWarningExpression })
             {
                 current = current.Parent;
                 continue;
@@ -585,6 +598,13 @@ public static class MisplacedAnalyzer
     /// </summary>
     private static string? Contract(IMethodSymbol symbol)
     {
+        // A default interface method is not bound BY a contract, it IS one. Neither branch below catches
+        // it — an override it is not, and `AllInterfaces` excludes the interface a member is declared on —
+        // so a target-dominant default body was reported as a plain move, when relocating it changes what
+        // every implementer inherits.
+        if (symbol.ContainingType.TypeKind == TypeKind.Interface)
+            return $"declared on the interface {symbol.ContainingType.Name}";
+
         if (symbol.IsOverride && symbol.OverriddenMethod is { } overridden)
             return $"overrides {overridden.ContainingType.Name}.{overridden.Name}";
 

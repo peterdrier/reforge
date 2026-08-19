@@ -92,6 +92,44 @@ public class MisplacedAnalyzerTests
     }
 
     [Fact]
+    public async Task Analyze_DefaultInterfaceMethod_IsBlocked()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeByDefaultAsync");
+
+        Assert.NotNull(finding);
+        // The method IS the contract rather than being bound by one, and AllInterfaces excludes the
+        // interface a member is declared on, so neither contract branch caught it.
+        Assert.Equal(MisplacedVerdict.Blocked, finding.Verdict);
+        Assert.Contains("IDefaultPipingReport", finding.BlockedBy!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Analyze_SameParametersDifferentReturnType_IsADecisiveCollision()
+    {
+        var report = await AnalyzeAsync();
+        var finding = report.Findings.FirstOrDefault(f =>
+            f.Method.Contains("ReturnTypeClashReporter", StringComparison.Ordinal));
+
+        Assert.NotNull(finding);
+        Assert.Equal(MisplacedVerdict.MoveWouldDuplicate, finding.Verdict);
+        // C# does not overload on return type, so this cannot compile alongside the existing method.
+        // Comparing return types made it a near-miss reported as "different parameter types".
+        Assert.Contains("same signature", finding.DuplicateOf!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Analyze_NullForgivingDelegation_IsStillReportedAsMove()
+    {
+        var report = await AnalyzeAsync();
+        var finding = Find(report, "SummarizeForgivinglyAsync");
+
+        Assert.NotNull(finding);
+        Assert.Equal(MisplacedVerdict.Move, finding.Verdict);
+        Assert.Equal(0, finding.OwnTouches);
+    }
+
+    [Fact]
     public async Task Analyze_PipeSharingOnlyANameWithTheTarget_SaysHowTheSignaturesDiffer()
     {
         var report = await AnalyzeAsync();

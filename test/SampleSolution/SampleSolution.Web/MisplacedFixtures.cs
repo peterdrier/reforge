@@ -115,6 +115,61 @@ public class UnrelatedNamesakeReporter
 }
 
 /// <summary>
+/// A DEFAULT interface method that pipes into another section. It is not bound by a contract — it IS one,
+/// which neither the override nor the interface-implementation branch catches, since
+/// <c>AllInterfaces</c> excludes the interface a member is declared on. Relocating this body alone changes
+/// what every implementer inherits, so it must read as <c>blocked</c> rather than as a move.
+/// </summary>
+public interface IDefaultPipingReport
+{
+    async Task<string> SummarizeByDefaultAsync(int userId)
+    {
+        var service = new GreetingService();
+        var greeting = await service.GetGreetingAsync(userId);
+        await service.GetRecentGreetingsAsync(userId);
+        await service.RecordGreetingAsync(userId, greeting);
+        return greeting;
+    }
+}
+
+/// <summary>
+/// Same name and parameters as <c>GreetingService.GetRecentGreetingsAsync</c>, different return type. C#
+/// does not allow overloading on return type, so this is a decisive collision — comparing return types
+/// made the analyzer call it a near-miss and then report "different parameter types", which was both the
+/// wrong verdict and a false reason for it.
+/// </summary>
+public class ReturnTypeClashReporter
+{
+    private readonly GreetingService _greetings = new();
+
+    public async Task<int> GetRecentGreetingsAsync(int userId, CancellationToken cancellationToken = default)
+    {
+        var greeting = await _greetings.GetGreetingAsync(userId, cancellationToken);
+        var recent = await _greetings.GetRecentGreetingsAsync(userId, cancellationToken);
+        await _greetings.RecordGreetingAsync(userId, greeting, cancellationToken);
+        return recent.Count;
+    }
+}
+
+/// <summary>
+/// Delegation written with the null-forgiving operator. <c>_dep!</c> is a transparent wrapper — it changes
+/// nothing about what is reached — but a walk that does not climb it counts every receiver at home and
+/// restores the 1:1 tie, exactly as the conditional-access case did.
+/// </summary>
+public class NullForgivingGreetingReporter
+{
+    private readonly GreetingService? _greetings = new();
+
+    public async Task<string> SummarizeForgivinglyAsync(int userId)
+    {
+        var greeting = await _greetings!.GetGreetingAsync(userId);
+        await _greetings!.GetRecentGreetingsAsync(userId);
+        await _greetings!.RecordGreetingAsync(userId, greeting);
+        return greeting;
+    }
+}
+
+/// <summary>
 /// Reaches three other sections — <c>Core</c>, <c>Services</c>, and <c>Camp</c> — so no single section
 /// could host it. Nothing is misplaced here; the method exists to join sections. It is reported anyway
 /// because an accidental junction drawer has exactly this shape.
