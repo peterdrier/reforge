@@ -15,8 +15,8 @@ What changed and why. Newest first.
   blocked. Fifteen review rounds took the actionable count 40 → 7, almost all of it false positives
   from measurement gaps — a receiver behind a wrapper (`?.`, `!`, a cast, `await`, an indexer) scored as
   own state and tied; work carried on an expression rather than a name (a constructor, an indexer, an
-  operator) measured as nothing. Known-unhandled: implicit user-defined conversions and delegate
-  invocations, neither of which occurs in the corpus.
+  operator) measured as nothing. Known-unhandled: implicit conversions, delegate invocations, truth
+  operators — none of which occurs in the corpus.
 
 ## Unreleased - Write surface is decided behaviorally, not by the name `I*Service`
 
