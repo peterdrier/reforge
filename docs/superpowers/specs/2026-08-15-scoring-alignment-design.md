@@ -96,8 +96,10 @@ all it is a `reforge clones` diagnostic, not an axis.
 single-caller private helper — plus the `publicWriteSurface` transform proposed in #35. Results,
 distributions and the required manual top-10 reads are recorded in
 [`2026-08-19-internal-axis-signal-measurements.md`](2026-08-19-internal-axis-signal-measurements.md).
-Two of the three are recommended *against* in the form they were proposed, which is what the gate is
-for. Read that file before writing any of these rules.
+All three are recommended *against* in the form they were proposed, which is what the gate is for. The
+manual reads did work the aggregates could not: 0 of the top 15 single-caller helpers is the artifact
+that signal is meant to detect, and 10 of the 47 `fullServiceInterface` classifications publish no
+write capability at all. Read that file before writing any of these rules.
 
 ## Prerequisites
 

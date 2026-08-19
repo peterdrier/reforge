@@ -165,6 +165,55 @@ discussion; and the explicit-implementation exclusion removed a population that 
 Every correction that moved the number moved it the same way — the finding got *stronger* each
 time it was made more careful, which is the opposite of the pattern that should worry a reader.
 
+### Manual audit of the top hits
+
+Gate 2 asks for a read of the top hits for false positives. A per-helper rule charges every hit
+equally, so "top" has no natural order; the largest are the most informative (the biggest thing the
+rule would claim is an artifact), and an evenly-spaced sample checks that the tail does not differ.
+
+**Top 15 of the 762 by LOC:**
+
+| method | LOC | | method | LOC |
+|---|---:|---|---|---:|
+| `AgentService.RunTurnAsync` | 210 | | `StoreWebhookRegistrationService.RegisterAsync` | 79 |
+| `ExpenseReportService.ProcessHoldedCreateAsync` | 145 | | `ShiftVolunteerSearchBuilder.BuildAsync` | 77 |
+| `LegalDocumentSyncService.SyncFolderBasedDocumentAsync` | 102 | | `LegalDocumentSyncRunner.SendReConsentNotificationsAsync` | 76 |
+| `ShiftManagementService.ComputeCoordinatorActivityAsync` | 93 | | `ShiftManagementService.BuildDepartmentRows` | 71 |
+| `TicketTransferService.WriteToVendorAsync` | 88 | | `BudgetAdminController.BuildCashFlowModel` | 70 |
+| `TicketSyncService.SyncEventParticipationsAsync` | 87 | | `AttendeeContactImportService.ClassifyAsync` | 70 |
+| `HumansMetricsService.RefreshSnapshotAsync` | 85 | | `GoogleWorkspaceSyncService.PopulateActualSettings` | 66 |
+| | | | `WorkloadService.BuildByPersonAsync` | 66 |
+
+**0 of 15 is the shape the rule targets.** Every one is a substantial named operation — a sync step, a
+vendor write, a snapshot refresh, a model build. #19 proposes this signal to detect "the
+extract-to-satisfy-the-linter artifact"; a 210-line `RunTurnAsync` with one caller is the opposite of
+that artifact. Charging these would point an agent at inlining 66-to-210-line named operations back
+into their callers, producing exactly the methods the size rules already charge for. The signal's top
+hits argue *against* the signal.
+
+**Evenly-spaced sample of 15, LOC descending**, to reach the small end where genuine artifacts would
+live: `AgentService.RunTurnAsync` (210), `AgentAdminStatusService.BuildUsage` (42),
+`DevLoginController.ResolveSeededPersonaUserAsync` (33),
+`DriveActivityMonitorService.GetPermissionTargetAsync` (28),
+`AuditLogViewComponent.ParseColumnLabels` (24), `BudgetAdminController.GroupByMonth` (20),
+`SectionDiscoveryExtensions.DiscoverSections` (17), `CityPlanningService.ToDto` (15),
+`PreMigrationSnapshot.DiscardAbandonedWrites` (13),
+`VolunteerTrackingXlsxBuilder.WriteDayHeaders` (12),
+`MailerAudienceDebugSnapshotBuilder.NotificationTargetEmail` (10),
+`OrderAuthorizationHandler.TodayInEventZoneAsync` (8), `CantinaRosterService.BuildWeekDays` (6),
+`MailerLiteSubscriberConverter.ReadString` (4), `DietaryMedicalViewModel.IsKnownIntolerance` (1).
+
+The small end is where an extraction artifact *could* hide — and it is where the audit runs out of
+discriminating power. `IsKnownIntolerance` is one line with one caller; it is also a named domain
+predicate. `ReadString` is four lines inside a JSON converter. `TodayInEventZoneAsync` is eight lines
+of timezone arithmetic. Nothing structural separates "extracted to shorten a method" from "named
+because the concept deserves a name" — the difference is *when* it was written and *why*, which is
+history, not structure.
+
+That is the audit's real finding, and it is why the delta framing is the only defensible one: the
+signal is undecidable on a snapshot at exactly the sizes where it would matter, and wrong at the sizes
+where it is decidable.
+
 ### Reading
 
 **The base rate is 59.2%.** Well over half of all private methods in this codebase have exactly one
@@ -389,6 +438,62 @@ One correction to a figure this document carried through both earlier passes: th
 **292**, not 517. 517 came from counting methods across all 93 classified interfaces. The 4,136 points
 are unchanged and always were — they are the engine's own total, and at 292 charged methods they
 reflect the per-section multipliers, not a flat 8 per method.
+
+### Manual audit of the population — 79% precision
+
+Gate 2 requires reading the top hits for false positives, and this population is classified by **name
+pattern**, which makes that read load-bearing rather than a formality. `fullServiceInterface` is
+assigned by `I*Service`; `readServiceInterface` only catches `I*ServiceRead`, `I*ReadService` and
+`I*QueryService`. Anything named `I…Service` that happens to be read-only is therefore classified as
+write-capable surface.
+
+Read all 47. The top 10 by charged method count are all genuine — `IUserEmailService` (42 methods,
+`AddEmailAsync`/`SetPrimaryAsync`/`DeleteEmailAsync`/…), `IUserService` (35, `SaveProfileAsync`/
+`AnonymizeProfileForDeletionAsync`/…), `ITeamResourceService` (21, `LinkDriveFolderAsync`/
+`UnlinkResourceAsync`/…), then `IRoleAssignmentService`, `ICommunicationPreferenceService`,
+`IHoldedFinanceService`, `IGoogleSyncService`, `ITeamService`, `IContainerService`,
+`IAccountMergeService`. No false positives in the head.
+
+**The tail is where the misses are. 10 of 47 publish no write capability at all:**
+
+| interface | section | methods | what it actually is |
+|---|---|---:|---|
+| `IAuditViewerService` | AuditLog | 6 | all `Get*` — audit log reads |
+| `IBurnSettingsService` | Shifts | 2 | `GetActiveAsync`, `GetByIdAsync` |
+| `IAdminDashboardService` | Web | 2 | `GetAdminDashboardAsync`, `GetPendingReviewCountAsync` |
+| `ILegalDocumentService` | Consent | 2 | `GetAvailableDocuments`, `GetDocumentContentAsync` |
+| `IICalFeedService` | Calendar | 2 | `GetFeedItemsAsync`, `GetFeedIcsAsync` |
+| `IEarlyEntryService` | EarlyEntry | 2 | `GetRosterAsync`, `GetForUserAsync` |
+| `IGoogleTranslationService` | GoogleIntegration | 1 | `TranslateAsync` — a pure function |
+| `IDashboardService` | Web | 1 | `GetMemberDashboardAsync` |
+| `IGdprExportService` | Gdpr | 1 | `ExportForUserAsync` |
+| `IAdminAuthorizationService` | Auth | 1 | `RequireCurrentUserIsAdminAsync` — a check |
+
+One near-miss kept as genuine: `IDriveActivityMonitorService.CheckForAnomalousActivityAsync` reads
+like a query, but its own doc comment says it "logs anomalous changes to the audit log". It writes.
+
+**Precision as a write-surface proxy: 37 of 47 = 79%.** The audit does not weaken the recommendation
+— it sharpens it:
+
+| | as classified | genuine write surfaces |
+|---|---:|---:|
+| interfaces | 47 | **37** |
+| positive sections | 24 of 44 | **18 of 44** |
+| distribution | 19×1, 2×2, 3, 5, 16 | **15×1, 2, 4, 16** |
+| sections at exactly one | 79% | **83%** |
+| Users' share of a per-interface charge | 34% | **43%** |
+
+Six sections drop out entirely (Calendar, Consent, EarlyEntry, Gdpr, Shifts, Web) because their only
+`I*Service` was read-only. The distribution is *more* binary-with-one-outlier than the unaudited
+count, and Users would take 43% of a per-interface rule's output rather than 34%. Every conclusion
+below holds on either population; the per-section reading holds more strongly on the audited one.
+
+**A consequence beyond this signal.** Those 10 interfaces are charged `fullServiceInterfaceMethod`
+**today** — 20 methods, **216 points, 5.2% of the rule's 4,136**. That is a live scoring inaccuracy,
+not a measurement artifact: read-only interfaces are being priced as published write surface because
+they are named `I…Service`. Filed separately as **#54**, since fixing the classifier or the config is
+outside a measurement record. It is also the strongest argument in this document for why Gate 2 asks
+for the manual read: the aggregate looked fine, and 21% of the population was the wrong thing.
 
 ### Question 1 — does it double-charge `fullServiceInterfaceMethod`?
 

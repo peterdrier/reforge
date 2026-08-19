@@ -13,6 +13,15 @@ transform. Measured against Humans: 45 configured sections (44 score anything), 
 **All three signals are recommended against in the form they were proposed**, which is the gate
 working rather than failing. One deletion is recommended, with its real cost stated below.
 
+The gate's manual top-hit reads did work the aggregates could not, in both directions: **0 of the top
+15 single-caller private helpers** is the extraction artifact that signal exists to detect (they are
+66-to-210-line named operations, and charging them would point an agent at inlining them), and **10 of
+the 47 `fullServiceInterface` classifications publish no write capability at all** — `IAuditViewerService`,
+`IDashboardService`, `IGdprExportService` and seven more are all-`Get*` interfaces classified as write
+surface because they are named `I*Service`. That second one is a live scoring inaccuracy worth 216
+points (5.2% of `fullServiceInterfaceMethod`), filed as #54; the report-side ambiguity that hid it is
+#53.
+
 - **Single-caller private helper.** 762 of 1,288 private methods have exactly one caller — a
   **59.2% base rate** (explicit interface implementations excluded: Roslyn reports them as `private`
   but they are externally callable and calls bind to the interface member, so all 31 of them sat in
