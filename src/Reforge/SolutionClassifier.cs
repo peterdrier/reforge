@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Reforge;
 
@@ -65,6 +66,9 @@ public static class SolutionClassifier
             }
         }
 
+        // Pass 1.5 — demote name-classified write surfaces that nothing actually writes through.
+        DemoteReadOnlyServiceInterfaces(collected, ct);
+
         // Pass 2 — name the sections. Only type-declaring assemblies participate: a docs/tooling
         // project that ships no C# is not a section, and letting it into the prefix calculation
         // would strip nothing at all from the real ones.
@@ -73,6 +77,85 @@ public static class SolutionClassifier
         return collected
             .Select(c => new ClassifiedType(c.Type, sectionByAssembly[c.Assembly], c.Tags, c.File, c.Location))
             .ToList();
+    }
+
+    /// <summary>
+    /// Reclassifies an interface the name patterns called a full (write-capable) service interface as
+    /// a <c>readServiceInterface</c> when no implementation of any of its members observably mutates
+    /// persistent state.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>fullServiceInterface</c> is assigned by the name pattern <c>I*Service</c>, and the read
+    /// escape hatch only catches <c>I*ServiceRead</c> / <c>I*ReadService</c> / <c>I*QueryService</c>.
+    /// So an all-<c>Get*</c> facade named <c>IAuditViewerService</c> was priced as published <b>write</b>
+    /// surface. On the Humans corpus that was 10 of 47 exported write interfaces — 20 methods — which
+    /// is issue #54.
+    /// </para>
+    /// <para>
+    /// The test is behavioral, not nominal: it reuses <see cref="ImplementationComplexity.IsMutation"/>,
+    /// which decides from the implementation body (a persistence-commit call) or the method's shape
+    /// (returns no data, non-query verb). That is what makes this rename-proof, and it is why the
+    /// interface's own declarations cannot answer it — an interface member has no body, so the
+    /// question is only decidable at the implementation.
+    /// </para>
+    /// <para>
+    /// Demotion requires <b>evidence of read-only-ness</b>, not merely absence of evidence of writing.
+    /// An interface with no implementation in the analyzed solution keeps its classification: the walk
+    /// skips test projects and cannot see other assemblies, so "no implementation found" means
+    /// unknown, and silently repricing surface on an analysis gap is the failure this codebase has
+    /// been bitten by before (see <see cref="SurfaceVisibility"/> and issue #51).
+    /// </para>
+    /// <para>
+    /// Demoted interfaces are not exempted — they still score, at <c>readServiceInterfaceMethod</c>
+    /// rather than <c>fullServiceInterfaceMethod</c>. A published read facade is real surface; it is
+    /// just not a write commitment.
+    /// </para>
+    /// </remarks>
+    private static void DemoteReadOnlyServiceInterfaces(
+        List<(INamedTypeSymbol Type, string Assembly, HashSet<string> Tags, string File, Location Location)> collected,
+        CancellationToken ct)
+    {
+        var candidates = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var c in collected)
+            if (c.Type.TypeKind == TypeKind.Interface && c.Tags.Contains("fullServiceInterface"))
+                candidates[TypeKey(c.Type)] = c.Tags;
+        if (candidates.Count == 0) return;
+
+        var implemented = new HashSet<string>(StringComparer.Ordinal);
+        var writes = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var c in collected)
+        {
+            if (c.Type.TypeKind == TypeKind.Interface) continue;
+            foreach (var iface in c.Type.AllInterfaces)
+            {
+                ct.ThrowIfCancellationRequested();
+                var key = TypeKey(iface.OriginalDefinition);
+                if (!candidates.ContainsKey(key)) continue;
+                implemented.Add(key);
+                if (writes.Contains(key)) continue;
+
+                foreach (var member in iface.GetMembers())
+                {
+                    if (member is not IMethodSymbol m || m.MethodKind != MethodKind.Ordinary) continue;
+                    if (c.Type.FindImplementationForInterfaceMember(m) is not IMethodSymbol impl) continue;
+                    var syntax = impl.DeclaringSyntaxReferences.Length > 0
+                        ? impl.DeclaringSyntaxReferences[0].GetSyntax(ct) as BaseMethodDeclarationSyntax
+                        : null;
+                    if (!ImplementationComplexity.IsMutation(impl, syntax)) continue;
+                    writes.Add(key);
+                    break;
+                }
+            }
+        }
+
+        foreach (var (key, tags) in candidates)
+        {
+            if (!implemented.Contains(key) || writes.Contains(key)) continue;
+            tags.Remove("fullServiceInterface");
+            tags.Add("readServiceInterface");
+        }
     }
 
     /// <summary>

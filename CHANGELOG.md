@@ -2,6 +2,61 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Write surface is decided behaviorally, not by the name `I*Service`
+
+Issue #54. `fullServiceInterface` was assigned by the name pattern `I*Service`, and the read escape
+hatch only caught `I*ServiceRead` / `I*ReadService` / `I*QueryService`. So an all-`Get*` facade named
+`IAuditViewerService` was priced as published **write** surface. `SolutionClassifier` now reclassifies
+such an interface as `readServiceInterface` when no implementation of any of its members observably
+mutates state, reusing the existing `ImplementationComplexity.IsMutation` rather than adding a second
+write detector.
+
+The question is only decidable at the implementation — an interface member has no body — which is why
+this could not be fixed in the classification rules alone.
+
+**Demotion requires evidence of read-only-ness, not absence of evidence of writing.** An interface with
+no implementation in the analyzed solution keeps its classification: the walk skips test projects and
+cannot see other assemblies, so "no implementation found" means unknown. Repricing surface on an
+analysis gap is the failure #51 fixed elsewhere. Demoted interfaces are not exempted either — they
+score `readServiceInterfaceMethod` (6) instead of `fullServiceInterfaceMethod` (8). A published read
+facade is real surface; it is just not a write commitment.
+
+Measured against Humans (`113061bcf5f6`): **48 of 93 classified service interfaces reclassified**, and
+`surfaceTotal` **17,379 → 17,129**.
+
+| rule | before | after |
+|---|---:|---:|
+| `crossSectionFullService` | 1,768 | **1,344** |
+| `crossSectionReadInterface` | 536 | **642** |
+| `fullServiceInterfaceMethod` | 4,136 | **3,560** |
+| `readServiceInterfaceMethod` | 990 | **1,422** |
+| `readSurfaceProjectionMethod` | 536 | **748** |
+| `missingReadSurface` / `missingWriteSurface` | 120 / 20 | **70 / 70** |
+
+The dominant effect is not the direct charge but the **cross-section** one: consumers depending on a
+read-only `I*Service` were being charged for a write dependency. #54 estimated the defect at 216 points
+by scoping to `fullServiceInterfaceMethod` on *exported* interfaces only; the classification feeds six
+rules, and the cross-section rules are deliberately not visibility-gated. The estimate was low by
+roughly 5× — the same scope-the-population error the 2026-08-19 measurement record documents at length.
+
+**Two known misclassifications remain, one in each direction**, both inherent to `IsMutation`'s
+depth-1 view of a body:
+
+- `IAdminAuthorizationService` stays a write surface. Its only member, `Task RequireCurrentUserIsAdminAsync(...)`,
+  returns no data, which the command-shape fallback reads as a mutation. It is an authorization check
+  that throws.
+- `IDriveActivityMonitorService` is demoted to read. `CheckForAnomalousActivityAsync` does write — via
+  `auditLogService.LogAsync(...)`, one call deeper than the body scan reaches.
+
+Following dependency calls one level would fix both and risks the opposite failure: anything touching
+a service that writes becomes a write surface, which re-inflates the population the change exists to
+shrink. Left as-is deliberately, and recorded rather than hidden.
+
+Sample solution: `surfaceTotal` 1,939 → 1,913. `IUserService` (two `Get*` methods) and both
+`IGateRegistrar*Service` fixtures (`int Count()`) demote; `IGreetingService` (`RecordGreetingAsync`)
+stays full; `ICampBillingService` keeps its classification because nothing implements it. Three tests
+cover exactly those three behaviors.
+
 ## Unreleased - Gate 2 measurements for the internal-axis candidate signals
 
 `docs/superpowers/specs/2026-08-19-internal-axis-signal-measurements.md`. Discharges the

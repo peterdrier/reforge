@@ -19,13 +19,44 @@ public class SolutionClassifierTests
         var classified = await ClassifyAsync();
 
         Assert.Contains(classified, c => c.Type.Name == "UserService" && c.Tags.Contains("applicationService"));
-        Assert.Contains(classified, c => c.Type.Name == "IUserService" && c.Tags.Contains("fullServiceInterface"));
+        // IUserService declares two Get* methods and nothing else, so it is a READ service interface.
+        // It was classified as a full (write-capable) one until #54, purely because the name pattern
+        // for `fullServiceInterface` is `I*Service` and the read escape hatch only caught
+        // `I*ServiceRead` / `I*ReadService` / `I*QueryService`.
+        Assert.Contains(classified, c => c.Type.Name == "IUserService" && c.Tags.Contains("readServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IUserService" && c.Tags.Contains("fullServiceInterface"));
         // Uniqueness is per (assembly, display name) — NOT per display name. Two assemblies may
         // legitimately declare the same fully qualified name; both must survive classification.
         var keys = classified
             .Select(c => $"{c.Type.ContainingAssembly?.Name}|{c.Type.ToDisplayString()}")
             .ToList();
         Assert.Equal(keys.Distinct().Count(), classified.Count);
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_WriteCapableServiceInterface_StaysFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // IGreetingService declares RecordGreetingAsync — a Task returning no data, which
+        // ImplementationComplexity.IsMutation reads as a command. The name is identical in shape to
+        // IUserService, so only the behavior of the implementation separates them. That is the point:
+        // the classification is rename-proof in both directions.
+        Assert.Contains(classified, c => c.Type.Name == "IGreetingService" && c.Tags.Contains("fullServiceInterface"));
+        Assert.DoesNotContain(classified, c => c.Type.Name == "IGreetingService" && c.Tags.Contains("readServiceInterface"));
+    }
+
+    [Fact]
+    public async Task ClassifyAsync_ServiceInterfaceWithNoImplementation_KeepsFullService()
+    {
+        var classified = await ClassifyAsync();
+
+        // ICampBillingService declares only `int BalanceFor(int)` — read-shaped — but nothing in the
+        // solution implements it. Demotion requires evidence of read-only-ness, and an unimplemented
+        // interface supplies none: the walk skips test projects and cannot see other assemblies, so
+        // "no implementation found" means unknown. Repricing surface on an analysis gap is the failure
+        // mode #51 fixed elsewhere, and this asserts it is not reintroduced here.
+        Assert.Contains(classified, c => c.Type.Name == "ICampBillingService" && c.Tags.Contains("fullServiceInterface"));
     }
 
     [Fact]
