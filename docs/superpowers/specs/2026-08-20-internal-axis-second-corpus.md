@@ -143,6 +143,34 @@ sections' helpers, which this round did not do.
 Too small and too unambiguous to score — a `reforge dead-private` diagnostic at most, and only if
 someone asks for it.
 
+## The read-surface retirement, rejected
+
+#19's "related but separable" section proposes retiring the read-surface rules. Measured on
+`283510e` they are **2,737 points, 13.9% of 19,727** — not the 1,230 / 7% the issue states, and
+`readServiceInterfaceMethod` alone is the fifth-largest rule in the tool.
+
+| rule | points |
+|---|---:|
+| `readServiceInterfaceMethod` | 1,386 |
+| `readSurfaceProjectionMethod` | 748 |
+| `crossSectionReadInterface` | 606 |
+| `writeCapableInterfaceUsedReadOnly` | 72 |
+| `canonicalReadDtoReturn` | −75 |
+
+Rejected, and not on magnitude. The argument for cutting them — assemblies carry the boundary now,
+so charging for a read surface charges the preferred shape — conflates *which interface setup is
+preferred* with *how much surface exists*. Read surface is still surface: a read interface with 40
+methods publishes 40 methods, and read-only says nothing about whether all 40 were required. Zeroing
+the read path stops measuring it, and what is not measured cannot be pushed anywhere.
+
+Least privilege is carried by the **differential** — read 6/method against full 8, cross-section
+read 2 against full 8 — not by making one side free. That is the shipped design.
+
+The issue's stated reason was config surface and special-case code rather than points. The config
+half is already discharged by #60: four keys remain across all five rules. The 882 lines in
+`SectionShapeAnalyzer` and `CanonicalReadDtos` are implementation complexity, which is a refactor
+under a score-must-not-move gate, not a retirement.
+
 ## What is still not measured
 
 - Whether the per-section share separates fragmentation from correct small-method style. Needs the
