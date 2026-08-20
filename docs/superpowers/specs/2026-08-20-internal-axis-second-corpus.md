@@ -308,6 +308,80 @@ half is already discharged by #60: four keys remain across all five rules. The 8
 `SectionShapeAnalyzer` and `CanonicalReadDtos` are implementation complexity, which is a refactor
 under a score-must-not-move gate, not a retirement.
 
+## `largeClass` — keep at weight 1
+
+The last of #19's three size rules without a recorded decision. Measured on Humans `283510e`,
+`Humans.Score.slnf`, `degraded: false`.
+
+**Population.** `largeClass` charges only application services, repository implementations,
+controllers and background jobs (`IsSizeTrackedClass`), summed over handwritten declarations, at +10
+per 250 nonblank LOC above 750 and +25 above 1,500. It charges **16 classes, 455 points, 8 of 44
+sections**:
+
+| class | LOC | pts | | class | LOC | pts |
+|---|---:|---:|---|---|---:|---:|
+| `TeamService` | 2,211 | 75 | | `ExpenseReportService` | 1,167 | 10 |
+| `ProfileController` | 2,025 | 75 | | `CampController` | 1,160 | 10 |
+| `ShiftManagementService` | 1,851 | 65 | | `ShiftSignupService` | 1,149 | 10 |
+| `GoogleWorkspaceSyncService` | 1,746 | 55 | | `TeamRepository` | 1,108 | 10 |
+| `UserRepository` | 1,589 | 55 | | `BudgetRepository` | 1,096 | 10 |
+| `Store.Service` | 1,374 | 20 | | `UserService` | 1,069 | 10 |
+| `CampService` | 1,304 | 20 | | `TeamAdminController` | 1,062 | 10 |
+| | | | | `UserEmailService` | 1,059 | 10 |
+| | | | | `CachingTeamService` | 1,035 | 10 |
+
+The four classes over 1,700 lines carry 270 of the 455 points; nine classes pay the minimum 10.
+Not a broad tax.
+
+**Gate 1.** Three edits satisfy it, and only one is cheap:
+
+- *Mark it `partial` and split the files.* **Already closed.** Partial declarations sum, per
+  declaration rather than from the primary file, and `SectionMetrics` measures the same way.
+- *Split into a second named type.* The open escape, and it is not a relabelling. `TeamService` has
+  99 methods and 47 injected dependencies; a second type has to take a partition of those 47 through
+  its own constructor, and cannot reach the original's private state. Getting under 750 from 2,211
+  is a three-way split of that dependency set.
+- *Move methods to the section that owns their data.* The desired outcome, and `misplaced` already
+  names the candidates.
+
+**Why it does not share `longMethod`'s fate.** What killed `longMethod` was a gaming boundary any
+extraction could cross: a 40-line threshold on a graduated curve, so 20×40 LOC scored 0 where
+800 scored 111. `largeClass` has no such boundary — one threshold at 750, a coarse step above it,
+and a population where crossing it means partitioning a constructor.
+
+**Threshold-hugging check.** If the threshold were being shaved to, sizes would bunch just under
+750. Measured in the rule's own unit — nonblank LOC per class, summed across partials — by a
+separate scanner validated against the 15 figures the rule itself reports (6 exact, the rest
+undercounting by 1–10 lines on leading attributes, so read the numbers as ±10):
+
+| band | names |
+|---|---|
+| 620–749 | 11 — `EventsController` 732, `Tickets.Repository` 718, `EventService` 707, … `TicketTransferService` 647 |
+| ≥750 | 25, of which 6 within 90 lines of the threshold — `AgentService` 755, `ExpensesController` 756, `BudgetService` 772, `IssuesService` 783, `TicketQueryService` 795, `TicketRepository` 840 |
+
+Ordinary density on both sides and no bunching: the closest below is 18 lines under, and six classes
+sit just over and pay. The scanner's `*Service`/`*Controller`/`*Repository`/`*Job`/`*Seeder` name
+shape is **wider** than `IsSizeTrackedClass`, which is why it finds 25 at ≥750 where the rule charges
+16 — the check is about the distribution, not the charge.
+
+**Decision: keep, weight 1, unchanged.** No Gate 1 fixture: the threshold is 750 LOC, so a
+`Before`/`CheapestFix` pair costs roughly 1,600 lines of synthetic class to demonstrate one 10-point
+charge. The exemption in `GateOneFixtureTests` records that as the reason, replacing the previous
+one, which promised a cohesion-based replacement this measurement does not recommend.
+
+## The axis is `implementationShape`
+
+#19's secondary complaint, discharged. `internalComplexity` never had an `internal`-accessibility
+gate — the axis is a fixed rule-name partition, so public code scores on it too — and the README
+reinforced the wrong reading by describing it two paragraphs after the effectively-public surface
+gate.
+
+Renamed throughout: `implementationShapeTotal` in JSON, `implementationShape=` in compact,
+**Implementation shape** in markdown, `SurfaceScoreRuleGroups.ImplementationShape`. Baselines are
+committed files that outlive the build that wrote them, so `ReadScope` accepts either key spelling
+and `self-score-report.py` does the same. Score-neutral on both corpora: Humans 16,689 / 2,530 /
+19,219 and reforge surface 53, both unchanged.
+
 ## What is still not measured
 
 - Whether the per-section share separates fragmentation from correct small-method style. Needs the

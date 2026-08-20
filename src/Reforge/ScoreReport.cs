@@ -43,12 +43,12 @@ public static class ScoreOrigin
 public sealed class GroupScore
 {
     public string Name { get; init; } = "";
-    /// <summary>Combined total (surface + internal complexity). Informational; not an optimization target.</summary>
+    /// <summary>Combined total (surface + implementation shape). Informational; not an optimization target.</summary>
     public int Total { get; set; }
     /// <summary>Durable public-surface + dependency-use + return-shape points.</summary>
     public int SurfaceTotal { get; set; }
     /// <summary>Implementation-complexity points (cognitive complexity, size, dispatchers).</summary>
-    public int InternalComplexityTotal { get; set; }
+    public int ImplementationShapeTotal { get; set; }
     public Dictionary<string, int> ByRule { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<ScoreEntry> Entries { get; } = new();
 
@@ -78,10 +78,10 @@ public sealed class GroupScore
 
 public sealed class ScoreReport
 {
-    /// <summary>Combined total (surface + internal complexity). Informational; not an optimization target.</summary>
+    /// <summary>Combined total (surface + implementation shape). Informational; not an optimization target.</summary>
     public int Total { get; set; }
     public int SurfaceTotal { get; set; }
-    public int InternalComplexityTotal { get; set; }
+    public int ImplementationShapeTotal { get; set; }
     public Dictionary<string, GroupScore> Groups { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, int> ByRule { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> DuplicateOwners { get; } = new();
@@ -131,7 +131,7 @@ public sealed class ScoreReport
     public List<string> ConfiguredSections { get; } = new();
     /// <summary>
     /// Populated only when a <c>--baseline</c> is supplied. Each entry is a scope (solution or
-    /// a group) where surface improved but internal complexity worsened past the threshold —
+    /// a group) where surface improved but implementation shape worsened past the threshold —
     /// the score-driven-consolidation smell. Empty otherwise.
     /// </summary>
     public List<SuspiciousImprovement> SuspiciousImprovements { get; } = new();
@@ -160,7 +160,7 @@ public sealed record SuspiciousImprovement(
     string Kind,
     string Message,
     int SurfaceDelta,
-    int InternalDelta,
+    int ShapeDelta,
     bool Improvement);
 
 public sealed record ConservationAnchorMethod(string Name, string Returns);

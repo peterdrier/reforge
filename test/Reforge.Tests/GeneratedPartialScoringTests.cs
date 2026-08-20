@@ -1,7 +1,7 @@
 namespace Reforge.Tests;
 
 /// <summary>
-/// The internal-complexity axis decides generated-ness per declaration. A partial type with a
+/// The implementation-shape axis decides generated-ness per declaration. A partial type with a
 /// generated half is one symbol spanning two files, and which of them Roslyn reports first is
 /// declaration order rather than a fact about the code — so filtering on the primary file alone
 /// made the score depend on it: the generated half's methods scored whenever the handwritten file

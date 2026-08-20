@@ -15,8 +15,8 @@ public sealed record MetricDistribution(double Avg, int P95, int Max, string Max
 /// <summary>
 /// Size and complexity of one section's scored corpus — the context a score number lacks on its
 /// own. A section's surface points can fall because its API shrank or because its code did; a
-/// section's internal-complexity points can fall because methods got simpler or because they were
-/// deleted. Neither is visible from the score, and most internal-complexity points are satisfiable
+/// section's implementation-shape points can fall because methods got simpler or because they were
+/// deleted. Neither is visible from the score, and most implementation-shape points are satisfiable
 /// by edits that move no code (see issue #19), so the score is reported beside the size it describes.
 /// </summary>
 /// <remarks>
@@ -59,7 +59,7 @@ public sealed record SectionMetrics(
 ///         here. Attributing tests to a section needs project-reference resolution, which is a
 ///         different problem.</item>
 ///   <item>Generated code (EF migrations, <c>*.g.cs</c>, <c>*.Designer.cs</c>) is excluded, exactly
-///         as it is from the internal-complexity axis: it is not developer-controlled implementation,
+///         as it is from the implementation-shape axis: it is not developer-controlled implementation,
 ///         and its huge generated methods would swamp every distribution.</item>
 ///   <item>Complexity is measured over methods that have a body. An abstract or interface
 ///         declaration carries no implementation, and folding a zero (or a 1) in for each would

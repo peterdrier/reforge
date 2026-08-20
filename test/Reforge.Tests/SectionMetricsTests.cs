@@ -97,10 +97,10 @@ public class SectionMetricsTests
 
         // The engine's own invariant: the metrics pass adds no entries, so the axes still add up
         // exactly as they did before it existed.
-        Assert.Equal(report.SurfaceTotal + report.InternalComplexityTotal, report.Total);
+        Assert.Equal(report.SurfaceTotal + report.ImplementationShapeTotal, report.Total);
         Assert.Equal(report.Total, report.Groups.Values.Sum(g => g.Total));
         Assert.Equal(report.SurfaceTotal, report.Groups.Values.Sum(g => g.SurfaceTotal));
-        Assert.Equal(report.InternalComplexityTotal, report.Groups.Values.Sum(g => g.InternalComplexityTotal));
+        Assert.Equal(report.ImplementationShapeTotal, report.Groups.Values.Sum(g => g.ImplementationShapeTotal));
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public class SectionMetricsTests
         Assert.NotEqual("", max.MaxMethod);
 
         // Re-derive the named method's score straight from syntax: the metric must be the same
-        // number the internal-complexity axis charges on, not a parallel approximation of it.
+        // number the implementation-shape axis charges on, not a parallel approximation of it.
         var classified = await SolutionClassifier.ClassifyAsync(
             _fixture.Solution, SurfaceScoreConfig.Default(),
             LocationHelper.GetSolutionDirectory(_fixture.Solution), CancellationToken.None);

@@ -12,7 +12,7 @@ namespace Reforge;
 public sealed record ScopeDelta(
     string Scope,
     int BaseSurface, int NowSurface, int SurfaceDelta,
-    int BaseInternal, int NowInternal, int InternalDelta,
+    int BaseShape, int NowShape, int ShapeDelta,
     string Verdict,
     bool Improvement);
 
@@ -111,14 +111,14 @@ public static class SurfaceScoreBaseline
                 "the comparison may be off by several percent, concentrated in crossSection*/diRegistration/methodReturnsEntity rules.";
         }
 
-        var nowSolution = new BaselineScope(now.SurfaceTotal, now.InternalComplexityTotal, now.ByRule);
+        var nowSolution = new BaselineScope(now.SurfaceTotal, now.ImplementationShapeTotal, now.ByRule);
         var allEntries = now.Groups.Values.SelectMany(g => g.Entries).ToList();
         comparison.Solution = Evaluate("solution", baseSolution, nowSolution, allEntries, comparison.Suspicious);
 
         foreach (var (name, g) in now.Groups)
         {
             var baseScope = baseGroups.TryGetValue(name, out var b) ? b : new BaselineScope(0, 0, new());
-            var nowScope = new BaselineScope(g.SurfaceTotal, g.InternalComplexityTotal, g.ByRule);
+            var nowScope = new BaselineScope(g.SurfaceTotal, g.ImplementationShapeTotal, g.ByRule);
             comparison.Groups.Add(Evaluate(name, baseScope, nowScope, g.Entries, comparison.Suspicious));
         }
         // Sections that existed in the baseline but produced nothing now (deleted/emptied) —
@@ -389,24 +389,24 @@ public static class SurfaceScoreBaseline
         IReadOnlyList<ScoreEntry> nowEntries, List<SuspiciousImprovement> sink)
     {
         int dSurface = now.Surface - b.Surface;     // negative = surface improved
-        int dInternal = now.Internal - b.Internal;  // positive = complexity worsened
+        int dShape = now.Shape - b.Shape;  // positive = implementation shape worsened
 
         bool surfaceWorse = dSurface > 0;
-        bool internalWorse = dInternal > 0;
+        bool shapeWorse = dShape > 0;
         bool surfaceBetter = dSurface < 0;
-        bool internalBetter = dInternal < 0;
+        bool shapeBetter = dShape < 0;
 
         string verdict;
         bool improvement;
-        if (!surfaceWorse && !internalWorse && (surfaceBetter || internalBetter))
+        if (!surfaceWorse && !shapeWorse && (surfaceBetter || shapeBetter))
         {
             verdict = "improved"; improvement = true;
         }
-        else if (surfaceBetter && internalWorse)
+        else if (surfaceBetter && shapeWorse)
         {
             verdict = "traded"; improvement = false;
         }
-        else if (surfaceWorse || internalWorse)
+        else if (surfaceWorse || shapeWorse)
         {
             verdict = "regressed"; improvement = false;
         }
@@ -423,9 +423,9 @@ public static class SurfaceScoreBaseline
         {
             var (kind, drivers) = Attribute(b, now, nowEntries);
             sink.Add(new SuspiciousImprovement(scope, kind,
-                $"{scope}: surface improved by {-dSurface} points, but implementation complexity worsened by {dInternal} " +
+                $"{scope}: surface improved by {-dSurface} points, but implementation shape worsened by {dShape} " +
                 $"(verdict: traded — not an improvement).{drivers}",
-                dSurface, dInternal, false));
+                dSurface, dShape, false));
         }
         else if (surfaceBetter)
         {
@@ -438,7 +438,7 @@ public static class SurfaceScoreBaseline
             {
                 sink.Add(new SuspiciousImprovement(scope, "dispatcher-up-methods-down",
                     $"{scope}: public method surface dropped by {-dMethodSurface} points while dispatcher penalties rose by {dDispatcher}.{Attribute(b, now, nowEntries).Drivers}",
-                    dSurface, dInternal, false));
+                    dSurface, dShape, false));
             }
 
             int dInterface = SumRules(now.ByRule, InterfaceMethodRules) - SumRules(b.ByRule, InterfaceMethodRules);
@@ -447,13 +447,13 @@ public static class SurfaceScoreBaseline
             {
                 sink.Add(new SuspiciousImprovement(scope, "godmethod-up-interface-down",
                     $"{scope}: interface-method surface dropped by {-dInterface} points while long/complex-method penalties rose by {dGod}.",
-                    dSurface, dInternal, false));
+                    dSurface, dShape, false));
             }
         }
 
         // Parameter-bag consolidation: methodParameterOverflow fell but equivalent input/command
         // surface was introduced. Flagged regardless of verdict — the trade can keep surface flat
-        // (the bag offsets the param reduction) and need not touch internal complexity at all.
+        // (the bag offsets the param reduction) and need not touch implementation shape at all.
         int dOverflow = now.ByRule.GetValueOrDefault("methodParameterOverflow") - b.ByRule.GetValueOrDefault("methodParameterOverflow");
         int dParamBag = SumRules(now.ByRule, ParamBagRules) - SumRules(b.ByRule, ParamBagRules);
         if (dOverflow < 0 && dParamBag > 0)
@@ -467,20 +467,20 @@ public static class SurfaceScoreBaseline
             var typeStr = types.Count > 0 ? $": {string.Join(", ", types)}" : "";
             sink.Add(new SuspiciousImprovement(scope, "parameter-bag-consolidation",
                 $"{scope}: method parameter score decreased by {-dOverflow}, but equivalent input/parameter-bag surface was introduced (+{dParamBag}){typeStr}.",
-                dSurface, dInternal, false));
+                dSurface, dShape, false));
         }
 
-        return new ScopeDelta(scope, b.Surface, now.Surface, dSurface, b.Internal, now.Internal, dInternal, verdict, improvement);
+        return new ScopeDelta(scope, b.Surface, now.Surface, dSurface, b.Shape, now.Shape, dShape, verdict, improvement);
     }
 
     /// <summary>
-    /// Builds the per-rule / per-symbol attribution for a regression: which internal-complexity
+    /// Builds the per-rule / per-symbol attribution for a regression: which implementation-shape
     /// rules rose, by how much, and which symbols carry them now. This is the "why" the report
     /// must surface — specific attribution, not just a net number.
     /// </summary>
     private static (string Kind, string Drivers) Attribute(BaselineScope b, BaselineScope now, IReadOnlyList<ScoreEntry> nowEntries)
     {
-        var increased = SurfaceScoreRuleGroups.InternalComplexity
+        var increased = SurfaceScoreRuleGroups.ImplementationShape
             .Select(r => (Rule: r, Delta: now.ByRule.GetValueOrDefault(r) - b.ByRule.GetValueOrDefault(r)))
             .Where(x => x.Delta > 0)
             .OrderByDescending(x => x.Delta)
@@ -519,7 +519,11 @@ public static class SurfaceScoreBaseline
         int surface = el.TryGetProperty("surfaceTotal", out var s) && s.ValueKind == JsonValueKind.Number
             ? s.GetInt32()
             : total; // pre-axis baseline: everything was surface
-        int internalC = GetInt(el, "internalComplexityTotal");
+        // Both key spellings: baselines written before the axis was renamed carry the old one, and a
+        // baseline is a committed file that outlives the build that produced it.
+        int shape = el.TryGetProperty("implementationShapeTotal", out _)
+            ? GetInt(el, "implementationShapeTotal")
+            : GetInt(el, "internalComplexityTotal");
 
         var byRule = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         if (el.TryGetProperty("byRule", out var br) && br.ValueKind == JsonValueKind.Object)
@@ -528,11 +532,11 @@ public static class SurfaceScoreBaseline
                 if (p.Value.ValueKind == JsonValueKind.Number)
                     byRule[p.Name] = p.Value.GetInt32();
         }
-        return new BaselineScope(surface, internalC, byRule);
+        return new BaselineScope(surface, shape, byRule);
     }
 
     private static int GetInt(JsonElement el, string name)
         => el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : 0;
 
-    private sealed record BaselineScope(int Surface, int Internal, Dictionary<string, int> ByRule);
+    private sealed record BaselineScope(int Surface, int Shape, Dictionary<string, int> ByRule);
 }

@@ -111,8 +111,8 @@ public sealed partial class SurfaceScoreEngine
         // Pass 2 — dependency use
         ScoreDependencyUse(classified, typesByDisplay, report);
 
-        // Pass 3 — internal shape
-        await ScoreInternalShape(classified, report, ct);
+        // Pass 3 — signature shape (surface axis)
+        await ScoreSignatureShape(classified, report, ct);
 
         // Pass 4 — canonical read-DTO credit.
         ScoreReturnTypeRules(classified, report);
@@ -127,7 +127,7 @@ public sealed partial class SurfaceScoreEngine
         await ScoreDiRegistrationsAsync(solution, typesByDisplay, report, ct);
         ScoreOneImplementationInterfaces(classified, report);
 
-        // Pass 6 — internal complexity (separate scalar). Call-path cognitive complexity, class
+        // Pass 6 — implementation shape (separate scalar). Call-path cognitive complexity, class
         // size, and structural action-dispatcher detection — the counterweight to surface. The
         // fold is resolved first because it is solution-wide: a method's complexity depends on the
         // private helpers only it calls, which the per-type walk below cannot see.
@@ -235,13 +235,13 @@ public sealed partial class SurfaceScoreEngine
     /// <remarks>
     /// Two deliberate exclusions. <b>Credits are never scaled</b> — doubling a negative would turn
     /// the multiplier into a reward for publishing, which is the opposite of the intent. <b>The
-    /// internal-complexity axis is never scaled</b> — it is the counterweight to surface and has to
+    /// implementation-shape axis is never scaled</b> — it is the counterweight to surface and has to
     /// keep meaning "implementation this section carries", the same unit everywhere it is measured.
     /// </remarks>
     private (int Points, bool Multiplied) ApplyContractsMultiplier(string rule, int points, ISymbol symbol)
     {
         if (points <= 0) return (points, false);
-        if (SurfaceScoreRuleGroups.IsInternalComplexity(rule)) return (points, false);
+        if (SurfaceScoreRuleGroups.IsImplementationShape(rule)) return (points, false);
         if (OriginOf(symbol) != ScoreOrigin.Contracts) return (points, false);
 
         // <= 1 is a no-op rather than an error, and 0 in particular must not silently delete the
@@ -276,12 +276,12 @@ public sealed partial class SurfaceScoreEngine
         report.Total += points;
         report.ByRule[rule] = report.ByRule.GetValueOrDefault(rule) + points;
 
-        // Split into the two axes. Surface and internal complexity are tracked separately so
+        // Split into the two axes. Surface and implementation shape are tracked separately so
         // a baseline comparison can apply a Pareto gate instead of netting one against the other.
-        if (SurfaceScoreRuleGroups.IsInternalComplexity(rule))
+        if (SurfaceScoreRuleGroups.IsImplementationShape(rule))
         {
-            g.InternalComplexityTotal += points;
-            report.InternalComplexityTotal += points;
+            g.ImplementationShapeTotal += points;
+            report.ImplementationShapeTotal += points;
         }
         else
         {

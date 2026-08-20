@@ -2,7 +2,7 @@ using Microsoft.CodeAnalysis;
 
 namespace Reforge;
 
-// Pass 6 — implementation complexity, the counterweight to surface. Call-path cognitive
+// Pass 6 — implementation shape, the counterweight to surface. Call-path cognitive
 // complexity, class size, and the structural dispatcher/flags smells. Every point here lands
 // on the internal axis, never the surface one.
 public sealed partial class SurfaceScoreEngine
@@ -14,7 +14,7 @@ public sealed partial class SurfaceScoreEngine
     /// the whole call path, per-class size (services/repos/controllers), and the structural
     /// action-dispatcher / flags smells. Dispatcher and flags penalties apply only to methods
     /// that observably mutate state — a read-shape consolidation on a query is exempt by
-    /// behavior, not by parameter naming. All points land on the internal-complexity axis.
+    /// behavior, not by parameter naming. All points land on the implementation-shape axis.
     /// <para>
     /// There is no separate length rule. Once both size rules measure the same call path they stop
     /// being independent: on a 112k-line corpus 274 of 388 charged methods charged on lines only,

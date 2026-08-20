@@ -60,11 +60,12 @@ public class GateOneFixtureTests
             ["canonicalReadDtoReturn"] =
                 "credit, not a penalty — a cheapest-fix pair does not typecheck as a concept",
 
-            // The spec retires the LOC basis for this one as part of the internal-axis rework
-            // (issue #19). Writing a fixture for a basis that is being replaced spends the effort
-            // twice. cognitiveComplexity was excused on the same grounds until the re-base landed;
-            // it has a pair now.
-            ["largeClass"] = "spec retires the LOC basis; replaced by the cohesion measure",
+            // Cost, not doubt: the threshold is 750 nonblank LOC, so a Before/CheapestFix pair is
+            // ~1,600 lines of synthetic class to demonstrate one 10-point charge. The rule's Gate 1
+            // reasoning is measured in 2026-08-20-internal-axis-second-corpus.md instead — the
+            // partial-split escape is closed by summing partial declarations (see
+            // GeneratedPartialScoringTests), and the remaining one costs a constructor partition.
+            ["largeClass"] = "a 750-LOC threshold makes a fixture pair ~1,600 lines of synthetic class",
         };
 
     /// <summary>

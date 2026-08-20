@@ -15,7 +15,7 @@ public class SurfaceScoreBaselineBuildStateTests
     private static string WriteBaseline(string buildBlock)
     {
         var json = $$"""
-            { "total": 0, "surfaceTotal": 0, "internalComplexityTotal": 0, "byRule": {}, "groups": []{{buildBlock}} }
+            { "total": 0, "surfaceTotal": 0, "implementationShapeTotal": 0, "byRule": {}, "groups": []{{buildBlock}} }
             """;
         var path = Path.GetTempFileName();
         File.WriteAllText(path, json);

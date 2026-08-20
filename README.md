@@ -43,7 +43,7 @@ Every reference is found via the compiler's semantic model — including referen
 ## Surface Score
 
 `reforge surface-score` scores a solution's durable public surface (and, on a separate axis, the
-implementation complexity hiding behind it), grouped by **section**.
+shape of the implementation hiding behind it), grouped by **section**.
 
 **A section is an assembly.** There is nothing to configure: every non-test project is a section,
 `<X>.Contracts` folds into `<X>`, and the dot-segment prefix shared by all of them is stripped for
@@ -56,8 +56,14 @@ axis — `public` all the way out through every containing type. A `public` meth
 class, or a `public` type nested in an `internal` one, is implementation: no other section can call
 it, so nothing outside can break when it changes. (`protected` doesn't count as exported, and
 `InternalsVisibleTo` doesn't widen surface.) Internal and private code still scores in full on the
-**internal-complexity axis**, so a well-encapsulated section reads as small surface + whatever
-complexity it actually carries.
+**implementation-shape axis**, so a well-encapsulated section reads as small surface + whatever
+shape its implementation actually has.
+
+The axis is named for what it measures, not for an accessibility level. `implementationShape` has no
+`internal` gate: it is a fixed set of rules — `cognitiveComplexity`, `largeClass`,
+`actionDispatcher`, `mutationModeParameter`, `flagsControlFlow` — and public code scores on it too.
+Its rules charge for shapes an edit can genuinely improve: complexity over a method's whole call
+path, a class carrying too much, a parameter that switches a method between two behaviours.
 
 Rules that charge for a *use* rather than a declaration — `crossSectionRepository`,
 `crossSectionFullService`, `crossSectionReadInterface`, `writeCapableInterfaceUsedReadOnly`,
@@ -97,8 +103,7 @@ other and are wrong together, so matching totals are not evidence of soundness. 
 exits 0.
 
 **Every section reports its size beside its score.** A score number alone can't tell you whether
-a section's points fell because its API shrank or because its code did — and most
-internal-complexity points are satisfiable by edits that improve nothing. So each group carries a
+a section's points fell because its API shrank or because its code did. So each group carries a
 `metrics` block, with a solution-level rollup beside `typesAnalyzed`:
 
 ```json
@@ -111,12 +116,12 @@ internal-complexity points are satisfiable by edits that improve nothing. So eac
 ```
 
 Compact and markdown print the same numbers inline — LOC plus a cognitive figure per section.
-Cognitive complexity is the metric the internal axis actually scores; cyclomatic is carried for
+Cognitive complexity is the metric the implementation-shape axis actually scores; cyclomatic is carried for
 continuity with the `snapshot` history series, which has always recorded it solution-wide.
 
 The corpus is the **scoring** corpus, so a metric and a score always describe the same code: no
 test projects (they are measured separately — see below), no generated code (EF
-migrations, `*.g.cs`, `*.Designer.cs` — excluded from the internal axis too), and complexity
+migrations, `*.g.cs`, `*.Designer.cs` — excluded from the implementation-shape axis too), and complexity
 measured only over methods that have a body. `maxClassLoc` covers classes and structs — the same
 set `classes` counts, which is deliberately wider than the set the `largeClass` rule scores (that
 rule tracks only application services, repository implementations, controllers and background jobs).
