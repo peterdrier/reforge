@@ -2,9 +2,9 @@ namespace Reforge.Tests;
 
 /// <summary>
 /// The test-mass column (#37): size of each section's test corpus, attributed by project reference.
-/// The sample solution carries three test projects on purpose — one referencing a single section,
-/// one referencing two with a name that breaks the tie, and one referencing two with a name that
-/// doesn't — because those are the three outcomes the attribution can produce.
+/// The sample solution carries four test projects on purpose: one referencing a single section, one
+/// referencing two with a name that breaks the tie, one referencing two with a name that doesn't,
+/// and one whose name merely CONTAINS a section name without naming it.
 /// </summary>
 [Collection("SampleSolution")]
 public class TestMassTests
@@ -56,9 +56,9 @@ public class TestMassTests
         Assert.Contains(report.Diagnostics,
             d => d.Code == "unattributedTestProject" && d.Message.Contains("SampleSolution.Bridge.Tests"));
 
-        // The rollup counts all three; the sections account for two. An unattributed project is
+        // The rollup counts all four; the sections account for two. An unattributed project is
         // reported as missing from the columns rather than assigned to a section it doesn't test.
-        Assert.Equal(3, report.Tests.Projects);
+        Assert.Equal(4, report.Tests.Projects);
         Assert.Equal(2, report.TestsBySection.Values.Sum(t => t.Projects));
         Assert.True(report.Tests.Loc > report.TestsBySection.Values.Sum(t => t.Loc));
     }
@@ -70,7 +70,19 @@ public class TestMassTests
 
         // Each sample test project has exactly one hand-written file. The SDK adds AssemblyInfo and
         // GlobalUsings under obj/, which a document walk sees and a symbol walk doesn't.
-        Assert.Equal(3, report.Tests.Files);
+        Assert.Equal(4, report.Tests.Files);
+    }
+
+    [Fact]
+    public async Task ContainingASectionName_IsNotNamingIt()
+    {
+        var report = await Score();
+
+        // SampleSolution.Campus.Tests references Camp and Lodge, and "Campus" contains "Camp". The
+        // tie-break matches whole dotted segments, so it declines rather than handing one section
+        // another's entire test corpus.
+        Assert.Contains("SampleSolution.Campus.Tests", report.UnattributedTestProjects);
+        Assert.Equal(1, report.TestsBySection["Camp"].Projects);
     }
 
     [Fact]

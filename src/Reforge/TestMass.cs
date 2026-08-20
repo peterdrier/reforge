@@ -139,7 +139,7 @@ public static class TestMassAnalyzer
     /// <remarks>
     /// Candidates are the sections of its non-test project references. One candidate is the answer.
     /// Several — a test project referencing three sections' assemblies — are broken by which
-    /// candidate the project's own name contains as a dotted segment run, so
+    /// candidate the project's own name names as a run of whole dotted segments, so
     /// <c>Humans.Shifts.IntegrationTests</c> referencing Shifts and Users resolves to Shifts. That
     /// is the name used as a tie-break only, never as the attribution itself.
     /// </remarks>
@@ -157,9 +157,18 @@ public static class TestMassAnalyzer
         if (candidates.Count == 1) return candidates.First();
 
         var named = candidates
-            .Where(s => project.Name.Contains(s, StringComparison.OrdinalIgnoreCase))
+            .Where(s => NamesSection(project.Name, s))
             .OrderByDescending(s => s.Length)
             .ToList();
         return named.Count == 0 ? null : named[0];
     }
+
+    /// <summary>
+    /// Whether a project name names a section as a run of whole dotted segments —
+    /// <c>Humans.Shifts.Tests</c> names <c>Shifts</c>, <c>Humans.Campus.Tests</c> does not name
+    /// <c>Camp</c>. A substring test would attribute the second one's entire LOC to a section it
+    /// never references by name, and the tie-break has no other check to catch it.
+    /// </summary>
+    private static bool NamesSection(string projectName, string section) =>
+        $".{projectName}.".Contains($".{section}.", StringComparison.OrdinalIgnoreCase);
 }

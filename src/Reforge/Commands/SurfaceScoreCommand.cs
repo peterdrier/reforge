@@ -448,6 +448,17 @@ public static class SurfaceScoreCommand
                           $"{m.Cognitive.P95} | {m.Cognitive.Max} | {m.MaxClassLoc} | {g.Tests.Loc} | {g.Tests.LocVsProdPercent}% |");
         }
         sb.AppendLine();
+        // The solution rollup, because the test columns above only cover scored groups: a test
+        // project no section claimed has its LOC here and nowhere else in the table.
+        if (report.Tests.Files != 0)
+        {
+            sb.AppendLine($"Solution test corpus: {report.Tests.Loc} LOC in {report.Tests.Files} files across " +
+                          $"{report.Tests.Projects} projects ({report.Tests.LocVsProdPercent}% of production LOC)." +
+                          (report.UnattributedTestProjects.Count == 0
+                              ? ""
+                              : $" Attributed to no section: {string.Join(", ", report.UnattributedTestProjects)}."));
+            sb.AppendLine();
+        }
 
         // When the agent has filtered to one section, the solution-wide rule totals are
         // misleading (they include rules that fired outside the section). Scope the totals

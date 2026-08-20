@@ -12,4 +12,5 @@
   <Project Path="SampleSolution.Camp.Tests/SampleSolution.Camp.Tests.csproj" />
   <Project Path="SampleSolution.Lodge.IntegrationTests/SampleSolution.Lodge.IntegrationTests.csproj" />
   <Project Path="SampleSolution.Bridge.Tests/SampleSolution.Bridge.Tests.csproj" />
+  <Project Path="SampleSolution.Campus.Tests/SampleSolution.Campus.Tests.csproj" />
 </Solution>
