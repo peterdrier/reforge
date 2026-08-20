@@ -117,32 +117,10 @@ public static class SkillCommand
           // Values <= 1 are treated as 1 — a typo weakens the rule, it never erases the surface.
           "contractsAssemblyMultiplier": 2,
 
-          // Per-section policy, keyed by the assembly-derived section name. These are the facts
-          // the assembly graph can't state; membership is NOT among them.
-          "sections": {
-            "Tickets": {
-              // (There is no `canonicalReadDtos` key. The section's read API is derived from what
-              // it exports from its contracts surface — see above. A config still carrying the old
-              // key is reported as `removed-config-field`, not silently ignored.)
-              "primaryInfoDto":   "TicketOrderInfo",   // default convention: "<Section>Info",
-                                                       // then the first derived canonical read DTO
-              "settingsInfoDto":  "TicketSettingsInfo",// default convention: "<Section>SettingsInfo"
-              "cacheDto":         "TicketOrderInfo",   // default: primaryInfoDto, else inferred from a caching decorator
-              "readShards": [ { "name": "TicketsByEvent", "purpose": "event-scoped read model" } ],
-              // Surface expectations. Null/omitted = inferred from repo-backed (the assembly
-              // declares a repository or a DbContext).
-              "requiresReadSurface": null,
-              "requiresWriteSurface": null,
-              "requiresPrimaryInfoDto": null,
-              // Visible debt: exempt from the penalty, always rendered by `section-shape`.
-              "grandfatheredDependencies": [
-                { "dependency": "PlacementService->ITicketService", "reason": "legacy write path", "since": "2026-03", "owner": "tickets" }
-              ],
-              "escapeHatchReadMethods": [
-                { "method": "ITicketServiceRead.MigrateLegacy*", "reason": "one-shot", "since": "2026-02" }
-              ]
-            }
-          },
+          // There is no `sections` block. Sections are the solution's assemblies, their
+          // canonical read DTOs are derived from what each exports from its contracts surface,
+          // and their surface expectations from whether the assembly declares a repository or a
+          // DbContext. A config still carrying the key is reported as `removed-config-field`.
 
           // Classifications tag types. A type may receive multiple tags; precedence handled by
           // the engine (e.g. on interfaces, repository/read-service tags override fullService).
@@ -214,8 +192,7 @@ public static class SkillCommand
         **Authoring guidance for agents:**
 
         1. **Start with no config at all.** Sections come from the assemblies; run
-           `reforge surface-score --list-groups` to see them. Add a `sections` entry only for a
-           section whose canonical DTOs or surface expectations you actually need to state.
+           `reforge surface-score --list-groups` to see them.
         2. **Only override `classifications` if the project uses non-default name patterns.** The
            built-in defaults already match `I*Repository`, `I*Service`, `*Dto`, `*Controller`, etc.
         3. **A section that hasn't been extracted into its own assembly scores under whichever

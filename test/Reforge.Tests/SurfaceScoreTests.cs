@@ -24,53 +24,25 @@ public class SurfaceScoreTests
         var cfg = SurfaceScoreConfig.LoadOrDefault(null, dir, out var loadedFrom);
 
         Assert.Null(loadedFrom);
-        Assert.Empty(cfg.Sections);            // sections are assemblies; config carries policy only
+        Assert.Null(cfg.Unrecognized);         // nothing declared, nothing to report
         Assert.NotEmpty(cfg.Classifications);  // defaults present
         Assert.NotEmpty(cfg.Weights);          // defaults present
     }
 
-    [Fact]
-    public void LoadOrDefault_ParsesSectionPolicy()
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-sections");
-        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
-        Directory.CreateDirectory(dir);
-        var configPath = Path.Combine(dir, "reforge.surface-score.json");
-        File.WriteAllText(configPath, """
-            {
-              "sections": {
-                "Users": {
-                  "primaryInfoDto": "UserInfo"
-                },
-                "Orders": {
-                  "requiresReadSurface": false
-                }
-              }
-            }
-            """);
 
-        var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out var loadedFrom);
 
-        Assert.Equal(configPath, loadedFrom);
-        Assert.Equal("UserInfo", cfg.Policy("Users").PrimaryInfoDto);
-        Assert.False(cfg.Policy("Orders").RequiresReadSurface);
-        // A section with no policy block still resolves — to the shared empty policy.
-        Assert.Same(SectionRule.None, cfg.Policy("Nope"));
-    }
 
     [Fact]
-    public void LoadOrDefault_PolicyKeys_MatchSectionNamesCaseInsensitively()
+    public void LoadOrDefault_OverrideKeys_MatchTheirTargetsCaseInsensitively()
     {
         // System.Text.Json assigns new dictionaries through the setters, dropping the
-        // OrdinalIgnoreCase comparers from the field initializers. Section names are now derived
-        // from assembly names, so a hand-written "camp" key has to reach the derived "Camp".
+        // OrdinalIgnoreCase comparers from the field initializers.
         var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-case");
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
         Directory.CreateDirectory(dir);
         var configPath = Path.Combine(dir, "reforge.surface-score.json");
         File.WriteAllText(configPath, """
             {
-              "sections": { "camp": { "primaryInfoDto": "CampInfo" } },
               "weights": { "CROSSSECTIONFULLSERVICE": 7 },
               "classifications": { "CONTROLLER": { "namePatterns": ["Zzz$"] } }
             }
@@ -78,18 +50,17 @@ public class SurfaceScoreTests
 
         var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
 
-        Assert.Equal("CampInfo", cfg.Policy("Camp").PrimaryInfoDto);
         Assert.Equal(7, cfg.Weight("crossSectionFullService"));
         // The case-variant override must REPLACE the default, not sit beside it as a second entry.
         Assert.Single(cfg.Classifications, c => string.Equals(c.Key, "controller", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public void LoadOrDefault_RetiredMatcherKeys_AreIgnoredNotFatal()
+    public void LoadOrDefault_RetiredKeys_AreReportedNotFatal()
     {
-        // v0.22 and earlier described section membership with paths/namespaces/symbols and a
-        // legacy `groups` array. Those keys are gone; a stale config must still load (the section
-        // simply groups by assembly now) rather than throwing on the way in.
+        // v0.22 described section membership with paths/namespaces/symbols; later versions kept a
+        // policy-only `sections` block. Both are gone. A stale config must still load — and every
+        // dropped key must be nameable, because they used to move the score.
         var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-legacy");
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
         Directory.CreateDirectory(dir);
@@ -98,21 +69,17 @@ public class SurfaceScoreTests
             {
               "groups": [ { "name": "Legacy", "match": { "paths": ["**/Legacy/**"] } } ],
               "resources": { "dbSets": { "ownerByName": { "Users": "Legacy" } } },
-              "sections": {
-                "Users": {
-                  "paths": ["**/SampleSolution.Services/User*.cs"],
-                  "symbols": ["IUser*"],
-                  "repositoryInterfaces": ["IUserRepository"],
-                  "primaryInfoDto": "UserInfo"
-                }
-              }
+              "sections": { "Users": { "primaryInfoDto": "UserInfo" } }
             }
             """);
 
         var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
 
-        Assert.Equal("UserInfo", cfg.Policy("Users").PrimaryInfoDto);  // policy survives
-        Assert.Single(cfg.Sections);
+        var warning = cfg.UnreadConfigKeysWarning();
+        Assert.NotNull(warning);
+        Assert.Contains("sections", warning);
+        Assert.Contains("groups", warning);
+        Assert.Contains("resources", warning);
     }
 
     // ---------------- Engine behavior ----------------
@@ -166,37 +133,6 @@ public class SurfaceScoreTests
         Assert.DoesNotContain(requested, report.ConfiguredSections);
         // The contract: when both are false, the command emits a "group-not-found" diagnostic
         // listing report.ConfiguredSections (the solution's assemblies).
-    }
-
-    // ---------------- Stale config section policy ----------------
-
-    [Fact]
-    public async Task ScoreAsync_StaleSectionPolicy_IsInertAndReported()
-    {
-        // A policy block keyed to an assembly that no longer exists must not reach into scoring,
-        // and must be named rather than quietly dropped.
-        var cfg = SurfaceScoreConfig.Default();
-        cfg.Sections["GhostSectionThatNoAssemblyProduces"] = new SectionRule
-        {
-            PrimaryInfoDto = "UserDto"
-        };
-        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
-
-        var diagnostic = Assert.Single(report.Diagnostics, d => d.Code == "unknown-config-section");
-        Assert.Contains("GhostSectionThatNoAssemblyProduces", diagnostic.Message);
-        Assert.DoesNotContain("GhostSectionThatNoAssemblyProduces", report.ConfiguredSections);
-    }
-
-    [Fact]
-    public async Task ScoreAsync_LiveSectionPolicy_IsNotReportedAsUnknown()
-    {
-        var cfg = SurfaceScoreConfig.Default();
-        cfg.Sections["Camp"] = new SectionRule { PrimaryInfoDto = "CampInfo" };
-        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
-
-        Assert.DoesNotContain(report.Diagnostics, d => d.Code == "unknown-config-section");
     }
 
     // ---------------- Dead / unreadable config classifications ----------------
@@ -520,10 +456,11 @@ public class SurfaceScoreTests
     }
 
     [Fact]
-    public async Task RemovedCanonicalReadDtosField_IsReportedNotSilentlyIgnored()
+    public async Task RemovedSectionsBlock_IsReportedNotSilentlyIgnored()
     {
-        // The field is gone, and System.Text.Json would drop it without a word — but a config that
-        // still carries it used to grant credit and suppress the entity penalty solution-wide.
+        // The block is gone, and System.Text.Json would drop it without a word — but a config that
+        // still carries it used to anchor DTOs, override surface expectations, and suppress
+        // penalties for whole sections.
         var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-removed-field");
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
         Directory.CreateDirectory(dir);
@@ -533,14 +470,12 @@ public class SurfaceScoreTests
             """);
 
         var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
-        Assert.True(cfg.Policy("Camp").DeclaresRemovedCanonicalReadDtos);
 
         var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
         var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
 
         var diagnostic = Assert.Single(report.Diagnostics, d => d.Code == "removed-config-field");
-        Assert.Contains("canonicalReadDtos", diagnostic.Message);
-        Assert.Contains("Camp", diagnostic.Message);
+        Assert.Contains("sections", diagnostic.Message);
     }
 
     // ---------------- duplicateDbSetOwner ----------------
@@ -875,62 +810,6 @@ public class SurfaceScoreTests
         };
         File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(payload));
         return path;
-    }
-
-    [Fact]
-    public void LoadOrDefault_ParsesSectionMetadata()
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "reforge-surface-score-test-metadata");
-        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
-        Directory.CreateDirectory(dir);
-        var configPath = Path.Combine(dir, "reforge.surface-score.json");
-        File.WriteAllText(configPath, """
-            {
-              "sections": {
-                "Camp": {
-                  "primaryInfoDto": "CampInfo",
-                  "settingsInfoDto": "CampSettingsInfo",
-                  "cacheDto": "CampInfo",
-                  "readShards": [ { "name": "ShiftsByRota", "purpose": "rota-scoped" } ],
-                  "requiresReadSurface": true,
-                  "grandfatheredDependencies": [
-                    { "dependency": "PlacementService->ICampService", "reason": "legacy", "since": "2026-03", "owner": "camps" }
-                  ],
-                  "escapeHatchReadMethods": [
-                    { "method": "ICampServiceRead.MigrateLegacy*", "reason": "one-shot", "since": "2026-02" }
-                  ]
-                }
-              }
-            }
-            """);
-
-        var cfg = SurfaceScoreConfig.LoadOrDefault(configPath, dir, out _);
-        var camp = cfg.Policy("Camp");
-
-        Assert.Equal("CampInfo", camp.PrimaryInfoDto);
-        Assert.Equal("CampSettingsInfo", camp.SettingsInfoDto);
-        Assert.Equal("CampInfo", camp.CacheDto);
-        Assert.Equal("ShiftsByRota", camp.ReadShards.Single().Name);
-        Assert.Equal("rota-scoped", camp.ReadShards.Single().Purpose);
-        Assert.True(camp.RequiresReadSurface);
-        Assert.Equal("PlacementService->ICampService", camp.GrandfatheredDependencies.Single().Dependency);
-        Assert.Equal("legacy", camp.GrandfatheredDependencies.Single().Reason);
-        Assert.Equal("ICampServiceRead.MigrateLegacy*", camp.EscapeHatchReadMethods.Single().Method);
-    }
-
-    [Fact]
-    public async Task PolicyForAnAssemblyThatDoesNotExist_CreatesNoSection()
-    {
-        // Policy can't conjure a section any more — only an assembly can. A stale policy block
-        // (section renamed or deleted) is inert, not a phantom group.
-        var cfg = SurfaceScoreConfig.Default();
-        cfg.Sections["DefinitelyEmpty"] = new SectionRule { PrimaryInfoDto = "NothingInfo" };
-
-        var engine = new SurfaceScoreEngine(cfg, LocationHelper.GetSolutionDirectory(_fixture.Solution));
-        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
-
-        Assert.False(report.Groups.ContainsKey("DefinitelyEmpty"));
-        Assert.DoesNotContain("DefinitelyEmpty", report.ConfiguredSections);
     }
 
     // ---------------- Build health ----------------

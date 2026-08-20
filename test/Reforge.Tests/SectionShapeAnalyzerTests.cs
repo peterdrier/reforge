@@ -112,19 +112,4 @@ public class SectionShapeAnalyzerTests
         Assert.Null(tent.PrimaryInfoDto);
         Assert.Contains(tent.Missing, m => m.Rule == "missingPrimaryInfoDto");
     }
-
-    [Fact]
-    public async Task Analyze_PolicyPrimaryInfoDto_OverridesConvention()
-    {
-        // A section whose canonical DTO isn't "<Section>Info" still resolves through policy —
-        // the one thing the assembly graph genuinely can't state.
-        var cfg = SurfaceScoreConfig.Default();
-        cfg.Sections["Tent"] = new SectionRule { PrimaryInfoDto = "DormInfo" };
-
-        var arch = await AnalyzeAsync(cfg);
-        var tent = arch.Sections.Single(s => s.Name == "Tent");
-
-        Assert.Equal("DormInfo", tent.PrimaryInfoDto!.Display.Split('.').Last());
-        Assert.DoesNotContain(tent.Missing, m => m.Rule == "missingPrimaryInfoDto");
-    }
 }

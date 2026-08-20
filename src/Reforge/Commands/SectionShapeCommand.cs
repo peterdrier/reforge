@@ -87,10 +87,10 @@ public static class SectionShapeCommand
                     DegradedBuildGate.Warn(buildHealth, "section-shape", Console.Error);
                 }
 
-                // This command resolves the primary/settings anchors, which the removed
-                // canonicalReadDtos list used to feed. Anchors and missing-surface output can move
-                // for a config that still declares it, so say so rather than change silently.
-                var removedField = config.RemovedCanonicalReadDtosWarning();
+                // This command resolves the primary/settings anchors, which the removed `sections`
+                // policy used to feed. Anchors and missing-surface output can move for a config that
+                // still declares it, so say so rather than change silently.
+                var removedField = config.UnreadConfigKeysWarning();
                 if (removedField is not null)
                     Console.Error.WriteLine($"WARNING: {removedField}");
 
@@ -140,13 +140,10 @@ public static class SectionShapeCommand
                 settingsInfoDto = Dto(s.SettingsInfoDto),
                 cacheDto = Dto(s.CacheDto),
                 cacheDtoProvenance = s.CacheDtoProvenance,
-                readShards = s.ReadShards.Select(sh => new { name = sh.Name, purpose = sh.Purpose }).ToArray(),
                 readSurfaceCallers = s.ReadSurfaceCallers.Select(Use).ToArray(),
                 writeSurfaceCallers = s.WriteSurfaceCallers.Select(Use).ToArray(),
                 missing = s.Missing.Select(m => new { rule = m.Rule, detail = m.Detail }).ToArray(),
-                grandfathered = s.Grandfathered.Select(g => new { dependency = g.Dependency, reason = g.Reason, since = g.Since, owner = g.Owner }).ToArray(),
-                escapeHatches = s.EscapeHatches.Select(e => new { method = e.Method, reason = e.Reason, since = e.Since, owner = e.Owner }).ToArray(),
-                chargedReadMethods = s.ChargedReadMethods.Select(c => new { @interface = c.Interface, method = c.Method, kind = c.Kind.ToString(), returns = c.Returns, escapeHatch = c.EscapeHatch }).ToArray(),
+                chargedReadMethods = s.ChargedReadMethods.Select(c => new { @interface = c.Interface, method = c.Method, kind = c.Kind.ToString(), returns = c.Returns}).ToArray(),
                 advisory = new
                 {
                     derivableReadMethods = s.DerivableReadMethods.Select(d => new { @interface = d.Interface, method = d.Method, kind = d.Kind.ToString(), targetDto = d.TargetDto, hint = d.Hint }).ToArray(),
@@ -192,9 +189,8 @@ public static class SectionShapeCommand
 
             foreach (var m in s.Missing) sb.AppendLine($"  MISSING {m.Rule}: {m.Detail}");
             foreach (var c in s.WriteSurfaceCallers) sb.AppendLine($"  crossSectionWriteSurface: {c.Caller} <- {c.Dependency} (use {c.SuggestedReadInterface})");
-            foreach (var c in s.ChargedReadMethods) sb.AppendLine($"  chargedRead: {c.Interface}.{c.Method} ({c.Kind}){(c.EscapeHatch ? " [escape-hatch]" : "")}");
+            foreach (var c in s.ChargedReadMethods) sb.AppendLine($"  chargedRead: {c.Interface}.{c.Method} ({c.Kind})");
 
-            foreach (var g in s.Grandfathered) sb.AppendLine($"  grandfathered: {g.Dependency} ({g.Reason}, since {g.Since})");
 
             // Advisory
             foreach (var d in s.DerivableReadMethods) sb.AppendLine($"  advisory derivable: {d.Method} -> {d.TargetDto}");

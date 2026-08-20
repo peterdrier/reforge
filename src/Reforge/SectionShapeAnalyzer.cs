@@ -13,8 +13,6 @@ public sealed record InterfaceAnchorMethod(string Name, string Returns);
 /// <summary>A read/full service interface anchor with its declared method signatures.</summary>
 public sealed record InterfaceAnchor(string Display, string Section, string Role, IReadOnlyList<InterfaceAnchorMethod> Methods);
 
-public sealed record ShardAnchor(string Name, string Purpose, IReadOnlyList<string> Methods);
-
 /// <summary>
 /// One service interface in a section's shape. <c>Exported</c> marks the population: the scoring
 /// passes charge exported types only, while this view lists every classified interface, and the two
@@ -43,8 +41,7 @@ public sealed record MissingSurface(string Section, string Rule, string Detail);
 /// can score it with the existing symbol-based <c>AddEntry</c>.
 /// </summary>
 public sealed record ChargedReadMethod(
-    string Interface, string Method, ReadMethodKind Kind, string Returns,
-    bool EscapeHatch, string? EscapeHatchReason)
+    string Interface, string Method, ReadMethodKind Kind, string Returns)
 {
     public string File { get; init; } = "";
     public int Line { get; init; }
@@ -56,9 +53,9 @@ public sealed record MissingInfoFact(string Fact, string TargetDto);
 public sealed record CacheFactCandidate(string Method, string Fact, string CacheDto);
 
 /// <summary>
-/// The resolved structural shape of one configured section: owned repositories, read/full
-/// interfaces, primary/settings/cache DTOs (config or convention/inference), documented read
-/// shards, cross-section uses, missing surfaces, charged read methods, and advisory candidates.
+/// The resolved structural shape of one section: owned repositories, read/full
+/// interfaces, primary/settings/cache DTOs (convention or inference), cross-section uses, missing
+/// surfaces, charged read methods, and advisory candidates.
 /// Lists default to empty; later analysis passes fill cross-section/advisory/cache-inference.
 /// </summary>
 public sealed record SectionShape
@@ -73,13 +70,10 @@ public sealed record SectionShape
     public DtoAnchor? SettingsInfoDto { get; init; }
     public DtoAnchor? CacheDto { get; init; }
     public string CacheDtoProvenance { get; init; } = "none";
-    public IReadOnlyList<ShardAnchor> ReadShards { get; init; } = Array.Empty<ShardAnchor>();
     public IReadOnlyList<CrossSectionUse> ReadSurfaceCallers { get; init; } = Array.Empty<CrossSectionUse>();
     public IReadOnlyList<CrossSectionUse> WriteSurfaceCallers { get; init; } = Array.Empty<CrossSectionUse>();
     public IReadOnlyList<CrossSectionUse> WriteSurfaceUnverified { get; init; } = Array.Empty<CrossSectionUse>();
     public IReadOnlyList<MissingSurface> Missing { get; init; } = Array.Empty<MissingSurface>();
-    public IReadOnlyList<GrandfatheredDependency> Grandfathered { get; init; } = Array.Empty<GrandfatheredDependency>();
-    public IReadOnlyList<EscapeHatchReadMethod> EscapeHatches { get; init; } = Array.Empty<EscapeHatchReadMethod>();
     public IReadOnlyList<ChargedReadMethod> ChargedReadMethods { get; init; } = Array.Empty<ChargedReadMethod>();
     public IReadOnlyList<DerivableReadMethod> DerivableReadMethods { get; init; } = Array.Empty<DerivableReadMethod>();
     public IReadOnlyList<MissingInfoFact> MissingInfoFacts { get; init; } = Array.Empty<MissingInfoFact>();
@@ -89,15 +83,13 @@ public sealed record SectionShape
 public sealed record SectionArchitecture(
     IReadOnlyList<SectionShape> Sections,
     IReadOnlyList<DtoAnchor> DtoAnchors,
-    IReadOnlyList<InterfaceAnchor> InterfaceAnchors,
-    IReadOnlyList<ShardAnchor> ShardAnchors);
+    IReadOnlyList<InterfaceAnchor> InterfaceAnchors);
 
 /// <summary>
 /// Resolves the architectural shape of each section from the shared <see cref="SolutionClassifier"/>
 /// output. Section-architecture rules and the section-shape view both consume these shapes, so the
 /// read/full pairing, DTO anchoring, and charged-read classification live in one place. Every
-/// assembly-derived section is shaped; config contributes policy (DTO anchors, requirement
-/// overrides, visible debt) where the structure alone can't say.
+/// assembly-derived section is shaped, from structure alone.
 /// </summary>
 public static class SectionShapeAnalyzer
 {
@@ -111,7 +103,7 @@ public static class SectionShapeAnalyzer
             c => SolutionClassifier.TypeKey(c.Type), c => c, StringComparer.Ordinal);
 
         // Cross-section write-surface use (with escape analysis), keyed by consumer section.
-        var crossUses = await AnalyzeCrossSectionUsesAsync(solution, classified, typesByDisplay, config, solutionDirectory, ct);
+        var crossUses = await AnalyzeCrossSectionUsesAsync(solution, classified, typesByDisplay, solutionDirectory, ct);
 
         // Which sections own persistence? Derived, not configured: the assembly declares a
         // classified repository (interface or implementation) or a DbContext. Drives RepoBacked.
@@ -142,11 +134,9 @@ public static class SectionShapeAnalyzer
         var shapes = new List<SectionShape>();
         var dtoAnchors = new List<DtoAnchor>();
         var interfaceAnchors = new List<InterfaceAnchor>();
-        var shardAnchors = new List<ShardAnchor>();
 
         foreach (var name in byGroup.Keys.OrderBy(k => k, StringComparer.Ordinal))
         {
-            var rule = config.Policy(name);
             var members = byGroup[name];
 
             var repoIfaces = members.Where(c => c.Tags.Contains("repositoryInterface")).Select(c => c.Type.Name).ToList();
@@ -154,14 +144,14 @@ public static class SectionShapeAnalyzer
             var readIfaceTypes = members.Where(c => c.Tags.Contains("readServiceInterface")).ToList();
             var fullIfaceTypes = members.Where(c => c.Tags.Contains("fullServiceInterface")).ToList();
 
-            var facts = SectionFacts.For(name, rule, repoSectionNames);
+            var facts = SectionFacts.For(name, repoSectionNames);
 
-            // Resolve primary / settings DTO: explicit config -> <Section>Info convention ->
-            // derived canonical read DTO fallback. The fallback matters for sections whose names
-            // are plural ("Camps") but whose DTOs are singular ("CampInfo") — the convention would
-            // miss and spuriously fire missingPrimaryInfoDto.
-            var (primaryName, primarySym) = ResolvePrimary(name, rule, classified, canonicalReadDtos);
-            var (settingsName, settingsSym) = ResolveSettings(name, rule, classified, canonicalReadDtos);
+            // Resolve primary / settings DTO: <Section>Info convention -> derived canonical read
+            // DTO fallback. The fallback matters for sections whose names are plural ("Camps") but
+            // whose DTOs are singular ("CampInfo") — the convention would miss and spuriously fire
+            // missingPrimaryInfoDto.
+            var (primaryName, primarySym) = ResolvePrimary(name, classified, canonicalReadDtos);
+            var (settingsName, settingsSym) = ResolveSettings(name, classified, canonicalReadDtos);
 
             DtoAnchor? primaryAnchor = primarySym is null ? null
                 : new DtoAnchor(primarySym.ToDisplayString(), name, "primaryInfoDto",
@@ -170,21 +160,9 @@ public static class SectionShapeAnalyzer
                 : new DtoAnchor(settingsSym.ToDisplayString(), name, "settingsInfoDto",
                     DtoInventory.Build(settingsSym, canonicalDtoNames));
 
-            // Cache DTO resolution: configured -> inferred from a caching decorator -> default to
-            // primary -> none.
+            // Cache DTO resolution: inferred from a caching decorator -> default to primary -> none.
             DtoAnchor? cacheAnchor = null;
             var cacheProvenance = "none";
-            if (rule.CacheDto is not null)
-            {
-                var cacheSym = ResolveDtoSymbol(classified, rule.CacheDto, name);
-                if (cacheSym is not null)
-                {
-                    cacheAnchor = new DtoAnchor(cacheSym.ToDisplayString(), name, "cacheDto",
-                        DtoInventory.Build(cacheSym, canonicalDtoNames));
-                    cacheProvenance = "configured";
-                }
-            }
-            if (cacheAnchor is null)
             {
                 var inferred = InferCacheDto(readIfaceTypes, classified, canonicalDtoNames, name);
                 if (inferred is not null)
@@ -208,10 +186,9 @@ public static class SectionShapeAnalyzer
                     if (m.MethodKind != MethodKind.Ordinary || m.AssociatedSymbol is not null || m.IsImplicitlyDeclared) continue;
                     var kind = ReadSurface.Classify(m, primaryName, settingsName);
                     if (!ReadSurface.IsCharged(kind)) continue;
-                    var (hatch, reason) = MatchEscapeHatch(rule, ri.Type.Name, m.Name);
                     var (file, line) = Locate(m, solutionDirectory);
                     charged.Add(new ChargedReadMethod(ri.Type.Name, m.Name, kind,
-                        m.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat), hatch, reason)
+                        m.ReturnType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat))
                     {
                         File = file,
                         Line = line,
@@ -252,8 +229,6 @@ public static class SectionShapeAnalyzer
                     cacheFacts.Add(new CacheFactCandidate(rm.Method, token, cacheAnchor.Display));
             }
 
-            var shards = rule.ReadShards.Select(s => new ShardAnchor(s.Name, s.Purpose, Array.Empty<string>())).ToList();
-
             var (writeCallers, writeUnverified) = crossUses.TryGetValue(name, out var cu)
                 ? cu
                 : (new List<CrossSectionUse>(), new List<CrossSectionUse>());
@@ -270,12 +245,9 @@ public static class SectionShapeAnalyzer
                 SettingsInfoDto = settingsAnchor,
                 CacheDto = cacheAnchor,
                 CacheDtoProvenance = cacheProvenance,
-                ReadShards = shards,
                 WriteSurfaceCallers = writeCallers,
                 WriteSurfaceUnverified = writeUnverified,
                 Missing = missing,
-                Grandfathered = rule.GrandfatheredDependencies,
-                EscapeHatches = rule.EscapeHatchReadMethods,
                 ChargedReadMethods = charged,
                 DerivableReadMethods = derivable,
                 MissingInfoFacts = missingFacts,
@@ -294,7 +266,6 @@ public static class SectionShapeAnalyzer
                 interfaceAnchors.Add(BuildInterfaceAnchor(ri, name, "readServiceInterface"));
             foreach (var fi in fullIfaceTypes.Where(c => c.IsExported))
                 interfaceAnchors.Add(BuildInterfaceAnchor(fi, name, "fullServiceInterface"));
-            shardAnchors.AddRange(shards);
         }
 
         var dedupDtos = dtoAnchors
@@ -302,7 +273,7 @@ public static class SectionShapeAnalyzer
             .Select(g => g.First())
             .ToList();
 
-        return new SectionArchitecture(shapes, dedupDtos, interfaceAnchors, shardAnchors);
+        return new SectionArchitecture(shapes, dedupDtos, interfaceAnchors);
     }
 
     // ---------------- Cross-section write-surface use + escape analysis ----------------
@@ -316,7 +287,7 @@ public static class SectionShapeAnalyzer
     /// </summary>
     private static async Task<Dictionary<string, (List<CrossSectionUse> Confident, List<CrossSectionUse> Unverified)>>
         AnalyzeCrossSectionUsesAsync(Solution solution, List<ClassifiedType> classified,
-            Dictionary<string, ClassifiedType> typesByDisplay, SurfaceScoreConfig config, string dir, CancellationToken ct)
+            Dictionary<string, ClassifiedType> typesByDisplay, string dir, CancellationToken ct)
     {
         var result = new Dictionary<string, (List<CrossSectionUse>, List<CrossSectionUse>)>(StringComparer.OrdinalIgnoreCase);
         var pairs = SurfaceScoreEngine.BuildFullToReadPairs(classified, typesByDisplay);
@@ -332,7 +303,6 @@ public static class SectionShapeAnalyzer
         foreach (var c in classified)
         {
             if (c.Type.TypeKind != TypeKind.Class) continue;
-            var consumerRule = config.Policy(c.Group);
 
             foreach (var ctor in c.Type.Constructors)
             {
@@ -366,10 +336,9 @@ public static class SectionShapeAnalyzer
 
                     var readNames = readNamesByFull[d];
                     bool allReadCovered = observed.Count > 0 && observed.All(readNames.Contains);
-                    bool grandfathered = IsGrandfathered(consumerRule, c.Type.Name, param.Type.Name);
-                    if (allReadCovered && !grandfathered)
+                    if (allReadCovered)
                         bucket.Item1.Add(use); // confident penalty (also suppresses the generic rule)
-                    // else: a full-only call, no call, or grandfathered -> the generic rule handles it.
+                    // else: a full-only call or no call -> the generic rule handles it.
                 }
             }
         }
@@ -475,14 +444,6 @@ public static class SectionShapeAnalyzer
         return false;
     }
 
-    private static bool IsGrandfathered(SectionRule rule, string caller, string fullInterface)
-    {
-        foreach (var g in rule.GrandfatheredDependencies)
-            if (g.Dependency == $"{caller}->{fullInterface}" || g.Dependency == caller)
-                return true;
-        return false;
-    }
-
     private static ServiceInterfaceListing Listing(ClassifiedType iface)
         => new(iface.Type.Name, iface.IsExported);
 
@@ -498,16 +459,13 @@ public static class SectionShapeAnalyzer
     }
 
     /// <summary>
-    /// Resolves the primary Info DTO: explicit <c>primaryInfoDto</c> -> <c>&lt;Section&gt;Info</c>
-    /// convention -> the section's first non-settings canonical read DTO. Returns the chosen name
-    /// (convention name when unresolved, for the missing-surface detail) and symbol.
+    /// Resolves the primary Info DTO: the <c>&lt;Section&gt;Info</c> convention -> the section's
+    /// first non-settings canonical read DTO. Returns the chosen name (convention name when
+    /// unresolved, for the missing-surface detail) and symbol.
     /// </summary>
     private static (string Name, INamedTypeSymbol? Symbol) ResolvePrimary(
-        string section, SectionRule rule, List<ClassifiedType> classified, CanonicalReadDtoSet canonical)
+        string section, List<ClassifiedType> classified, CanonicalReadDtoSet canonical)
     {
-        if (rule.PrimaryInfoDto is not null)
-            return (rule.PrimaryInfoDto, ResolveDtoSymbol(classified, rule.PrimaryInfoDto, section));
-
         var convention = section + "Info";
         var sym = ResolveDtoSymbol(classified, convention, section);
         if (sym is not null) return (convention, sym);
@@ -520,13 +478,10 @@ public static class SectionShapeAnalyzer
         return (convention, null);
     }
 
-    /// <summary>Resolves the settings DTO: explicit -> <c>&lt;Section&gt;SettingsInfo</c> -> a <c>*SettingsInfo</c> canonical read DTO.</summary>
+    /// <summary>Resolves the settings DTO: the <c>&lt;Section&gt;SettingsInfo</c> convention -> a <c>*SettingsInfo</c> canonical read DTO.</summary>
     private static (string Name, INamedTypeSymbol? Symbol) ResolveSettings(
-        string section, SectionRule rule, List<ClassifiedType> classified, CanonicalReadDtoSet canonical)
+        string section, List<ClassifiedType> classified, CanonicalReadDtoSet canonical)
     {
-        if (rule.SettingsInfoDto is not null)
-            return (rule.SettingsInfoDto, ResolveDtoSymbol(classified, rule.SettingsInfoDto, section));
-
         var convention = section + "SettingsInfo";
         var sym = ResolveDtoSymbol(classified, convention, section);
         if (sym is not null) return (convention, sym);
@@ -545,14 +500,6 @@ public static class SectionShapeAnalyzer
         if (matches.Count == 0) return null;
         var inSection = matches.FirstOrDefault(c => string.Equals(c.Group, section, StringComparison.OrdinalIgnoreCase));
         return (inSection ?? matches[0]).Type;
-    }
-
-    private static (bool Hatch, string? Reason) MatchEscapeHatch(SectionRule rule, string ifaceName, string methodName)
-    {
-        foreach (var e in rule.EscapeHatchReadMethods)
-            if (GlobMatcher.MatchesName($"{ifaceName}.{methodName}", e.Method) || GlobMatcher.MatchesName(methodName, e.Method))
-                return (true, e.Reason);
-        return (false, null);
     }
 
     /// <summary>

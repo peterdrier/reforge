@@ -4,6 +4,12 @@ What changed and why. Newest first.
 
 ## Unreleased - Populations named: exported interfaces, published write surface
 
+- **The `sections` config block is gone.** Sections are the solution's assemblies, so nothing about
+  one was config's to state: DTO anchors come from what a section exports, surface expectations from
+  whether it declares a repository or a DbContext. Removing the block also retires the per-section
+  overrides only it could carry — `primaryInfoDto`/`settingsInfoDto`/`cacheDto`, `requires*`,
+  `readShards`, `grandfatheredDependencies`, `escapeHatchReadMethods`. A file still declaring the key
+  loads and is reported as `removed-config-field` rather than silently ignored.
 - **`section-shape` says which interfaces its assembly exports** (#53). Every entry in
   `readServiceInterfaces` / `fullServiceInterfaces` now carries `exported`, and the text view prefixes
   the rest with `internal`. The scoring passes charge exported types only, so the two counts were

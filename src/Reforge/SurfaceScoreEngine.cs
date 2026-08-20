@@ -46,19 +46,6 @@ public sealed partial class SurfaceScoreEngine
         report.ConfiguredSections.AddRange(classified
             .Select(c => c.Group).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.Ordinal));
 
-        // Policy keyed to a section that no assembly produces is inert by design — but silently
-        // inert is a trap when config keys used to DEFINE the sections and now have to match
-        // assembly-derived names. Name them so a mis-keyed or stale block is visible instead of
-        // quietly dropping its DTO anchors, overrides, and grandfathered debt.
-        var unknownSections = _config.Sections.Keys
-            .Where(k => !report.ConfiguredSections.Contains(k, StringComparer.OrdinalIgnoreCase))
-            .OrderBy(k => k, StringComparer.Ordinal)
-            .ToList();
-        if (unknownSections.Count > 0)
-            report.Diagnostics.Add(new ScoreDiagnostic("warning", "unknown-config-section",
-                $"Config section policy has no matching assembly and is ignored: {string.Join(", ", unknownSections)}. " +
-                $"Sections are assembly-derived; known sections are: {string.Join(", ", report.ConfiguredSections)}."));
-
         // A classification the config file declares but that ends up on no type switches its rules
         // off in silence, and the silence is worse than it looks: the merge is TryAdd, so declaring
         // a key REPLACES the default patterns for it. A block pointing at a directory that was
@@ -100,10 +87,10 @@ public sealed partial class SurfaceScoreEngine
                 $"Either the name is misspelled or the rule was retired — the rule glossary printed " +
                 $"with this report lists the names that exist."));
 
-        // canonicalReadDtos is derived from each section's exported contracts surface now. A config
-        // still carrying the list would otherwise change meaning in silence — it used to decide
-        // which returns earned the canonicalReadDtoReturn credit.
-        var removedField = _config.RemovedCanonicalReadDtosWarning();
+        // A key this version dropped would otherwise change meaning in silence: `sections` decided
+        // DTO anchors and suppressed penalties, `canonicalReadDtos` inside it decided which returns
+        // earned the canonicalReadDtoReturn credit.
+        var removedField = _config.UnreadConfigKeysWarning();
         if (removedField is not null)
             report.Diagnostics.Add(new ScoreDiagnostic("warning", "removed-config-field", removedField));
 

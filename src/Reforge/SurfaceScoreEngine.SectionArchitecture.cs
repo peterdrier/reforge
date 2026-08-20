@@ -23,7 +23,6 @@ public sealed partial class SurfaceScoreEngine
             {
                 foreach (var rm in section.ChargedReadMethods)
                 {
-                    if (rm.EscapeHatch) continue;
                     // The surcharge is for the shape a read interface publishes. An internal read
                     // interface publishes nothing; the shape stays in the section-shape view as an
                     // advisory, it just doesn't score.
@@ -87,12 +86,6 @@ public sealed partial class SurfaceScoreEngine
                     iface.Methods.Select(m => new ConservationAnchorMethod(m.Name, m.Returns)).ToList(),
                     AttributePointsByRule(report, section.Name, methodNames)));
             }
-
-            foreach (var shard in section.ReadShards)
-                anchors.Add(new ConservationAnchor(
-                    $"{section.Name}::shard:{shard.Name}", section.Name, "readShard",
-                    Array.Empty<string>(), Array.Empty<ConservationAnchorMethod>(),
-                    new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)));
         }
         return anchors;
     }

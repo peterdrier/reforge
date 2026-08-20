@@ -538,7 +538,7 @@ public class SolutionClassifierTests
         Assert.Equal("Billing", map["Contoso.Billing"]);
     }
 
-    // ---------------- Section facts (policy overrides over derived repo-backing) ----------------
+    // ---------------- Section facts (derived from repo-backing) ----------------
 
     private static IReadOnlySet<string> RepoSections(params string[] names)
         => new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
@@ -546,7 +546,7 @@ public class SolutionClassifierTests
     [Fact]
     public void SectionFacts_RepoBacked_FromDeclaredRepository()
     {
-        var facts = SectionFacts.For("Camp", SectionRule.None, RepoSections("Camp"));
+        var facts = SectionFacts.For("Camp", RepoSections("Camp"));
         Assert.True(facts.RepoBacked);
         Assert.True(facts.RequiresReadSurface);
         Assert.True(facts.RequiresWriteSurface);
@@ -556,16 +556,8 @@ public class SolutionClassifierTests
     [Fact]
     public void SectionFacts_OrchestratorOnly_NotRequired()
     {
-        var facts = SectionFacts.For("Reporting", SectionRule.None, RepoSections());
+        var facts = SectionFacts.For("Reporting", RepoSections());
         Assert.False(facts.RepoBacked);
         Assert.False(facts.RequiresReadSurface);
-    }
-
-    [Fact]
-    public void SectionFacts_RequiresOverride_Wins()
-    {
-        var facts = SectionFacts.For("Reporting", new SectionRule { RequiresReadSurface = true }, RepoSections());
-        Assert.False(facts.RepoBacked);
-        Assert.True(facts.RequiresReadSurface);
     }
 }

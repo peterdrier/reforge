@@ -67,24 +67,6 @@ public class SectionArchitectureTests
         Assert.False(SurfaceScoreRuleGroups.IsInternalComplexity("readSurfaceProjectionMethod"));
     }
 
-    [Fact]
-    public async Task ReadSurfaceProjectionMethod_ExemptsEscapeHatch()
-    {
-        var cfg = SurfaceScoreConfig.Default();
-        cfg.Sections["Camp"] = new SectionRule
-        {
-            EscapeHatchReadMethods =
-            {
-                new EscapeHatchReadMethod { Method = "ICampServiceRead.IsUserCampLeadAsync", Reason = "legacy", Since = "2026-02" }
-            }
-        };
-        var report = await Score(cfg);
-
-        // Only the projection method remains charged -> 4, doubled to 8 for the satellite
-        // contracts assembly that declares ICampServiceRead.
-        Assert.Equal(8, report.Groups["Camp"].ByRule["readSurfaceProjectionMethod"]);
-    }
-
     // ---------------- Task 4: missing* rules (repo-backed gated) ----------------
 
     [Fact]
@@ -110,15 +92,6 @@ public class SectionArchitectureTests
 
     // ---------------- Task 5: crossSectionWriteSurface + unverified advisory + escape analysis ----------------
 
-    private static SurfaceScoreConfig ReportingConfig(params GrandfatheredDependency[] grandfathered)
-    {
-        var cfg = SurfaceScoreConfig.Default();
-        var reporting = new SectionRule();
-        foreach (var g in grandfathered) reporting.GrandfatheredDependencies.Add(g);
-        cfg.Sections["Reporting"] = reporting;
-        return cfg;
-    }
-
     [Fact]
     public async Task CrossSectionWriteSurface_FiresOnCrossSectionReadOnlyConsumer_SuppressesGeneric()
     {
@@ -141,15 +114,6 @@ public class SectionArchitectureTests
         var reporting = report.Groups["Reporting"];
         Assert.DoesNotContain(reporting.Entries, e => e.Rule == "crossSectionWriteSurface" && e.Symbol == "CampDelegator");
         Assert.Contains(report.Diagnostics, d => d.Code == "crossSectionWriteSurfaceUnverified" && d.Message.Contains("CampDelegator"));
-    }
-
-    [Fact]
-    public async Task CrossSectionWriteSurface_GrandfatheredDependency_IsSuppressed()
-    {
-        var report = await Score(ReportingConfig(
-            new GrandfatheredDependency { Dependency = "CampReportBuilder->ICampSectionService", Reason = "legacy", Since = "2026-03", Owner = "camps" }));
-
-        Assert.DoesNotContain(report.Groups["Reporting"].Entries, e => e.Rule == "crossSectionWriteSurface" && e.Symbol == "CampReportBuilder");
     }
 
     // ---------------- Task 6: conservationAnchors emission ----------------

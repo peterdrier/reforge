@@ -229,19 +229,18 @@ public class CanonicalReadDtoDerivationTests
     }
 
     [Fact]
-    public void RemovedCanonicalReadDtosWarning_NamesEverySectionStillDeclaringIt()
+    public void UnreadConfigKeysWarning_NamesEveryDroppedKey()
     {
         // Shared by surface-score (as a `removed-config-field` diagnostic) and section-shape (as a
-        // stderr warning) — both resolve DTO anchors the field used to feed.
+        // stderr warning) — both resolve DTO anchors the dropped `sections` policy used to feed.
         var cfg = SurfaceScoreConfig.Default();
-        Assert.Null(cfg.RemovedCanonicalReadDtosWarning());
+        Assert.Null(cfg.UnreadConfigKeysWarning());
 
-        cfg.Sections["Zulu"] = new SectionRule { Unrecognized = new() { ["canonicalReadDtos"] = default } };
-        cfg.Sections["Alpha"] = new SectionRule { Unrecognized = new() { ["canonicalReadDtos"] = default } };
+        cfg.Unrecognized = new() { ["zulu"] = default, ["alpha"] = default };
 
-        var warning = cfg.RemovedCanonicalReadDtosWarning();
+        var warning = cfg.UnreadConfigKeysWarning();
         Assert.NotNull(warning);
-        Assert.Contains("Alpha, Zulu", warning);   // ordinal, so the message is stable run to run
+        Assert.Contains("alpha, zulu", warning);   // ordinal, so the message is stable run to run
     }
 
     [Fact]

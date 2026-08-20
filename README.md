@@ -77,18 +77,15 @@ only**:
 
 ```jsonc
 {
-  "sections": {                    // keyed by section name, i.e. the assembly
-    "Store": {
-      "primaryInfoDto": "StoreInfo",          // default convention: "<Section>Info"
-      "requiresReadSurface": null,            // default: inferred from repo-backed
-      "grandfatheredDependencies": [ /* visible debt, exempt but always reported */ ],
-      "escapeHatchReadMethods":  [ /* visible debt, exempt but always reported */ ]
-    }
-  },
   "classifications": { /* name/path/attribute patterns -> role tags */ },
   "weights":         { /* per-rule points; 0 disables a rule */ }
 }
 ```
+
+There is no `sections` block. Sections are the solution's assemblies, a section's canonical read
+DTOs come from what it exports, and its surface expectations from whether it declares a repository
+or a DbContext — so nothing about a section is config's to state. A file still carrying the key
+loads, and every key this version does not read is named as `removed-config-field`.
 
 **A degraded build is refused, not scored.** If the solution doesn't compile cleanly, both
 `surface-score` and `section-shape` print nothing and exit **2** (distinct from 1, so a broken tree
