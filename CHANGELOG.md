@@ -4,6 +4,16 @@ What changed and why. Newest first.
 
 ## Unreleased - Populations named: exported interfaces, published write surface
 
+- **`crossSectionWriteSurface` is retired** (#35). Least privilege across a section boundary was
+  already billed three times over — `crossSectionFullService` for the dependency, `crossSectionReadInterface`
+  for the read alternative, `writeCapableInterfaceUsedReadOnly` for holding write capability and not
+  using it. This rule was a premium tier on top, gated on a third condition (every observed call
+  read-covered, no escape) that never held in the field: 0 points across all 44 scored sections of
+  Humans, where its only two candidate pairs both escaped analysis and both turned out to be write
+  users. Retiring it drops the suppression set that let it pre-empt `writeCapableInterfaceUsedReadOnly`,
+  so cross-section read-only use is now charged by that rule at 12. Humans: 19727 → 19727, byRule
+  identical. The escape advisory is now `writeSurfaceUseUnverified`, named for the rule that is left.
+
 - **The `sections` config block is gone.** Sections are the solution's assemblies, so nothing about
   one was config's to state: DTO anchors come from what a section exports, surface expectations from
   whether it declares a repository or a DbContext. Removing the block also retires the per-section

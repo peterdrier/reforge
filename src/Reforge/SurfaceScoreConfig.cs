@@ -258,7 +258,6 @@ public sealed class SurfaceScoreConfig
                 ["writeCapableInterfaceUsedReadOnly"] = 12,
 
                 // Section architecture (surface axis)
-                ["crossSectionWriteSurface"] = 15,
                 ["missingReadSurface"] = 10,
                 ["missingWriteSurface"] = 10,
                 ["missingPrimaryInfoDto"] = 10,

@@ -6,7 +6,7 @@ namespace SampleSolution.Reporting;
 // A section with NO repository — must not trip any missing* rule — whose consumers reach across
 // the assembly boundary into Camp's write surface.
 
-// Cross-section caller that injects the Camp full interface but only READS -> crossSectionWriteSurface.
+// Cross-section caller that injects the Camp full interface but only READS -> writeCapableInterfaceUsedReadOnly.
 public sealed class CampReportBuilder
 {
     private readonly ICampSectionService _camp;

@@ -61,7 +61,7 @@ complexity it actually carries.
 
 Rules that charge for a *use* rather than a declaration — `crossSectionRepository`,
 `crossSectionFullService`, `crossSectionReadInterface`, `writeCapableInterfaceUsedReadOnly`,
-`crossSectionWriteSurface`, `duplicateDbSetOwner`, `diRegistration` — are **not** gated this way:
+`duplicateDbSetOwner`, `diRegistration` — are **not** gated this way:
 an internal class injecting another section's repository still forces the assembly reference and
 still calls across the boundary, so marking it internal can't make the coupling free.
 

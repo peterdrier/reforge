@@ -281,9 +281,10 @@ public static class SectionShapeAnalyzer
     /// <summary>
     /// For each consumer class that injects ANOTHER section's full (write) interface paired with
     /// a read interface, classifies how the dependency is used:
-    /// every observed call read-covered with no escape -> confident <c>crossSectionWriteSurface</c>
-    /// candidate; the dependency escapes analysis (passed onward, returned, captured) -> an
-    /// "unverified" advisory instead of a confident penalty.
+    /// every observed call read-covered with no escape -> a confident read-only use; the dependency
+    /// escapes analysis (passed onward, returned, captured) -> an "unverified" advisory. Both are
+    /// reported by <c>section-shape</c> and neither is scored — the points for read-only use of a
+    /// write interface are charged by <c>writeCapableInterfaceUsedReadOnly</c>.
     /// </summary>
     private static async Task<Dictionary<string, (List<CrossSectionUse> Confident, List<CrossSectionUse> Unverified)>>
         AnalyzeCrossSectionUsesAsync(Solution solution, List<ClassifiedType> classified,

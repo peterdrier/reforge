@@ -9,9 +9,9 @@ namespace Reforge.Tests;
 /// assembly names, so a variant compiled as a single project has exactly one section and can never
 /// fire a cross-section rule — not because those rules are fine, but because the harness cannot
 /// construct the situation. Left that way, <c>crossSectionRepository</c>,
-/// <c>crossSectionReadInterface</c>, <c>crossSectionFullService</c> and
-/// <c>crossSectionWriteSurface</c> would sit in not-yet-covered with no path to ever leaving it,
-/// and the backlog would be uncompletable by construction rather than by effort.</para>
+/// <c>crossSectionReadInterface</c> and <c>crossSectionFullService</c> would sit in
+/// not-yet-covered with no path to ever leaving it, and the backlog would be uncompletable by
+/// construction rather than by effort.</para>
 ///
 /// <para>Uses a probe pair rather than a real fixture on purpose. A fixture declares a rule gated,
 /// and proving the harness <i>can</i> fire a rule is not the same claim as proving that rule

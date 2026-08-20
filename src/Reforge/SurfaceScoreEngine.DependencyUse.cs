@@ -13,8 +13,7 @@ public sealed partial class SurfaceScoreEngine
     /// boundary. Marking the consumer internal changes nothing about that coupling, so gating here
     /// would have turned "make it internal" into a way to shed the penalty for free — the same
     /// gaming the effective-accessibility rule exists to close. Same reasoning for
-    /// writeCapableInterfaceUsedReadOnly, crossSectionWriteSurface, duplicateDbSetOwner, and
-    /// diRegistration.
+    /// writeCapableInterfaceUsedReadOnly, duplicateDbSetOwner, and diRegistration.
     /// </summary>
     private void ScoreDependencyUse(
         List<ClassifiedType> classified,

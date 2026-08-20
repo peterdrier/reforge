@@ -102,17 +102,8 @@ public sealed partial class SurfaceScoreEngine
             c => SolutionClassifier.TypeKey(c.Type), c => c, StringComparer.Ordinal);
 
         // Section architecture (Plan B): resolve each configured section's shape once. Used to
-        // score the five section rules and to emit conservation anchors. Computed before Pass 5
-        // so the cross-section specialization can suppress the generic rule for the same pairs.
+        // score the section rules and to emit conservation anchors.
         var architecture = await SectionShapeAnalyzer.AnalyzeAsync(solution, classified, _config, _solutionDirectory, ct);
-
-        // Confident cross-section read-only pairs (caller, full-interface simple name) — the generic
-        // writeCapableInterfaceUsedReadOnly rule is suppressed for these in favor of the
-        // section-specialized crossSectionWriteSurface penalty.
-        var crossSectionSuppress = new HashSet<(string Caller, string Dependency)>();
-        foreach (var s in architecture.Sections)
-            foreach (var use in s.WriteSurfaceCallers)
-                crossSectionSuppress.Add((use.Caller, use.Dependency));
 
         // Pass 1 — durable surface
         ScoreDurableSurface(classified, report, analyzedAssemblies);
@@ -128,7 +119,7 @@ public sealed partial class SurfaceScoreEngine
 
         // Pass 5 — write-capable interface used read-only. Needs the semantic model and
         // is the most expensive pass, so it runs last.
-        await ScoreWriteCapableUsedReadOnlyAsync(classified, typesByDisplay, solution, report, crossSectionSuppress, ct);
+        await ScoreWriteCapableUsedReadOnlyAsync(classified, typesByDisplay, solution, report, ct);
 
         // Cross-cutting: duplicate DbSet owners (resource ownership), DI registrations,
         // one-implementation interfaces.

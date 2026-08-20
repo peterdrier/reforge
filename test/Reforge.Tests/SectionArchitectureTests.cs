@@ -3,8 +3,8 @@ using Microsoft.CodeAnalysis;
 namespace Reforge.Tests;
 
 /// <summary>
-/// Plan B - section-architecture scored rules (crossSectionWriteSurface, missing*,
-/// readSurfaceProjectionMethod) + conservationAnchors, exercised end-to-end through
+/// Plan B - section-architecture scored rules (missing*, readSurfaceProjectionMethod)
+/// + conservationAnchors, exercised end-to-end through
 /// SurfaceScoreEngine against the sample solution. Sections are the sample's assemblies
 /// (Camp + Camp.Contracts, Lodge, Dorm, Tent, Reporting) - no config maps types into them.
 /// </summary>
@@ -28,7 +28,6 @@ public class SectionArchitectureTests
     public void Default_HasSectionArchitectureWeights()
     {
         var cfg = SurfaceScoreConfig.Default();
-        Assert.Equal(15, cfg.Weight("crossSectionWriteSurface"));
         Assert.Equal(10, cfg.Weight("missingReadSurface"));
         Assert.Equal(10, cfg.Weight("missingWriteSurface"));
         Assert.Equal(10, cfg.Weight("missingPrimaryInfoDto"));
@@ -40,7 +39,7 @@ public class SectionArchitectureTests
     {
         foreach (var rule in new[]
         {
-            "crossSectionWriteSurface", "missingReadSurface", "missingWriteSurface",
+            "missingReadSurface", "missingWriteSurface",
             "missingPrimaryInfoDto", "readSurfaceProjectionMethod"
         })
         {
@@ -90,30 +89,30 @@ public class SectionArchitectureTests
         Assert.False(report.Groups["Lodge"].ByRule.ContainsKey("missingWriteSurface"));
     }
 
-    // ---------------- Task 5: crossSectionWriteSurface + unverified advisory + escape analysis ----------------
+    // ---------------- Task 5: cross-section read-only use of a write-capable interface ----------------
 
     [Fact]
-    public async Task CrossSectionWriteSurface_FiresOnCrossSectionReadOnlyConsumer_SuppressesGeneric()
+    public async Task WriteCapableUsedReadOnly_ChargesTheCrossSectionReadOnlyConsumer()
     {
         var report = await Score();
 
+        // CampReportBuilder injects the Camp full interface from another section and only reads.
+        // One rule prices that, whichever side of a section boundary the dependency comes from;
+        // the boundary itself is priced by crossSectionFullService.
         var reporting = report.Groups["Reporting"];
-        Assert.True(reporting.ByRule.ContainsKey("crossSectionWriteSurface"));
-        // generic writeCapableInterfaceUsedReadOnly is suppressed for that same dependency (CampReportBuilder)
-        Assert.DoesNotContain(reporting.Entries, e => e.Rule == "writeCapableInterfaceUsedReadOnly" && e.Symbol == "CampReportBuilder");
-        // the confident penalty is attributed to the cross-section caller
-        Assert.Contains(reporting.Entries, e => e.Rule == "crossSectionWriteSurface" && e.Symbol == "CampReportBuilder");
+        Assert.Contains(reporting.Entries, e => e.Rule == "writeCapableInterfaceUsedReadOnly" && e.Symbol == "CampReportBuilder");
     }
 
     [Fact]
-    public async Task CrossSectionWriteSurfaceUnverified_WhenDependencyEscapes_NoConfidentPenalty()
+    public async Task WriteSurfaceUnverified_WhenDependencyEscapes_IsAdvisoryOnly()
     {
         var report = await Score();
 
-        // CampDelegator passes the dep onward -> NOT a confident crossSectionWriteSurface; an advisory diagnostic instead.
+        // CampDelegator passes the dep onward, so its calls are not provably read-only: no charge,
+        // an advisory diagnostic instead.
         var reporting = report.Groups["Reporting"];
-        Assert.DoesNotContain(reporting.Entries, e => e.Rule == "crossSectionWriteSurface" && e.Symbol == "CampDelegator");
-        Assert.Contains(report.Diagnostics, d => d.Code == "crossSectionWriteSurfaceUnverified" && d.Message.Contains("CampDelegator"));
+        Assert.DoesNotContain(reporting.Entries, e => e.Rule == "writeCapableInterfaceUsedReadOnly" && e.Symbol == "CampDelegator");
+        Assert.Contains(report.Diagnostics, d => d.Code == "writeSurfaceUseUnverified" && d.Message.Contains("CampDelegator"));
     }
 
     // ---------------- Task 6: conservationAnchors emission ----------------

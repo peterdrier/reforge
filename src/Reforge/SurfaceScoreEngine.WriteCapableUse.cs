@@ -21,7 +21,6 @@ public sealed partial class SurfaceScoreEngine
         Dictionary<string, ClassifiedType> typesByDisplay,
         Solution solution,
         ScoreReport report,
-        HashSet<(string Caller, string Dependency)> crossSectionSuppress,
         CancellationToken ct)
     {
         var weight = _config.Weight("writeCapableInterfaceUsedReadOnly");
@@ -111,11 +110,6 @@ public sealed partial class SurfaceScoreEngine
 
                     if (fullOnlyCalls == 0 && readCalls > 0)
                     {
-                        // Cross-section read-only use is scored as crossSectionWriteSurface instead;
-                        // skip the generic rule for those confident pairs.
-                        if (crossSectionSuppress.Contains((c.Type.Name, param.Type.Name)))
-                            continue;
-
                         var readName = pairs[fullDisplay].Type.Name;
                         var fullName = param.Type.Name;
                         var loc = param.Locations.FirstOrDefault(l => l.IsInSource)

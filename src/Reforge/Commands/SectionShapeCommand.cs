@@ -149,7 +149,7 @@ public static class SectionShapeCommand
                     derivableReadMethods = s.DerivableReadMethods.Select(d => new { @interface = d.Interface, method = d.Method, kind = d.Kind.ToString(), targetDto = d.TargetDto, hint = d.Hint }).ToArray(),
                     missingInfoFacts = s.MissingInfoFacts.Select(f => new { fact = f.Fact, targetDto = f.TargetDto }).ToArray(),
                     cacheFactCandidates = s.CacheFactCandidates.Select(c => new { method = c.Method, fact = c.Fact, cacheDto = c.CacheDto }).ToArray(),
-                    crossSectionWriteSurfaceUnverified = s.WriteSurfaceUnverified.Select(Use).ToArray()
+                    writeSurfaceUseUnverified = s.WriteSurfaceUnverified.Select(Use).ToArray()
                 }
             }).ToArray()
         };
@@ -188,7 +188,7 @@ public static class SectionShapeCommand
             if (s.CacheDto is not null) sb.AppendLine($"  cacheDto: {Short(s.CacheDto.Display)} [{s.CacheDtoProvenance}]");
 
             foreach (var m in s.Missing) sb.AppendLine($"  MISSING {m.Rule}: {m.Detail}");
-            foreach (var c in s.WriteSurfaceCallers) sb.AppendLine($"  crossSectionWriteSurface: {c.Caller} <- {c.Dependency} (use {c.SuggestedReadInterface})");
+            foreach (var c in s.WriteSurfaceCallers) sb.AppendLine($"  writeSurfaceReadOnlyUse: {c.Caller} <- {c.Dependency} (use {c.SuggestedReadInterface})");
             foreach (var c in s.ChargedReadMethods) sb.AppendLine($"  chargedRead: {c.Interface}.{c.Method} ({c.Kind})");
 
 
