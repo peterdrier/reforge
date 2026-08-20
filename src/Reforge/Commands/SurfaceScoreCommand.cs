@@ -294,6 +294,13 @@ public static class SurfaceScoreCommand
             }
         }
 
+        var writeSurfaceLines = PublicWriteSurfaceLines(report, groupFilter, markdown: false).ToList();
+        if (writeSurfaceLines.Count > 0)
+        {
+            Console.WriteLine();
+            foreach (var line in writeSurfaceLines) Console.WriteLine(line);
+        }
+
         var orderedGroups = FilterAndOrderGroups(report, groupFilter);
         if (orderedGroups.Count == 0)
         {
@@ -330,8 +337,6 @@ public static class SurfaceScoreCommand
                 ? $"{g.Name} ({g.Total}; surface {g.MainSurfaceTotal} main + {g.ContractsSurfaceTotal} contracts)"
                 : $"{g.Name} ({g.Total})");
             Console.WriteLine($"  {MetricsLine(g.Metrics)}");
-            if (report.PublicWriteSurface.TryGetValue(g.Name, out var writeSurface) && writeSurface.Count > 0)
-                Console.WriteLine($"  publicWriteSurface (reported, unscored): {string.Join(", ", writeSurface.OrderBy(n => n, StringComparer.Ordinal))}");
 
             foreach (var kv in g.ByRule.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
                 Console.WriteLine($"  {kv.Key,-40} {kv.Value,5}");
@@ -412,6 +417,12 @@ public static class SurfaceScoreCommand
             sb.AppendLine();
         }
 
+        foreach (var line in PublicWriteSurfaceLines(report, groupFilter, markdown: true))
+        {
+            sb.AppendLine(line);
+            sb.AppendLine();
+        }
+
         var orderedGroups = FilterAndOrderGroups(report, groupFilter);
 
         if (orderedGroups.Count == 0)
@@ -462,11 +473,6 @@ public static class SurfaceScoreCommand
             sb.AppendLine();
             sb.AppendLine($"`{MetricsLine(g.Metrics)}`");
             sb.AppendLine();
-            if (report.PublicWriteSurface.TryGetValue(g.Name, out var writeSurface) && writeSurface.Count > 0)
-            {
-                sb.AppendLine($"Publishes write capability (reported, unscored): {string.Join(", ", writeSurface.OrderBy(n => n, StringComparer.Ordinal).Select(n => $"`{n}`"))}");
-                sb.AppendLine();
-            }
 
             if (g.ByRule.Count > 0)
             {
@@ -583,7 +589,6 @@ public static class SurfaceScoreCommand
                 internalComplexityTotal = g.InternalComplexityTotal,
                 total = g.Total,
                 metrics = MetricsJson(g.Metrics),
-                publicWriteSurface = PublicWriteSurfaceJson(report, g.Name),
                 byRule = g.ByRule
                     .OrderByDescending(kv => kv.Value)
                     .ThenBy(kv => kv.Key, StringComparer.Ordinal)
@@ -664,7 +669,7 @@ public static class SurfaceScoreCommand
             // Scoped like byRule below: with --group set, the solution-wide corpus would read as
             // the section's. `scope` says which one this is.
             metrics = MetricsJson(ScopedMetrics(report, filteredGroups, groupFilter)),
-            publicWriteSurface = PublicWriteSurfaceRollup(report, groupFilter),
+            publicWriteSurface = PublicWriteSurfaceJson(report, groupFilter),
             build = new
             {
                 degraded = report.BuildHealth.Degraded,
@@ -737,25 +742,20 @@ public static class SurfaceScoreCommand
     // ----------------------- Public write surface (reported, never scored) -----------------------
 
     /// <summary>
-    /// What one section publishes that another assembly can call to change state. Always emitted,
-    /// including when the answer is nothing: a section absent from the object would leave a reader
-    /// to guess whether it publishes no write surface or was not examined, and that guess is
-    /// exactly the reading error this field exists to remove.
+    /// What each section publishes that another assembly can call to change state, plus how many
+    /// sections that is out of how many exist.
     /// </summary>
-    private static object PublicWriteSurfaceJson(ScoreReport report, string section)
-    {
-        var interfaces = report.PublicWriteSurface.TryGetValue(section, out var published)
-            ? published.OrderBy(n => n, StringComparer.Ordinal).ToArray()
-            : Array.Empty<string>();
-        return new { publishes = interfaces.Length > 0, interfaces };
-    }
-
-    /// <summary>
-    /// Prevalence across the scope: how many sections publish write capability, out of how many
-    /// exist. The denominator is every section in the corpus, not every section with a
-    /// <see cref="GroupScore"/> — a section that scored nothing still answers the question.
-    /// </summary>
-    private static object PublicWriteSurfaceRollup(ScoreReport report, string? groupFilter)
+    /// <remarks>
+    /// Keyed by section from <see cref="AllSections"/> rather than attached to a
+    /// <see cref="GroupScore"/>. A section publishing an interface that charges nothing — no
+    /// chargeable methods, or <c>fullServiceInterfaceMethod</c> weighted to zero — has no group at
+    /// all, since <c>AddEntry</c> drops zero-point entries, and both text writers return early when
+    /// the group list is empty. Hanging an unscored metric off the scored structure would hide it in
+    /// exactly the case it is most worth seeing: a section that publishes write capability and pays
+    /// nothing for it.
+    /// </remarks>
+    private static (int Sections, string[] Publishing, int Interfaces) PublicWriteSurface(
+        ScoreReport report, string? groupFilter)
     {
         var sections = groupFilter is null
             ? AllSections(report).Select(s => s.Name).ToList()
@@ -766,13 +766,39 @@ public static class SurfaceScoreCommand
             .OrderBy(s => s, StringComparer.Ordinal)
             .ToArray();
 
+        return (sections.Count, publishing, publishing.Sum(s => report.PublicWriteSurface[s].Count));
+    }
+
+    private static string[] Published(ScoreReport report, string section) =>
+        report.PublicWriteSurface.TryGetValue(section, out var published)
+            ? published.OrderBy(n => n, StringComparer.Ordinal).ToArray()
+            : Array.Empty<string>();
+
+    private static object PublicWriteSurfaceJson(ScoreReport report, string? groupFilter)
+    {
+        var (sections, publishing, interfaces) = PublicWriteSurface(report, groupFilter);
         return new
         {
-            sections = sections.Count,
+            sections,
             publishingSections = publishing.Length,
-            interfaces = publishing.Sum(s => report.PublicWriteSurface[s].Count),
-            publishing
+            interfaces,
+            bySection = publishing.ToDictionary(s => s, s => Published(report, s), StringComparer.Ordinal)
         };
+    }
+
+    /// <summary>The same block for the two text formats, or nothing when no section publishes.</summary>
+    private static IEnumerable<string> PublicWriteSurfaceLines(ScoreReport report, string? groupFilter, bool markdown)
+    {
+        var (sections, publishing, interfaces) = PublicWriteSurface(report, groupFilter);
+        if (publishing.Length == 0) yield break;
+
+        yield return markdown
+            ? $"## publicWriteSurface — {publishing.Length} of {sections} sections publish write capability ({interfaces} interfaces, reported and unscored)"
+            : $"publicWriteSurface (reported, unscored): {publishing.Length}/{sections} sections, {interfaces} interfaces";
+        foreach (var section in publishing)
+            yield return markdown
+                ? $"- `{section}`: {string.Join(", ", Published(report, section).Select(n => $"`{n}`"))}"
+                : $"  {section}: {string.Join(", ", Published(report, section))}";
     }
 
     // ----------------------- Metrics -----------------------
