@@ -4,6 +4,27 @@ What changed and why. Newest first.
 
 ## Unreleased - Populations named: exported interfaces, published write surface
 
+- **Test mass per section** (#37, #36). Every group now reports `tests`: `loc`, `files`, `projects`,
+  and test LOC as a percentage of the section's production LOC. A test project is attributed to the
+  section its non-test project references name — never to its own name, so `X.Tests` and
+  `X.IntegrationTests` land together; a project whose references name several sections is broken by
+  name, and one that can't be broken is named in `unattributedTestProjects` rather than assigned
+  somewhere plausible. #37 ordered this behind a scored test axis; the measurement in
+  `docs/superpowers/specs/2026-08-20-test-axis-measurement.md` found nothing in 4,759 test methods
+  for those rules to charge, and the comparison the column is for ("Shifts carries 3x the test mass
+  of Camps") is a ratio of sizes, so the column is size and needs no axis. Humans: **123,458 test LOC
+  against 160,612 production**.
+
+- **`crossSectionWriteSurface` is retired** (#35). Least privilege across a section boundary was
+  already billed three times over — `crossSectionFullService` for the dependency, `crossSectionReadInterface`
+  for the read alternative, `writeCapableInterfaceUsedReadOnly` for holding write capability and not
+  using it. This rule was a premium tier on top, gated on a third condition (every observed call
+  read-covered, no escape) that never held in the field: 0 points across all 44 scored sections of
+  Humans, where its only two candidate pairs both escaped analysis and both turned out to be write
+  users. Retiring it drops the suppression set that let it pre-empt `writeCapableInterfaceUsedReadOnly`,
+  so cross-section read-only use is now charged by that rule at 12. Humans: 19727 → 19727, byRule
+  identical. The escape advisory is now `writeSurfaceUseUnverified`, named for the rule that is left.
+
 - **The `sections` config block is gone.** Sections are the solution's assemblies, so nothing about
   one was config's to state: DTO anchors come from what a section exports, surface expectations from
   whether it declares a repository or a DbContext. Removing the block also retires the per-section

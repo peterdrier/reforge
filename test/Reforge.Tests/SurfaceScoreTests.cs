@@ -518,17 +518,27 @@ public class SurfaceScoreTests
         // SameSectionGreetingConsumer (same assembly as the interface) holds the full interface
         // but only calls Get methods that also exist on the read interface — the generic rule
         // fires. FullGreetingConsumer calls RecordGreetingAsync (write) — it must NOT fire.
-        // ReadOnlyGreetingConsumer sits in another assembly, so the cross-section specialization
-        // claims it instead (asserted below).
+        // ReadOnlyGreetingConsumer sits in another assembly and is charged by the same rule: the
+        // section boundary is priced by the crossSection* rules, not by a second read-only rule.
         var report = await ScoreDefaultAsync();
 
         var readOnly = AllEntries(report).Where(e => e.Rule == "writeCapableInterfaceUsedReadOnly").ToList();
         Assert.Contains(readOnly, e => e.Symbol == "SameSectionGreetingConsumer");
         Assert.DoesNotContain(readOnly, e => e.Symbol == "FullGreetingConsumer");
+        Assert.Contains(readOnly, e => e.Symbol == "ReadOnlyGreetingConsumer");
+    }
 
-        Assert.DoesNotContain(readOnly, e => e.Symbol == "ReadOnlyGreetingConsumer");
-        Assert.Contains(AllEntries(report),
-            e => e.Rule == "crossSectionWriteSurface" && e.Symbol == "ReadOnlyGreetingConsumer");
+    [Fact]
+    public async Task WriteCapableUsedReadOnly_CountsAPartialClassAsOneConsumer()
+    {
+        // Both fixtures are split across two files, which must not change what they cost.
+        var report = await ScoreDefaultAsync();
+        var readOnly = AllEntries(report).Where(e => e.Rule == "writeCapableInterfaceUsedReadOnly").ToList();
+
+        // Read-only in both halves: charged once, not once per declaration.
+        Assert.Single(readOnly.Where(e => e.Symbol == "PartialReadOnlyGreetingConsumer"));
+        // Write call in the other half: cancels the rule for the whole class, not just that file.
+        Assert.DoesNotContain(readOnly, e => e.Symbol == "SplitWriteGreetingConsumer");
     }
 
     // ---------------- Internal complexity: dispatcher / read-shape ----------------

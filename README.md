@@ -61,7 +61,7 @@ complexity it actually carries.
 
 Rules that charge for a *use* rather than a declaration — `crossSectionRepository`,
 `crossSectionFullService`, `crossSectionReadInterface`, `writeCapableInterfaceUsedReadOnly`,
-`crossSectionWriteSurface`, `duplicateDbSetOwner`, `diRegistration` — are **not** gated this way:
+`duplicateDbSetOwner`, `diRegistration` — are **not** gated this way:
 an internal class injecting another section's repository still forces the assembly reference and
 still calls across the boundary, so marking it internal can't make the coupling free.
 
@@ -115,7 +115,7 @@ Cognitive complexity is the metric the internal axis actually scores; cyclomatic
 continuity with the `snapshot` history series, which has always recorded it solution-wide.
 
 The corpus is the **scoring** corpus, so a metric and a score always describe the same code: no
-test projects (attributing tests to a section is a different problem), no generated code (EF
+test projects (they are measured separately — see below), no generated code (EF
 migrations, `*.g.cs`, `*.Designer.cs` — excluded from the internal axis too), and complexity
 measured only over methods that have a body. `maxClassLoc` covers classes and structs — the same
 set `classes` counts, which is deliberately wider than the set the `largeClass` rule scores (that
@@ -127,6 +127,26 @@ section — including sections that scored nothing — so sections can be ranked
 pulling a full report.
 
 Metrics are informational: nothing here feeds the score, so totals are unaffected by their presence.
+
+**Test mass is reported per section, and scored nowhere.** Test projects are outside the scoring
+corpus by construction — everything in one is public, so every surface rule would fire on code no
+other section can call — which also made a section's test size invisible. Each group now carries a
+`tests` block beside its `metrics`:
+
+```json
+"tests": { "loc": 3410, "files": 22, "projects": 2, "locVsProdPercent": 77 }
+```
+
+`locVsProdPercent` is the figure that compares two sections: raw test LOC scales with section size,
+so the biggest section carries the most tests by default and the ratio is what distinguishes them.
+
+A test project belongs to the section its **non-test project references** name, never to its own
+name — `X.Tests` and `X.IntegrationTests` have to land in the same column, and a suite named after
+nothing still tests something. Where the references name several sections (an integration suite
+reaching past the section under test) the project name breaks the tie; where nothing breaks it, the
+project is listed in `unattributedTestProjects` with an `info` diagnostic, and its mass is in the
+solution rollup and in no column. Nothing about the test corpus is scored: there is no test axis and
+no weight reads any of these numbers.
 
 `reforge section-shape` renders the same sections as a report (interfaces, DTO anchors,
 cross-section use, missing surfaces, visible debt, advisories).

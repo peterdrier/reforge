@@ -271,6 +271,8 @@ public static class SurfaceScoreCommand
         Console.WriteLine($"surface-score: surface={report.SurfaceTotal} internalComplexity={report.InternalComplexityTotal} combined={report.Total} (informational) types={report.TypesAnalyzed} groups={report.Groups.Count} config={(report.ConfigPath ?? "(defaults)")}");
         Console.WriteLine($"corpus{(groupFilter is null ? "" : $" ({groupFilter})")}: " +
                           $"{MetricsLine(ScopedMetrics(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
+        var solutionTests = TestsLine(ScopedTests(report, FilterAndOrderGroups(report, groupFilter), groupFilter));
+        if (solutionTests.Length > 0) Console.WriteLine(solutionTests);
 
         foreach (var d in report.Diagnostics)
             Console.WriteLine($"! {d.Level}: {d.Message}");
@@ -337,6 +339,7 @@ public static class SurfaceScoreCommand
                 ? $"{g.Name} ({g.Total}; surface {g.MainSurfaceTotal} main + {g.ContractsSurfaceTotal} contracts)"
                 : $"{g.Name} ({g.Total})");
             Console.WriteLine($"  {MetricsLine(g.Metrics)}");
+            if (g.Tests.Files != 0) Console.WriteLine($"  {TestsLine(g.Tests)}");
 
             foreach (var kv in g.ByRule.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
                 Console.WriteLine($"  {kv.Key,-40} {kv.Value,5}");
@@ -436,15 +439,26 @@ public static class SurfaceScoreCommand
 
         sb.AppendLine("## Totals by group");
         sb.AppendLine();
-        sb.AppendLine("| Group | Score | LOC | Files | Classes | Interfaces | Cognitive p95 | Cognitive max | Max class LOC |");
-        sb.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|");
+        sb.AppendLine("| Group | Score | LOC | Files | Classes | Interfaces | Cognitive p95 | Cognitive max | Max class LOC | Test LOC | Tests % of LOC |");
+        sb.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
         foreach (var g in orderedGroups)
         {
             var m = g.Metrics;
             sb.AppendLine($"| {g.Name} | {g.Total} | {m.LocProd} | {m.Files} | {m.Classes} | {m.Interfaces} | " +
-                          $"{m.Cognitive.P95} | {m.Cognitive.Max} | {m.MaxClassLoc} |");
+                          $"{m.Cognitive.P95} | {m.Cognitive.Max} | {m.MaxClassLoc} | {g.Tests.Loc} | {g.Tests.LocVsProdPercent}% |");
         }
         sb.AppendLine();
+        // The solution rollup, because the test columns above only cover scored groups: a test
+        // project no section claimed has its LOC here and nowhere else in the table.
+        if (report.Tests.Files != 0)
+        {
+            sb.AppendLine($"Solution test corpus: {report.Tests.Loc} LOC in {report.Tests.Files} files across " +
+                          $"{report.Tests.Projects} projects ({report.Tests.LocVsProdPercent}% of production LOC)." +
+                          (report.UnattributedTestProjects.Count == 0
+                              ? ""
+                              : $" Attributed to no section: {string.Join(", ", report.UnattributedTestProjects)}."));
+            sb.AppendLine();
+        }
 
         // When the agent has filtered to one section, the solution-wide rule totals are
         // misleading (they include rules that fired outside the section). Scope the totals
@@ -473,6 +487,11 @@ public static class SurfaceScoreCommand
             sb.AppendLine();
             sb.AppendLine($"`{MetricsLine(g.Metrics)}`");
             sb.AppendLine();
+            if (g.Tests.Files != 0)
+            {
+                sb.AppendLine($"`{TestsLine(g.Tests)}`");
+                sb.AppendLine();
+            }
 
             if (g.ByRule.Count > 0)
             {
@@ -589,6 +608,7 @@ public static class SurfaceScoreCommand
                 internalComplexityTotal = g.InternalComplexityTotal,
                 total = g.Total,
                 metrics = MetricsJson(g.Metrics),
+                tests = TestsJson(g.Tests),
                 byRule = g.ByRule
                     .OrderByDescending(kv => kv.Value)
                     .ThenBy(kv => kv.Key, StringComparer.Ordinal)
@@ -669,6 +689,8 @@ public static class SurfaceScoreCommand
             // Scoped like byRule below: with --group set, the solution-wide corpus would read as
             // the section's. `scope` says which one this is.
             metrics = MetricsJson(ScopedMetrics(report, filteredGroups, groupFilter)),
+            tests = TestsJson(ScopedTests(report, filteredGroups, groupFilter)),
+            unattributedTestProjects = report.UnattributedTestProjects,
             publicWriteSurface = PublicWriteSurfaceJson(report, groupFilter),
             build = new
             {
@@ -848,6 +870,36 @@ public static class SurfaceScoreCommand
         (string.IsNullOrEmpty(m.Cognitive.MaxMethod) ? "" : $" ({m.Cognitive.MaxMethod})") +
         $" maxClassLoc={m.MaxClassLoc}" +
         (string.IsNullOrEmpty(m.MaxClassLocName) ? "" : $" ({m.MaxClassLocName})");
+
+    /// <summary>
+    /// Test-corpus size of a scope, for the JSON report. Emitted for every group and once for the
+    /// solution. Informational like <see cref="MetricsJson"/> — the test corpus is scored nowhere.
+    /// </summary>
+    private static object TestsJson(TestMass t) => new
+    {
+        loc = t.Loc,
+        files = t.Files,
+        projects = t.Projects,
+        locVsProdPercent = t.LocVsProdPercent
+    };
+
+    /// <summary>
+    /// Test mass for the scope the reader is looking at, scoped like <see cref="ScopedMetrics"/>.
+    /// </summary>
+    private static TestMass ScopedTests(ScoreReport report, List<GroupScore> filteredGroups, string? groupFilter)
+    {
+        if (groupFilter is null) return report.Tests;
+        if (report.TestsBySection.TryGetValue(groupFilter, out var t)) return t;
+        return filteredGroups.Count > 0 ? filteredGroups[0].Tests : TestMass.Empty;
+    }
+
+    /// <summary>
+    /// One-line test-corpus summary, or empty when the scope has no test project. The percentage is
+    /// the comparison the column exists for: raw test LOC scales with section size, so the biggest
+    /// section carries the most tests by default and the ratio is what distinguishes them.
+    /// </summary>
+    private static string TestsLine(TestMass t) =>
+        t.Files == 0 ? "" : $"tests: loc={t.Loc} files={t.Files} projects={t.Projects} ({t.LocVsProdPercent}% of prod loc)";
 
     /// <summary>Terser form for the per-section summary list, where one line per section is the budget.</summary>
     private static string MetricsSummary(SectionMetrics m) =>

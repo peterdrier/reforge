@@ -21,7 +21,6 @@ public sealed partial class SurfaceScoreEngine
         Dictionary<string, ClassifiedType> typesByDisplay,
         Solution solution,
         ScoreReport report,
-        HashSet<(string Caller, string Dependency)> crossSectionSuppress,
         CancellationToken ct)
     {
         var weight = _config.Weight("writeCapableInterfaceUsedReadOnly");
@@ -67,7 +66,13 @@ public sealed partial class SurfaceScoreEngine
             }
             if (injectedFulls.Count == 0) continue;
 
-            // The class might be partial across files — examine every declaring tree.
+            // Call counts per injected dependency, accumulated across EVERY declaring tree before
+            // anything is charged. A partial class is one consumer however many files it is split
+            // across: counting per declaration charged it once per file, and let a write call in
+            // one half fail to cancel the rule for the other — so the score depended on file
+            // layout, which is exactly the kind of edit that must not move it.
+            var calls = new Dictionary<string, (int Read, int FullOnly)>(StringComparer.Ordinal);
+
             foreach (var declRef in c.Type.DeclaringSyntaxReferences)
             {
                 var tree = declRef.SyntaxTree;
@@ -78,11 +83,10 @@ public sealed partial class SurfaceScoreEngine
                 var model = compilation.GetSemanticModel(tree);
                 var classNode = await declRef.GetSyntaxAsync(ct);
 
-                foreach (var (fullDisplay, param) in injectedFulls)
+                foreach (var (fullDisplay, _) in injectedFulls)
                 {
                     var readSet = readMethodIndex[fullDisplay];
-                    int readCalls = 0;
-                    int fullOnlyCalls = 0;
+                    var (readCalls, fullOnlyCalls) = calls.GetValueOrDefault(fullDisplay);
 
                     foreach (var invocation in classNode.DescendantNodes().OfType<InvocationExpressionSyntax>())
                     {
@@ -98,7 +102,6 @@ public sealed partial class SurfaceScoreEngine
                             continue;
 
                         var methodName = ma.Name.Identifier.Text;
-                        var arity = invocation.ArgumentList?.Arguments.Count ?? 0;
                         // C# allows omitting optional args, so we can't insist on exact arity.
                         // Accept a read-cover match if ANY read-interface method has the same name.
                         // (Overloads are rare in practice; this loosens the check enough to
@@ -109,22 +112,21 @@ public sealed partial class SurfaceScoreEngine
                             fullOnlyCalls++;
                     }
 
-                    if (fullOnlyCalls == 0 && readCalls > 0)
-                    {
-                        // Cross-section read-only use is scored as crossSectionWriteSurface instead;
-                        // skip the generic rule for those confident pairs.
-                        if (crossSectionSuppress.Contains((c.Type.Name, param.Type.Name)))
-                            continue;
-
-                        var readName = pairs[fullDisplay].Type.Name;
-                        var fullName = param.Type.Name;
-                        var loc = param.Locations.FirstOrDefault(l => l.IsInSource)
-                            ?? c.PrimaryLocation;
-                        var (file, line) = LocateMember(loc, c);
-                        AddEntry(report, c.Group, "writeCapableInterfaceUsedReadOnly", weight, c.Type, file, line,
-                            $"{c.Type.Name} <- {fullName} (use {readName} instead; {readCalls} read calls, 0 write calls)");
-                    }
+                    calls[fullDisplay] = (readCalls, fullOnlyCalls);
                 }
+            }
+
+            foreach (var (fullDisplay, param) in injectedFulls)
+            {
+                var (readCalls, fullOnlyCalls) = calls.GetValueOrDefault(fullDisplay);
+                if (fullOnlyCalls != 0 || readCalls == 0) continue;
+
+                var readName = pairs[fullDisplay].Type.Name;
+                var fullName = param.Type.Name;
+                var loc = param.Locations.FirstOrDefault(l => l.IsInSource) ?? c.PrimaryLocation;
+                var (file, line) = LocateMember(loc, c);
+                AddEntry(report, c.Group, "writeCapableInterfaceUsedReadOnly", weight, c.Type, file, line,
+                    $"{c.Type.Name} <- {fullName} (use {readName} instead; {readCalls} read calls, 0 write calls)");
             }
         }
     }

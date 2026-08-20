@@ -102,17 +102,8 @@ public sealed partial class SurfaceScoreEngine
             c => SolutionClassifier.TypeKey(c.Type), c => c, StringComparer.Ordinal);
 
         // Section architecture (Plan B): resolve each configured section's shape once. Used to
-        // score the five section rules and to emit conservation anchors. Computed before Pass 5
-        // so the cross-section specialization can suppress the generic rule for the same pairs.
+        // score the section rules and to emit conservation anchors.
         var architecture = await SectionShapeAnalyzer.AnalyzeAsync(solution, classified, _config, _solutionDirectory, ct);
-
-        // Confident cross-section read-only pairs (caller, full-interface simple name) — the generic
-        // writeCapableInterfaceUsedReadOnly rule is suppressed for these in favor of the
-        // section-specialized crossSectionWriteSurface penalty.
-        var crossSectionSuppress = new HashSet<(string Caller, string Dependency)>();
-        foreach (var s in architecture.Sections)
-            foreach (var use in s.WriteSurfaceCallers)
-                crossSectionSuppress.Add((use.Caller, use.Dependency));
 
         // Pass 1 — durable surface
         ScoreDurableSurface(classified, report, analyzedAssemblies);
@@ -128,7 +119,7 @@ public sealed partial class SurfaceScoreEngine
 
         // Pass 5 — write-capable interface used read-only. Needs the semantic model and
         // is the most expensive pass, so it runs last.
-        await ScoreWriteCapableUsedReadOnlyAsync(classified, typesByDisplay, solution, report, crossSectionSuppress, ct);
+        await ScoreWriteCapableUsedReadOnlyAsync(classified, typesByDisplay, solution, report, ct);
 
         // Cross-cutting: duplicate DbSet owners (resource ownership), DI registrations,
         // one-implementation interfaces.
@@ -161,6 +152,21 @@ public sealed partial class SurfaceScoreEngine
             report.MetricsBySection[section] = metrics;
             if (report.Groups.TryGetValue(section, out var group)) group.Metrics = metrics;
         }
+
+        // Test mass per section. A separate corpus from everything above (the classifier admits
+        // no test project), reported as size and scored nowhere — see TestMassAnalyzer.
+        var (testsBySection, solutionTests, unattributedTests) =
+            await TestMassAnalyzer.AnalyzeAsync(solution, classified, metricsBySection, ct);
+        report.Tests = solutionTests;
+        report.UnattributedTestProjects.AddRange(unattributedTests);
+        foreach (var (section, tests) in testsBySection)
+        {
+            report.TestsBySection[section] = tests;
+            if (report.Groups.TryGetValue(section, out var group)) group.Tests = tests;
+        }
+        if (unattributedTests.Count > 0)
+            report.Diagnostics.Add(new ScoreDiagnostic("info", "unattributedTestProject",
+                $"Test projects whose references named no single section, counted in the solution rollup only: {string.Join(", ", unattributedTests)}."));
 
         // Build health: detect a degraded (unbuilt/erroring) compilation so a partial
         // score is never mistaken for a complete one. Reuses the per-project compilations

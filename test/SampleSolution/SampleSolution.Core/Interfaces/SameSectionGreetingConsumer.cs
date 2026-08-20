@@ -3,7 +3,7 @@ namespace SampleSolution.Core.Interfaces;
 /// <summary>
 /// Holds the full IGreetingService, only calls read methods, and lives in the SAME assembly as
 /// the interface. Same-section use keeps the generic writeCapableInterfaceUsedReadOnly rule —
-/// the cross-section specialization (crossSectionWriteSurface) can't claim it.
+/// the consumer is in the same assembly as the interface it holds.
 /// </summary>
 public class SameSectionGreetingConsumer
 {

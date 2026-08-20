@@ -8,9 +8,8 @@ public sealed partial class SurfaceScoreEngine
 {
     /// <summary>
     /// Scores the section shapes onto the surface axis: the <c>readSurfaceProjectionMethod</c>
-    /// surcharge for charged read methods, the repo-backed <c>missing*</c> rules, and the
-    /// cross-section <c>crossSectionWriteSurface</c> rule. Every assembly-derived section is
-    /// shaped, so these rules fire with or without a config file.
+    /// surcharge for charged read methods and the repo-backed <c>missing*</c> rules. Every
+    /// assembly-derived section is shaped, so these rules fire with or without a config file.
     /// </summary>
     private void ScoreSectionArchitecture(SectionArchitecture arch, ScoreReport report)
     {
@@ -43,16 +42,9 @@ public sealed partial class SurfaceScoreEngine
                 AddEntryByName(report, section.Name, miss.Rule, w, section.Name, "", 0, miss.Detail);
             }
 
-            // Cross-section write-surface: confident penalties (generic rule already suppressed).
-            var csW = _config.Weight("crossSectionWriteSurface");
-            if (csW != 0)
-                foreach (var use in section.WriteSurfaceCallers)
-                    AddEntryByName(report, section.Name, "crossSectionWriteSurface", csW, use.Caller, use.File, use.Line,
-                        $"{use.Caller} <- {use.Dependency} (use {use.SuggestedReadInterface}; cross-section, all reads)");
-
             // Escape-analysis advisory: read-only use unconfirmed (the dependency escapes). No penalty.
             foreach (var use in section.WriteSurfaceUnverified)
-                report.Diagnostics.Add(new ScoreDiagnostic("info", "crossSectionWriteSurfaceUnverified",
+                report.Diagnostics.Add(new ScoreDiagnostic("info", "writeSurfaceUseUnverified",
                     $"{use.Caller} <- {use.Dependency}: read-only use unconfirmed (dependency escapes analysis); advisory only."));
         }
     }

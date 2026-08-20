@@ -45,7 +45,6 @@ public static class SurfaceScoreRuleGlossary
         ["writeCapableInterfaceUsedReadOnly"] = "A class injects a full-service interface that is paired (by inheritance or by a same-namespace 'Read'-suffixed sibling) with a read-only interface, and every observed invocation on the injected dependency targets a method that also exists on the read interface.",
 
         // Section architecture (surface axis)
-        ["crossSectionWriteSurface"] = "A class in one section injects another section's write/full service interface but every observed call targets a method that also exists on that section's read interface.",
         ["missingReadSurface"] = "A repo-backed section has no read-only service interface.",
         ["missingWriteSurface"] = "A repo-backed section has no write/full service interface.",
         ["missingPrimaryInfoDto"] = "A repo-backed section has no DTO matching its primary Info DTO name.",
