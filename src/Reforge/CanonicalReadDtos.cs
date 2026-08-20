@@ -54,10 +54,12 @@ public sealed class CanonicalReadDtoSet
     {
         var bySection = new Dictionary<string, List<ClassifiedType>>(StringComparer.OrdinalIgnoreCase);
         var keys = new HashSet<string>(StringComparer.Ordinal);
+        var all = classified as ICollection<ClassifiedType> ?? classified.ToList();
+        var analyzedAssemblies = AnalyzedAssemblies(all);
 
-        foreach (var c in classified)
+        foreach (var c in all)
         {
-            if (!IsCanonicalReadDto(c, solutionDirectory)) continue;
+            if (!IsCanonicalReadDto(c, solutionDirectory, analyzedAssemblies)) continue;
             if (!bySection.TryGetValue(c.Group, out var list))
                 bySection[c.Group] = list = new List<ClassifiedType>();
             list.Add(c);
@@ -114,12 +116,13 @@ public sealed class CanonicalReadDtoSet
     /// A canonical read DTO: an exported data type declared on the section's contracts surface.
     /// Interfaces, enums, delegates and static classes are excluded — a read API hands back data.
     /// </summary>
-    private static bool IsCanonicalReadDto(ClassifiedType c, string solutionDirectory)
+    private static bool IsCanonicalReadDto(ClassifiedType c, string solutionDirectory,
+        HashSet<string> analyzedAssemblies)
     {
         if (!c.IsExported) return false;
         if (c.Type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
         if (c.Type.IsStatic) return false;
-        if (!c.Tags.Contains("dto") && !IsDataCarrier(c.Type)) return false;
+        if (!c.Tags.Contains("dto") && !IsDataCarrier(c.Type, analyzedAssemblies)) return false;
         return IsOnContractsSurface(
             c.Type.ContainingAssembly?.Name,
             c.Type.Locations.Where(l => l.IsInSource).Select(l => l.SourceTree?.FilePath),
@@ -184,11 +187,12 @@ public sealed class CanonicalReadDtoSet
     /// by a default interface method. The property side matches
     /// <see cref="DtoInventory"/> exactly, so an admitted type always has facts to inventory.
     /// </summary>
-    public static bool IsDataCarrier(INamedTypeSymbol t)
+    public static bool IsDataCarrier(INamedTypeSymbol t, HashSet<string> analyzedAssemblies,
+        bool countIndexersAsData = false)
     {
         if (t.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
         if (t.IsStatic) return false;
-        if (!t.Locations.Any(l => l.IsInSource)) return false;
+        if (!IsInAnalyzedSolution(t, analyzedAssemblies)) return false;
 
         // Allowlist, not blacklist. Asking "which member shapes are behavior?" is an open-ended
         // question — ordinary methods, then explicit implementations, then operators, conversions,
@@ -200,13 +204,23 @@ public sealed class CanonicalReadDtoSet
         // The walk climbs base types — `class SearchHit : List<int>` declares only a property but
         // hands a consumer Add/Remove/Insert. System.Object and System.ValueType stop it: their
         // members are universal rather than a published API choice.
+        //
+        // Past the solution boundary the two halves separate. BEHAVIOUR counts wherever declared —
+        // a consumer can call the base's methods on this type. DATA does not: a framework base's
+        // properties are not this section's published shape, and counting them read an EF migration
+        // as a DTO. Stopping the walk instead loses SearchHit; splitting the two keeps both.
         int props = 0;
         for (INamedTypeSymbol? current = t; current is not null; current = current.BaseType)
         {
             if (current.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType) break;
+            bool ours = IsInAnalyzedSolution(current, analyzedAssemblies);
             foreach (var m in current.GetMembers())
             {
-                if (IsCarriedData(m)) { props++; continue; }
+                if (IsCarriedData(m) || (countIndexersAsData && IsPublishedIndexer(m)))
+                {
+                    if (ours) props++;
+                    continue;
+                }
                 if (IsInvisibleToConsumers(m)) continue;
                 return false;
             }
@@ -245,6 +259,9 @@ public sealed class CanonicalReadDtoSet
     {
         if (m.IsImplicitlyDeclared) return true;
         if (m is IMethodSymbol { MethodKind: MethodKind.ExplicitInterfaceImplementation }) return false;
+        // Same for an event: `private` on the symbol, subscribable by anyone holding the interface,
+        // and abstract on the interface so the AllInterfaces scan below misses it too.
+        if (m is IEventSymbol { ExplicitInterfaceImplementations.IsEmpty: false }) return false;
         if (m.DeclaredAccessibility != Accessibility.Public) return true;
         return m switch
         {
@@ -264,6 +281,28 @@ public sealed class CanonicalReadDtoSet
             _ => false
         };
     }
+
+    /// <summary>
+    /// A public instance indexer — not an inventory path, so excluded from <see cref="IsCarriedData"/>,
+    /// but counted for the caller that charges indexers (<c>countIndexersAsData</c>).
+    /// </summary>
+    internal static bool IsPublishedIndexer(ISymbol m) =>
+        m is IPropertySymbol
+        {
+            IsStatic: false, Parameters.Length: > 0,
+            DeclaredAccessibility: Accessibility.Public, GetMethod: not null
+        };
+
+    /// <summary>The analysed assemblies, so every <see cref="IsDataCarrier"/> caller draws one boundary.</summary>
+    public static HashSet<string> AnalyzedAssemblies(IEnumerable<ClassifiedType> classified) =>
+        new(classified.Select(c => c.Type.ContainingAssembly?.Name).OfType<string>(), StringComparer.Ordinal);
+
+    /// <summary>
+    /// The boundary, by assembly membership rather than <c>IsInSource</c>: a project referenced as a
+    /// compiled DLL has no source location and is still in the set. Same definition the classifier uses.
+    /// </summary>
+    private static bool IsInAnalyzedSolution(ISymbol t, HashSet<string> analyzedAssemblies) =>
+        t.ContainingAssembly?.Name is { } name && analyzedAssemblies.Contains(name);
 
     /// <summary>Whether the name is the settings DTO by convention (<c>*SettingsInfo</c>).</summary>
     public static bool IsSettingsDtoName(string name) =>

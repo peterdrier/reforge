@@ -30,8 +30,8 @@ public class SectionShapeAnalyzerTests
         Assert.True(camp.Facts.RepoBacked);
         Assert.Contains("ICampRepository", camp.OwnedRepositoryInterfaces);
         // Declared in SampleSolution.Camp.Contracts — folded into this section.
-        Assert.Contains("ICampServiceRead", camp.ReadServiceInterfaces);
-        Assert.Contains("ICampSectionService", camp.FullServiceInterfaces);
+        Assert.Contains(camp.ReadServiceInterfaces, i => i.Name == "ICampServiceRead");
+        Assert.Contains(camp.FullServiceInterfaces, i => i.Name == "ICampSectionService");
         Assert.Equal("CampInfo", camp.PrimaryInfoDto!.Display.Split('.').Last());
         Assert.Equal("CampSettingsInfo", camp.SettingsInfoDto!.Display.Split('.').Last());
         // recursive path inventory present on the primary anchor

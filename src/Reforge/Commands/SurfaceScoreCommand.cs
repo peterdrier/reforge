@@ -294,6 +294,13 @@ public static class SurfaceScoreCommand
             }
         }
 
+        var writeSurfaceLines = PublicWriteSurfaceLines(report, groupFilter, markdown: false).ToList();
+        if (writeSurfaceLines.Count > 0)
+        {
+            Console.WriteLine();
+            foreach (var line in writeSurfaceLines) Console.WriteLine(line);
+        }
+
         var orderedGroups = FilterAndOrderGroups(report, groupFilter);
         if (orderedGroups.Count == 0)
         {
@@ -407,6 +414,12 @@ public static class SurfaceScoreCommand
                     sb.AppendLine(line);
                 sb.AppendLine("```");
             }
+            sb.AppendLine();
+        }
+
+        foreach (var line in PublicWriteSurfaceLines(report, groupFilter, markdown: true))
+        {
+            sb.AppendLine(line);
             sb.AppendLine();
         }
 
@@ -656,6 +669,7 @@ public static class SurfaceScoreCommand
             // Scoped like byRule below: with --group set, the solution-wide corpus would read as
             // the section's. `scope` says which one this is.
             metrics = MetricsJson(ScopedMetrics(report, filteredGroups, groupFilter)),
+            publicWriteSurface = PublicWriteSurfaceJson(report, groupFilter),
             build = new
             {
                 degraded = report.BuildHealth.Degraded,
@@ -723,6 +737,62 @@ public static class SurfaceScoreCommand
         };
 
         Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
+    }
+
+    // ----------------------- Public write surface (reported, never scored) -----------------------
+
+    /// <summary>
+    /// Publishing sections out of all sections. Keyed off <see cref="AllSections"/>, not the scored
+    /// groups: a section whose published interface charges nothing has no group at all, and that is
+    /// the case most worth seeing.
+    /// </summary>
+    private static (int Sections, string[] Publishing, int Interfaces) PublicWriteSurface(
+        ScoreReport report, string? groupFilter)
+    {
+        var sections = groupFilter is null
+            ? AllSections(report).Select(s => s.Name).ToList()
+            : new List<string> { groupFilter };
+
+        var publishing = sections
+            .Where(s => report.PublicWriteSurface.TryGetValue(s, out var p) && p.Count > 0)
+            .OrderBy(s => s, StringComparer.Ordinal)
+            .ToArray();
+
+        return (sections.Count, publishing, publishing.Sum(s => report.PublicWriteSurface[s].Count));
+    }
+
+    private static string[] Published(ScoreReport report, string section) =>
+        report.PublicWriteSurface.TryGetValue(section, out var published)
+            ? published.OrderBy(n => n, StringComparer.Ordinal).ToArray()
+            : Array.Empty<string>();
+
+    private static object PublicWriteSurfaceJson(ScoreReport report, string? groupFilter)
+    {
+        var (sections, publishing, interfaces) = PublicWriteSurface(report, groupFilter);
+        return new
+        {
+            sections,
+            publishingSections = publishing.Length,
+            interfaces,
+            bySection = publishing.ToDictionary(s => s, s => Published(report, s), StringComparer.Ordinal)
+        };
+    }
+
+    /// <summary>
+    /// The block for the two text formats. The summary line is emitted even at zero — a reader who
+    /// sees nothing cannot tell a measured zero from a report that predates the metric.
+    /// </summary>
+    private static IEnumerable<string> PublicWriteSurfaceLines(ScoreReport report, string? groupFilter, bool markdown)
+    {
+        var (sections, publishing, interfaces) = PublicWriteSurface(report, groupFilter);
+
+        yield return markdown
+            ? $"## publicWriteSurface — {publishing.Length} of {sections} sections publish write capability ({interfaces} interfaces, reported and unscored)"
+            : $"publicWriteSurface (reported, unscored): {publishing.Length}/{sections} sections, {interfaces} interfaces";
+        foreach (var section in publishing)
+            yield return markdown
+                ? $"- `{section}`: {string.Join(", ", Published(report, section).Select(n => $"`{n}`"))}"
+                : $"  {section}: {string.Join(", ", Published(report, section))}";
     }
 
     // ----------------------- Metrics -----------------------

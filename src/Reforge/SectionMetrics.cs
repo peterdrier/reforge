@@ -140,7 +140,7 @@ public static class SectionMetricsAnalyzer
         foreach (var reference in c.Type.DeclaringSyntaxReferences)
         {
             var path = reference.SyntaxTree.FilePath;
-            if (IsGeneratedFile(path)) continue;
+            if (GeneratedCode.IsGeneratedFile(path)) continue;
             anyDeclaration = true;
 
             if (!string.IsNullOrEmpty(path))
@@ -177,7 +177,7 @@ public static class SectionMetricsAnalyzer
 
             var syntax = MethodSyntax(m, ct);
             if (syntax is null) continue;
-            if (IsGeneratedFile(syntax.SyntaxTree.FilePath)) continue;
+            if (GeneratedCode.IsGeneratedFile(syntax.SyntaxTree.FilePath)) continue;
             if (syntax.Body is null && syntax.ExpressionBody is null) continue;
 
             methods.Add(new MethodFact(
@@ -240,21 +240,6 @@ public static class SectionMetricsAnalyzer
         foreach (var line in tree.GetText(ct).Lines)
             if (!string.IsNullOrWhiteSpace(line.ToString())) n++;
         return n;
-    }
-
-    /// <summary>
-    /// Same exclusion the internal-complexity pass applies, kept in step with it deliberately:
-    /// a metric that counted code the axis refuses to score would report growth the score cannot
-    /// explain.
-    /// </summary>
-    private static bool IsGeneratedFile(string file)
-    {
-        if (string.IsNullOrEmpty(file)) return false;
-        var f = file.Replace('\\', '/');
-        return f.Contains("/Migrations/", StringComparison.OrdinalIgnoreCase)
-            || f.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase)
-            || f.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)
-            || f.EndsWith(".generated.cs", StringComparison.OrdinalIgnoreCase);
     }
 
     // ---------------- Accumulation ----------------

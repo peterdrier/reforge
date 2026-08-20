@@ -40,14 +40,23 @@ public sealed partial class SurfaceScoreEngine
             // Generated code (EF migrations, *.g.cs/*.Designer.cs) is not developer-controlled
             // implementation complexity — counting its huge Up()/Down() methods would swamp the
             // internal axis with noise that's also stable across commits (useless to the gate).
-            if (IsGeneratedFile(c.File)) continue;
+            //
+            // Per declaration, not once from the primary file: a partial type spans files, which one
+            // is primary is Roslyn's declaration order, and filtering on it charged the generated
+            // half or skipped the handwritten one depending on that order. Matches SectionMetrics.
+            var handwritten = HandwrittenDeclarations(c.Type, ct);
+            if (handwritten.Count == 0) continue;
 
             if (largeW != 0 && IsSizeTrackedClass(c))
             {
-                int classLoc = ClassNonBlankLines(c.Type, ct);
+                int classLoc = handwritten.Sum(ImplementationComplexity.NonBlankLines);
                 int pts = ImplementationComplexity.LargeClassPoints(classLoc) * largeW;
                 if (pts != 0)
-                    AddEntry(report, c.Group, "largeClass", pts, c.Type, c.File, c.Line, $"{c.Type.Name} ({classLoc} LOC)");
+                {
+                    // Name a handwritten declaration: the charge is for that half.
+                    var (classFile, classLine) = LocateDeclaration(handwritten[0], c);
+                    AddEntry(report, c.Group, "largeClass", pts, c.Type, classFile, classLine, $"{c.Type.Name} ({classLoc} LOC)");
+                }
             }
 
             foreach (var member in c.Type.GetMembers())
@@ -60,8 +69,9 @@ public sealed partial class SurfaceScoreEngine
                 var syntax = GetMethodSyntax(m, ct);
                 if (syntax is null) continue;
 
-                var loc = m.Locations.FirstOrDefault(l => l.IsInSource);
-                var (file, line) = LocateMember(loc, c);
+                // Locate on the declaration that scored. For a partial method the symbol's own
+                // location is the defining part, which may be the generated half.
+                var (file, line) = LocateDeclaration(syntax, c);
 
                 // Size + cognitive complexity apply to every method (private god methods are
                 // exactly how complexity hides behind a shrunken public surface).
@@ -200,38 +210,51 @@ public sealed partial class SurfaceScoreEngine
         }
     }
 
-    private static bool IsGeneratedFile(string file)
-    {
-        if (string.IsNullOrEmpty(file)) return false;
-        var f = file.Replace('\\', '/');
-        return f.Contains("/Migrations/", StringComparison.OrdinalIgnoreCase)
-            || f.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase)
-            || f.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)
-            || f.EndsWith(".generated.cs", StringComparison.OrdinalIgnoreCase);
-    }
-
     private static bool IsSizeTrackedClass(ClassifiedType c)
         => c.Tags.Contains("applicationService")
         || c.Tags.Contains("repositoryImplementation")
         || c.Tags.Contains("controller")
         || c.Tags.Contains("backgroundJob");
 
-    private int ClassNonBlankLines(INamedTypeSymbol type, CancellationToken ct)
+    /// <summary>Declarations in files a developer wrote. Empty only when every declaration is generated.</summary>
+    private static List<Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax> HandwrittenDeclarations(
+        INamedTypeSymbol type, CancellationToken ct)
     {
-        int total = 0;
+        var declarations = new List<Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax>();
         foreach (var r in type.DeclaringSyntaxReferences)
         {
+            if (GeneratedCode.IsGeneratedFile(r.SyntaxTree.FilePath)) continue;
             if (r.GetSyntax(ct) is Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax tds)
-                total += ImplementationComplexity.NonBlankLines(tds);
+                declarations.Add(tds);
         }
-        return total;
+        return declarations;
     }
 
+    private (string File, int Line) LocateDeclaration(SyntaxNode declaration, ClassifiedType fallback)
+    {
+        var identifier = declaration switch
+        {
+            Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax tds => tds.Identifier.GetLocation(),
+            Microsoft.CodeAnalysis.CSharp.Syntax.MethodDeclarationSyntax mds => mds.Identifier.GetLocation(),
+            _ => declaration.GetLocation()
+        };
+        return LocateMember(identifier, fallback);
+    }
+
+    /// <summary>
+    /// The first declaration in a handwritten file; null when the method is only generated. Resolves
+    /// <c>PartialImplementationPart</c> first, as <c>SectionMetricsAnalyzer</c> does: for a partial
+    /// method <c>GetMembers</c> hands back the defining part, whose declaration may be the generated
+    /// half while the body a developer wrote lives in the other one.
+    /// </summary>
     private static Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax? GetMethodSyntax(IMethodSymbol m, CancellationToken ct)
     {
-        foreach (var r in m.DeclaringSyntaxReferences)
+        foreach (var r in (m.PartialImplementationPart ?? m).DeclaringSyntaxReferences)
+        {
+            if (GeneratedCode.IsGeneratedFile(r.SyntaxTree.FilePath)) continue;
             if (r.GetSyntax(ct) is Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax bm)
                 return bm;
+        }
         return null;
     }
 

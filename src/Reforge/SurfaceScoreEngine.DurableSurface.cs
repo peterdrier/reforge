@@ -30,7 +30,14 @@ public sealed partial class SurfaceScoreEngine
             if (c.Tags.Contains("readServiceInterface"))
                 ScoreInterfaceMethods(c, "readServiceInterfaceMethod", report);
             else if (c.Tags.Contains("fullServiceInterface"))
+            {
+                // Reported, not scored — the population is exactly the one charged below.
+                if (!report.PublicWriteSurface.TryGetValue(c.Group, out var published))
+                    report.PublicWriteSurface[c.Group] = published = new List<string>();
+                published.Add(c.Type.Name);
+
                 ScoreInterfaceMethods(c, "fullServiceInterfaceMethod", report);
+            }
             else if (c.Tags.Contains("repositoryInterface"))
             {
                 AddEntry(report, c.Group, "newRepositoryInterface",
@@ -120,21 +127,6 @@ public sealed partial class SurfaceScoreEngine
         t.ContainingAssembly?.Name is { } name && analyzedAssemblies.Contains(name);
 
     /// <summary>
-    /// A public instance indexer. <see cref="CanonicalReadDtoSet.IsCarriedData"/> excludes these on
-    /// purpose — an indexer is not a nameable fact, so it cannot become an inventory path — but
-    /// <see cref="ScoreDtoSurface"/> does charge indexers as published properties, and a type whose
-    /// only properties are indexers would otherwise be scored as nothing at all: not a data carrier,
-    /// so no <c>publicDtoType</c>, and never reached, so no per-indexer charge either. Counting it
-    /// here keeps the predicate and the scorer describing the same set.
-    /// </summary>
-    private static bool IsPublishedIndexer(ISymbol m) =>
-        m is IPropertySymbol
-        {
-            IsStatic: false, Parameters.Length: > 0,
-            DeclaredAccessibility: Accessibility.Public, GetMethod: not null
-        };
-
-    /// <summary>
     /// Identity of a published property for de-duplication across a base chain: its name plus, for
     /// an indexer, its parameter types. A derived declaration shadowing or overriding a base one
     /// collapses; two indexer overloads do not.
@@ -198,49 +190,13 @@ public sealed partial class SurfaceScoreEngine
     /// <see cref="CanonicalReadDtoSet.IsInvisibleToConsumers"/> are the shared answer.
     /// </para>
     /// <para>
-    /// The one deliberate difference from <see cref="CanonicalReadDtoSet.IsDataCarrier"/>: this walk
-    /// <b>stops at the solution boundary</b>. Letting it climb into framework bases measured +5
-    /// points on Humans, all of it one EF migration class — <c>ExpenseLineProofRows : Migration</c> —
-    /// admitted as published DTO surface because EF's <c>Migration</c> base declares public
-    /// properties. A framework base's members are not this section's surface to withdraw. That the
-    /// other predicate has no such stop is filed as its own issue rather than changed from here.
+    /// <c>countIndexersAsData</c> is the one difference from the shared predicate: an indexer is not
+    /// a nameable inventory path, but <see cref="ScoreDtoSurface"/> charges indexers, so a type whose
+    /// only properties are indexers would otherwise score nothing at all.
     /// </para>
     /// </remarks>
     private static bool LooksLikeDataCarrier(INamedTypeSymbol type, HashSet<string> analyzedAssemblies)
-    {
-        if (type.IsStatic) return false;
-        if (type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
-
-        int props = 0;
-        for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
-        {
-            if (!ReferenceEquals(t, type))
-            {
-                // Object and ValueType carry universal members rather than a published API choice.
-                if (t.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType) break;
-                if (!IsInAnalyzedSolution(t, analyzedAssemblies)) break;
-            }
-
-            foreach (var m in t.GetMembers())
-            {
-                if (CanonicalReadDtoSet.IsCarriedData(m) || IsPublishedIndexer(m)) { props++; continue; }
-                if (CanonicalReadDtoSet.IsInvisibleToConsumers(m)) continue;
-                return false;
-            }
-        }
-
-        // A default interface method is behaviour the type never declares anywhere, so no walk over
-        // declarations can see it. Only NON-abstract members count: an abstract one is either
-        // implemented on the type (judged above) or unimplementable, and every record implements
-        // IEquatable<T>, so counting abstract interface members would disqualify every record.
-        foreach (var iface in type.AllInterfaces)
-            foreach (var m in iface.GetMembers())
-                if (m is { IsAbstract: false, IsStatic: false, DeclaredAccessibility: Accessibility.Public }
-                    and (IMethodSymbol or IEventSymbol))
-                    return false;
-
-        return props >= 1;
-    }
+        => CanonicalReadDtoSet.IsDataCarrier(type, analyzedAssemblies, countIndexersAsData: true);
 
     private void ScoreInterfaceMethods(ClassifiedType c, string ruleKey, ScoreReport report)
     {
