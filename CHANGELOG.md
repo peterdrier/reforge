@@ -4,6 +4,13 @@ What changed and why. Newest first.
 
 ## Unreleased - Populations named: exported interfaces, published write surface
 
+- **Self-score on every PR** (CI). `.github/workflows/self-score.yml` scores `Reforge.slnx` at the
+  merge base and at the head, both with the PR's own build so the delta is the code and not the
+  rules, and posts one edited-in-place comment: score axes, corpus size and complexity, test corpus,
+  and the rules that moved. Solution totals only — Reforge is one section. Size and complexity rows
+  print whether or not they moved; a metrics table that disappears when nothing changed reads the
+  same as a broken pass.
+
 - **Test mass per section** (#37, #36). Every group now reports `tests`: `loc`, `files`, `projects`,
   and test LOC as a percentage of the section's production LOC. A test project is attributed to the
   section its non-test project references name — never to its own name, so `X.Tests` and

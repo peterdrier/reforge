@@ -1,0 +1,126 @@
+name: Self-score
+
+# Dogfooding with a delta. ci.yml already scores Reforge.slnx on every push, which proves the tool
+# can open its own workspace — but a change that moves the tool's own score by hundreds of points
+# passes that step silently, because nothing compares the number to anything.
+#
+# Solution totals only, no per-section breakdown: Reforge is a single section, so section columns
+# would repeat these numbers under another heading.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: self-score-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  score:
+    name: Score this PR
+    runs-on: ubuntu-latest
+
+    steps:
+      # The head commit itself, not the pull_request event's default merge ref: the report names two
+      # commits, and both have to be commits that exist in the history a reader can look at.
+      # fetch-depth 0 for the merge base below.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build Reforge.slnx --configuration Release
+
+      # The merge base, not the base branch tip. Scoring against the tip would fold every commit
+      # that landed on main since this branch forked into "what this PR did".
+      - name: Resolve base
+        id: base
+        run: |
+          # workflow_dispatch carries no pull_request payload, so fall back to the default branch.
+          base_ref="${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}"
+          base=$(git merge-base "origin/$base_ref" HEAD)
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+          git worktree add /tmp/base-tree "$base"
+          # Restore, not build. MSBuildWorkspace compiles from source; what it cannot do without a
+          # restore is resolve the package references, and an unresolved reference degrades the
+          # workspace and fails the score below.
+          dotnet restore /tmp/base-tree/Reforge.slnx
+
+      # Both trees are scored with the binary built from THIS PR. Holding the scorer constant is
+      # what makes the delta attributable to the code: with each tree scored by its own build, a PR
+      # that changes a rule weight and a PR that adds a long method are indistinguishable in the
+      # output.
+      #
+      # `dotnet <dll>` rather than `dotnet run` for the reason ci.yml documents: dotnet run exports
+      # MSBuild's own environment and MSBuildLocator then resolves against the hosting build.
+      #
+      # No --allow-degraded on either call. A degraded workspace scores a partial corpus, and a
+      # partial corpus compared against a whole one is a fabricated delta, so the step should fail.
+      - name: Score head
+        timeout-minutes: 5
+        run: >
+          dotnet src/Reforge/bin/Release/net10.0/Reforge.dll
+          surface-score --solution Reforge.slnx --format json > /tmp/head.json
+
+      - name: Score base
+        timeout-minutes: 5
+        run: >
+          dotnet src/Reforge/bin/Release/net10.0/Reforge.dll
+          surface-score --solution /tmp/base-tree/Reforge.slnx --format json > /tmp/base.json
+
+      - name: Render report
+        run: |
+          python3 scripts/self-score-report.py \
+            /tmp/base.json /tmp/head.json \
+            "${{ steps.base.outputs.sha }}" "${{ github.event.pull_request.head.sha || github.sha }}" \
+            > /tmp/report.md
+          cat /tmp/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      # The job summary above is the report; this puts it where a reviewer reads. Skipped for a
+      # fork PR, whose pull_request token is read-only by GitHub's design — the summary still
+      # renders, so the numbers are never lost, and the step does not fail red for lacking a
+      # permission it was never going to be given.
+      - name: Comment on the PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/report.md', 'utf8');
+            const marker = '<!-- reforge-self-score -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            // One comment per PR, edited in place. A new comment per push buries the review
+            // thread under a scoreboard.
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-score
+          path: |
+            /tmp/report.md
+            /tmp/base.json
+            /tmp/head.json
+          if-no-files-found: warn
