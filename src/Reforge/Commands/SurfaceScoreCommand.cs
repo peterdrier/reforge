@@ -742,18 +742,10 @@ public static class SurfaceScoreCommand
     // ----------------------- Public write surface (reported, never scored) -----------------------
 
     /// <summary>
-    /// What each section publishes that another assembly can call to change state, plus how many
-    /// sections that is out of how many exist.
+    /// Publishing sections out of all sections. Keyed off <see cref="AllSections"/>, not the scored
+    /// groups: a section whose published interface charges nothing has no group at all, and that is
+    /// the case most worth seeing.
     /// </summary>
-    /// <remarks>
-    /// Keyed by section from <see cref="AllSections"/> rather than attached to a
-    /// <see cref="GroupScore"/>. A section publishing an interface that charges nothing — no
-    /// chargeable methods, or <c>fullServiceInterfaceMethod</c> weighted to zero — has no group at
-    /// all, since <c>AddEntry</c> drops zero-point entries, and both text writers return early when
-    /// the group list is empty. Hanging an unscored metric off the scored structure would hide it in
-    /// exactly the case it is most worth seeing: a section that publishes write capability and pays
-    /// nothing for it.
-    /// </remarks>
     private static (int Sections, string[] Publishing, int Interfaces) PublicWriteSurface(
         ScoreReport report, string? groupFilter)
     {
@@ -786,7 +778,6 @@ public static class SurfaceScoreCommand
         };
     }
 
-    /// <summary>The same block for the two text formats, or nothing when no section publishes.</summary>
     private static IEnumerable<string> PublicWriteSurfaceLines(ScoreReport report, string? groupFilter, bool markdown)
     {
         var (sections, publishing, interfaces) = PublicWriteSurface(report, groupFilter);

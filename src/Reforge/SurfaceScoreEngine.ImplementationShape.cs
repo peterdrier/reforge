@@ -41,13 +41,9 @@ public sealed partial class SurfaceScoreEngine
             // implementation complexity — counting its huge Up()/Down() methods would swamp the
             // internal axis with noise that's also stable across commits (useless to the gate).
             //
-            // Decided per declaration, not once from the classifier's primary file. A partial type
-            // is one symbol spanning several files, so a handwritten class with a generated
-            // .Designer.cs half has one of each, and which one is primary is Roslyn's declaration
-            // order rather than a fact about the code: filtering on it charged the generated half's
-            // LOC and methods whenever the handwritten file came first, and skipped the handwritten
-            // half whenever it didn't. Same treatment SectionMetricsAnalyzer.Measure applies, so
-            // the metrics block and the axis describe the same corpus.
+            // Per declaration, not once from the primary file: a partial type spans files, which one
+            // is primary is Roslyn's declaration order, and filtering on it charged the generated
+            // half or skipped the handwritten one depending on that order. Matches SectionMetrics.
             var handwritten = HandwrittenDeclarations(c.Type, ct);
             if (handwritten.Count == 0) continue;
 
@@ -57,9 +53,7 @@ public sealed partial class SurfaceScoreEngine
                 int pts = ImplementationComplexity.LargeClassPoints(classLoc) * largeW;
                 if (pts != 0)
                 {
-                    // Point at a declaration that survived the filter: with a generated primary
-                    // file the charge is for the handwritten half, and naming the generated file
-                    // sends an agent to code it must not edit.
+                    // Name a handwritten declaration: the charge is for that half.
                     var (classFile, classLine) = LocateDeclaration(handwritten[0], c);
                     AddEntry(report, c.Group, "largeClass", pts, c.Type, classFile, classLine, $"{c.Type.Name} ({classLoc} LOC)");
                 }
@@ -75,8 +69,7 @@ public sealed partial class SurfaceScoreEngine
                 var syntax = GetMethodSyntax(m, ct);
                 if (syntax is null) continue;
 
-                // Same per-declaration rule as the type: a method whose only declaration is
-                // generated scores nothing even when the type's other half is handwritten.
+                // Locate on the declaration that scored, not whichever location comes first.
                 var loc = m.Locations.FirstOrDefault(l => l.IsInSource && l.SourceTree == syntax.SyntaxTree)
                        ?? m.Locations.FirstOrDefault(l => l.IsInSource);
                 var (file, line) = LocateMember(loc, c);
@@ -224,10 +217,7 @@ public sealed partial class SurfaceScoreEngine
         || c.Tags.Contains("controller")
         || c.Tags.Contains("backgroundJob");
 
-    /// <summary>
-    /// The type's declarations that live in files a developer wrote. Empty when every declaration
-    /// is generated, which is the one case where the whole type is skipped.
-    /// </summary>
+    /// <summary>Declarations in files a developer wrote. Empty only when every declaration is generated.</summary>
     private static List<Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax> HandwrittenDeclarations(
         INamedTypeSymbol type, CancellationToken ct)
     {
@@ -249,10 +239,7 @@ public sealed partial class SurfaceScoreEngine
         return LocateMember(identifier, fallback);
     }
 
-    /// <summary>
-    /// The declaration whose body is scored: the first one in a file a developer wrote. Null when
-    /// the method is declared only in generated code.
-    /// </summary>
+    /// <summary>The first declaration in a handwritten file; null when the method is only generated.</summary>
     private static Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax? GetMethodSyntax(IMethodSymbol m, CancellationToken ct)
     {
         foreach (var r in m.DeclaringSyntaxReferences)

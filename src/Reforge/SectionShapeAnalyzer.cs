@@ -16,18 +16,10 @@ public sealed record InterfaceAnchor(string Display, string Section, string Role
 public sealed record ShardAnchor(string Name, string Purpose, IReadOnlyList<string> Methods);
 
 /// <summary>
-/// One service interface in a section's shape, carrying whether its declaring assembly
-/// <b>exports</b> it.
+/// One service interface in a section's shape. <c>Exported</c> marks the population: the scoring
+/// passes charge exported types only, while this view lists every classified interface, and the two
+/// counts are not interchangeable (93 listed against 47 charged on Humans).
 /// </summary>
-/// <remarks>
-/// The flag is the population marker, and it is load-bearing rather than decorative. The scoring
-/// passes charge exported types only (an internal interface is unreachable from another section,
-/// so no consumer can be broken by changing it), while this view lists every classified interface
-/// because an internal full-service interface is still a real fact about the section's shape. Both
-/// are right, and while the two counts were bare strings nothing in the output said they were
-/// different sets: a measurement taken off this list read 93 write interfaces where the engine
-/// charges 47, and recommended a per-interface charge on the strength of it.
-/// </remarks>
 public sealed record ServiceInterfaceListing(string Name, bool Exported);
 
 /// <summary>

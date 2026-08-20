@@ -31,9 +31,7 @@ public sealed partial class SurfaceScoreEngine
                 ScoreInterfaceMethods(c, "readServiceInterfaceMethod", report);
             else if (c.Tags.Contains("fullServiceInterface"))
             {
-                // Reported, not scored: this section publishes write capability. Recorded here
-                // rather than re-derived from the classified set, so the population is exactly the
-                // one charged below — see ScoreReport.PublicWriteSurface.
+                // Reported, not scored — the population is exactly the one charged below.
                 if (!report.PublicWriteSurface.TryGetValue(c.Group, out var published))
                     report.PublicWriteSurface[c.Group] = published = new List<string>();
                 published.Add(c.Type.Name);
@@ -192,12 +190,9 @@ public sealed partial class SurfaceScoreEngine
     /// <see cref="CanonicalReadDtoSet.IsInvisibleToConsumers"/> are the shared answer.
     /// </para>
     /// <para>
-    /// One deliberate difference from the shared predicate, passed as <c>countIndexersAsData</c>:
-    /// an indexer counts as carried data here. <see cref="CanonicalReadDtoSet.IsCarriedData"/>
-    /// excludes it because an indexer is not a nameable inventory path, but
-    /// <see cref="ScoreDtoSurface"/> charges indexers as published properties, and a type whose only
-    /// properties are indexers would otherwise score nothing at all: not a data carrier, so no
-    /// <c>publicDtoType</c>, and never reached, so no per-indexer charge either.
+    /// <c>countIndexersAsData</c> is the one difference from the shared predicate: an indexer is not
+    /// a nameable inventory path, but <see cref="ScoreDtoSurface"/> charges indexers, so a type whose
+    /// only properties are indexers would otherwise score nothing at all.
     /// </para>
     /// </remarks>
     private static bool LooksLikeDataCarrier(INamedTypeSymbol type, HashSet<string> analyzedAssemblies)

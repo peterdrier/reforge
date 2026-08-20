@@ -205,14 +205,10 @@ public sealed class CanonicalReadDtoSet
         // hands a consumer Add/Remove/Insert. System.Object and System.ValueType stop it: their
         // members are universal rather than a published API choice.
         //
-        // Past the solution boundary the two halves of the question separate, and conflating them
-        // was a defect in both directions. BEHAVIOUR counts wherever it is declared: a consumer can
-        // call the base's methods on this type, so `SearchHit : List<int>` is not a data carrier no
-        // matter whose assembly List lives in. DATA does not: a framework base's properties are not
-        // this section's published shape, and counting them admitted `ExpenseLineProofRows :
-        // Migration` — an EF migration whose own Up/Down are protected — as a read DTO on the
-        // strength of EF's TargetModel/UpOperations/DownOperations. Stopping the walk at the
-        // boundary fixes the migration and loses SearchHit; splitting the two keeps both.
+        // Past the solution boundary the two halves separate. BEHAVIOUR counts wherever declared —
+        // a consumer can call the base's methods on this type. DATA does not: a framework base's
+        // properties are not this section's published shape, and counting them read an EF migration
+        // as a DTO. Stopping the walk instead loses SearchHit; splitting the two keeps both.
         int props = 0;
         for (INamedTypeSymbol? current = t; current is not null; current = current.BaseType)
         {
@@ -263,11 +259,8 @@ public sealed class CanonicalReadDtoSet
     {
         if (m.IsImplicitlyDeclared) return true;
         if (m is IMethodSymbol { MethodKind: MethodKind.ExplicitInterfaceImplementation }) return false;
-        // Same reasoning for an event: Roslyn reports an explicit implementation as `private`, so
-        // the accessibility line below read it as unreachable, while anyone holding the interface
-        // can subscribe. The AllInterfaces scan does not catch it either — the interface's own
-        // declaration is abstract, and that scan counts only non-abstract members — so the shape
-        // was missed from both directions.
+        // Same for an event: `private` on the symbol, subscribable by anyone holding the interface,
+        // and abstract on the interface so the AllInterfaces scan below misses it too.
         if (m is IEventSymbol { ExplicitInterfaceImplementations.IsEmpty: false }) return false;
         if (m.DeclaredAccessibility != Accessibility.Public) return true;
         return m switch
@@ -290,12 +283,8 @@ public sealed class CanonicalReadDtoSet
     }
 
     /// <summary>
-    /// A public instance indexer. <see cref="IsCarriedData"/> excludes these on purpose — an indexer
-    /// is not a nameable fact, so it cannot become an inventory path — but the DTO scorer charges
-    /// them as published properties, and a type whose only properties are indexers would otherwise
-    /// score as nothing at all: not a data carrier, so no <c>publicDtoType</c>, and never reached,
-    /// so no per-indexer charge either. Counted only for the caller that charges them, via
-    /// <c>countIndexersAsData</c>.
+    /// A public instance indexer — not an inventory path, so excluded from <see cref="IsCarriedData"/>,
+    /// but counted for the caller that charges indexers (<c>countIndexersAsData</c>).
     /// </summary>
     internal static bool IsPublishedIndexer(ISymbol m) =>
         m is IPropertySymbol
@@ -304,18 +293,13 @@ public sealed class CanonicalReadDtoSet
             DeclaredAccessibility: Accessibility.Public, GetMethod: not null
         };
 
-    /// <summary>
-    /// The assemblies the run analysed, read off the classified corpus. One derivation, so every
-    /// caller of <see cref="IsDataCarrier"/> draws the boundary in the same place.
-    /// </summary>
+    /// <summary>The analysed assemblies, so every <see cref="IsDataCarrier"/> caller draws one boundary.</summary>
     public static HashSet<string> AnalyzedAssemblies(IEnumerable<ClassifiedType> classified) =>
         new(classified.Select(c => c.Type.ContainingAssembly?.Name).OfType<string>(), StringComparer.Ordinal);
 
     /// <summary>
-    /// The solution boundary, by <b>assembly membership</b> rather than <c>Location.IsInSource</c>.
-    /// The two agree only for the common project layout: a project referenced as a compiled DLL
-    /// arrives as a metadata symbol with no source location while its assembly is very much part of
-    /// the analysed set. Same definition <see cref="SolutionClassifier"/> uses.
+    /// The boundary, by assembly membership rather than <c>IsInSource</c>: a project referenced as a
+    /// compiled DLL has no source location and is still in the set. Same definition the classifier uses.
     /// </summary>
     private static bool IsInAnalyzedSolution(ISymbol t, HashSet<string> analyzedAssemblies) =>
         t.ContainingAssembly?.Name is { } name && analyzedAssemblies.Contains(name);

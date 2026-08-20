@@ -159,9 +159,7 @@ public static class SectionShapeCommand
         Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
 
         static object? Dto(DtoAnchor? a) => a is null ? null : new { display = a.Display, paths = a.Paths };
-        // `exported` says which population an entry belongs to: the scoring passes charge exported
-        // types only, so a consumer counting write surface off this array has to filter, and until
-        // the flag was here nothing told it so.
+        // `exported` names the population: the scoring passes charge exported types only.
         static object Iface(ServiceInterfaceListing i) => new { name = i.Name, exported = i.Exported };
         static object Use(CrossSectionUse u) => new { caller = u.Caller, dependency = u.Dependency, dependencySection = u.DependencySection, suggestedReadInterface = u.SuggestedReadInterface, observedCalls = u.ObservedCalls };
     }
@@ -209,8 +207,7 @@ public static class SectionShapeCommand
 
         static string Short(string display) => display.Split('.').Last();
 
-        // An interface its assembly does not export reads with the `internal` keyword in front of
-        // it, which is both what the declaration says and the reason it scores nothing.
+        // `internal` is what the declaration says, and why it scores nothing.
         static string Ifaces(IReadOnlyList<ServiceInterfaceListing> list)
             => string.Join(", ", list.Select(i => i.Exported ? i.Name : $"internal {i.Name}"));
     }
