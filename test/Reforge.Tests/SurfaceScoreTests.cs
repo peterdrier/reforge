@@ -528,6 +528,19 @@ public class SurfaceScoreTests
         Assert.Contains(readOnly, e => e.Symbol == "ReadOnlyGreetingConsumer");
     }
 
+    [Fact]
+    public async Task WriteCapableUsedReadOnly_CountsAPartialClassAsOneConsumer()
+    {
+        // Both fixtures are split across two files, which must not change what they cost.
+        var report = await ScoreDefaultAsync();
+        var readOnly = AllEntries(report).Where(e => e.Rule == "writeCapableInterfaceUsedReadOnly").ToList();
+
+        // Read-only in both halves: charged once, not once per declaration.
+        Assert.Single(readOnly.Where(e => e.Symbol == "PartialReadOnlyGreetingConsumer"));
+        // Write call in the other half: cancels the rule for the whole class, not just that file.
+        Assert.DoesNotContain(readOnly, e => e.Symbol == "SplitWriteGreetingConsumer");
+    }
+
     // ---------------- Internal complexity: dispatcher / read-shape ----------------
 
     [Fact]
