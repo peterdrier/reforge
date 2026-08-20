@@ -136,8 +136,8 @@ public class GreetingQueryService
 }
 
 /// <summary>
-/// BAD god method: deeply nested branching well over the cognitive-complexity threshold and
-/// over the long-method LOC threshold. Expected: longMethod AND cognitiveComplexity fire.
+/// BAD god method: deeply nested branching well over the cognitive-complexity threshold.
+/// Expected: cognitiveComplexity fires.
 /// </summary>
 public class ReportBuilder
 {

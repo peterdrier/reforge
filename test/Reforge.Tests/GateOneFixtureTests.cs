@@ -16,7 +16,7 @@ namespace Reforge.Tests;
 /// drop" mean anything: without the first half, an unchanged copy of the Before file passes the
 /// gate and the rule is recorded as covered forever.</para>
 ///
-/// <para>The spec makes the point that <c>longMethod</c> would have failed this gate on the day it
+/// <para>The spec makes the point that a length rule would have failed this gate on the day it
 /// was written. This file is the executable version of that check, so the next rule to fail it
 /// fails in CI instead of after a year of shipping.</para>
 ///
@@ -60,11 +60,11 @@ public class GateOneFixtureTests
             ["canonicalReadDtoReturn"] =
                 "credit, not a penalty — a cheapest-fix pair does not typecheck as a concept",
 
-            // The spec retires or re-bases all three as part of the internal-axis rework (issue
-            // #19). Writing fixtures for a rule that is being deleted spends the effort twice.
-            ["longMethod"] = "spec retires this rule; folded into the closure-based complexity measure",
+            // The spec retires the LOC basis for this one as part of the internal-axis rework
+            // (issue #19). Writing a fixture for a basis that is being replaced spends the effort
+            // twice. cognitiveComplexity was excused on the same grounds until the re-base landed;
+            // it has a pair now.
             ["largeClass"] = "spec retires the LOC basis; replaced by the cohesion measure",
-            ["cognitiveComplexity"] = "spec re-bases the unit; fixture would pin the basis being replaced",
         };
 
     /// <summary>

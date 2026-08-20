@@ -4,6 +4,21 @@ What changed and why. Newest first.
 
 ## Unreleased - Populations named: exported interfaces, published write surface
 
+- **`cognitiveComplexity` measures the call path, not the declaration; `longMethod` is retired**
+  (#19). A private helper with exactly one caller is billed to that caller, transitively, so
+  splitting a complex method into single-caller parts leaves the number unchanged by construction —
+  the split was free before, and 168 Humans methods charged nothing while carrying up to 182 lines
+  of call path (`StoreWebhookRegistrationService.StartAsync`: 6 declared lines, CC 0 → 30 folded).
+  Only the sole caller folds, so a helper that gains a second real caller drops out and its caller's
+  charge falls; only invocations fold, not method groups, or a Roslyn analyzer's six-line
+  `Initialize` reads as the callbacks it registers.
+- **Length is not charged separately.** Of 388 charged Humans methods, 274 charged on lines only,
+  led by a 241-line EF entity configuration with four branches — long because the domain is wide.
+  Eight charged on complexity alone, so one rule covers what two did, minus the declarative bulk:
+  Humans internal axis **3,038 → 2,530**, total **19,727 → 19,219**, surface untouched. The escape
+  that remains is a manufactured second call site, fixtured as a known-gameable Gate 1 pair rather
+  than left implicit.
+
 - **Self-score on every PR** (CI). `.github/workflows/self-score.yml` scores `Reforge.slnx` at the
   merge base and at the head, both with the PR's own build so the delta is the code and not the
   rules, and posts one edited-in-place comment: score axes, corpus size and complexity, test corpus,

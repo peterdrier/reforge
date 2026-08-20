@@ -276,7 +276,8 @@ public sealed class SurfaceScoreConfig
                 // (cognitive complexity, LOC tiers, dispatcher arm count); default 1 applies
                 // the base points as-is, 0 disables the rule. They are tracked on a separate
                 // scalar (internalComplexityTotal) and are never added into the surface score.
-                ["longMethod"] = 1,
+                // No longMethod key: length is not charged separately from the call-path
+                // complexity it almost entirely duplicated.
                 ["largeClass"] = 1,
                 ["cognitiveComplexity"] = 1,
                 ["actionDispatcher"] = 1,

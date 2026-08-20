@@ -2,30 +2,36 @@ using Microsoft.CodeAnalysis;
 
 namespace Reforge;
 
-// Pass 6 — implementation complexity, the counterweight to surface. Cognitive complexity,
-// size, and the structural dispatcher/flags smells. Every point here lands on the internal
-// axis, never the surface one.
+// Pass 6 — implementation complexity, the counterweight to surface. Call-path cognitive
+// complexity, class size, and the structural dispatcher/flags smells. Every point here lands
+// on the internal axis, never the surface one.
 public sealed partial class SurfaceScoreEngine
 {
     private const int CognitiveThreshold = 15;
 
     /// <summary>
-    /// Scores the implementation hiding behind the surface: per-method cognitive complexity
-    /// and length, per-class size (services/repos/controllers), and the structural
+    /// Scores the implementation hiding behind the surface: per-method cognitive complexity over
+    /// the whole call path, per-class size (services/repos/controllers), and the structural
     /// action-dispatcher / flags smells. Dispatcher and flags penalties apply only to methods
     /// that observably mutate state — a read-shape consolidation on a query is exempt by
     /// behavior, not by parameter naming. All points land on the internal-complexity axis.
+    /// <para>
+    /// There is no separate length rule. Once both size rules measure the same call path they stop
+    /// being independent: on a 112k-line corpus 274 of 388 charged methods charged on lines only,
+    /// and the loudest of those was a 241-line EF entity configuration with four branches — long
+    /// because the domain is wide, not because it is hard. Only 8 charged on complexity alone, so
+    /// complexity is very nearly a subset of what length charged, minus the declarative bulk.
+    /// </para>
     /// </summary>
     private void ScoreImplementationComplexity(List<ClassifiedType> classified, ScoreReport report,
-        CancellationToken ct, HashSet<string> analyzedAssemblies)
+        CancellationToken ct, HashSet<string> analyzedAssemblies, CallPathFold fold)
     {
-        var longW = _config.Weight("longMethod");
         var largeW = _config.Weight("largeClass");
         var cogW = _config.Weight("cognitiveComplexity");
         var dispW = _config.Weight("actionDispatcher");
         var mmpW = _config.Weight("mutationModeParameter");
         var flagsW = _config.Weight("flagsControlFlow");
-        if (longW == 0 && largeW == 0 && cogW == 0 && dispW == 0 && mmpW == 0 && flagsW == 0) return;
+        if (largeW == 0 && cogW == 0 && dispW == 0 && mmpW == 0 && flagsW == 0) return;
 
         // For interface propagation: where does each classified type live, and what file.
         var groupByType = new Dictionary<string, (string Group, string File)>(StringComparer.Ordinal);
@@ -73,31 +79,33 @@ public sealed partial class SurfaceScoreEngine
                 // location is the defining part, which may be the generated half.
                 var (file, line) = LocateDeclaration(syntax, c);
 
-                // Size + cognitive complexity apply to every method (private god methods are
-                // exactly how complexity hides behind a shrunken public surface).
-                if (longW != 0)
-                {
-                    int methodLoc = ImplementationComplexity.NonBlankLines(syntax);
-                    int pts = ImplementationComplexity.LongMethodPoints(methodLoc) * longW;
-                    if (pts != 0)
-                        AddEntry(report, c.Group, "longMethod", pts, m, file, line, $"{m.Name} ({methodLoc} LOC)");
-                }
-
-                if (cogW != 0)
+                // Cognitive complexity applies to every method (private god methods are exactly how
+                // complexity hides behind a shrunken public surface) and is measured over the
+                // method's call path, not its declaration — see CallPathComplexity. A helper whose
+                // complexity was billed to its sole caller is not charged again here.
+                if (cogW != 0 && !fold.WasFoldedAway(m))
                 {
                     var cog = ImplementationComplexity.CognitiveDetail(syntax);
-                    int over = cog.Score - CognitiveThreshold;
+                    var path = fold.For(m, cog.Score, ImplementationComplexity.NonBlankLines(syntax));
+                    int over = path.Score - CognitiveThreshold;
                     if (over > 0)
                     {
                         // Point at the code, not at the signature. When a member's body is one big
                         // delegate the complexity has no name of its own, and reporting the method's
                         // declaration line sends an agent to a line the branching is not on — which
                         // for a tool whose promise is "act on this without a follow-up Read" is the
-                        // wrong answer even when the charge is right.
+                        // wrong answer even when the charge is right. The folded case is the same
+                        // problem one level out: the entry point can be six lines, so name the
+                        // helper carrying the weight.
                         var cogLine = cog.NestedDominates ? cog.NestedLine : line;
-                        var detail = cog.NestedDominates
-                            ? $"{m.Name} (CC {cog.Score}, {cog.NestedScore} in a nested function)"
-                            : $"{m.Name} (CC {cog.Score})";
+                        string detail;
+                        if (path.FoldedMethods > 0 && path.Score > cog.Score)
+                            detail = $"{m.Name} (CC {path.Score} over {path.FoldedMethods + 1} methods, "
+                                + $"{path.FoldedLines} LOC on its call path; {cog.Score} here, most of the rest in {path.TopContributor})";
+                        else if (cog.NestedDominates)
+                            detail = $"{m.Name} (CC {cog.Score}, {cog.NestedScore} in a nested function)";
+                        else
+                            detail = $"{m.Name} (CC {cog.Score})";
                         AddEntry(report, c.Group, "cognitiveComplexity", over * cogW, m, file, cogLine, detail);
                     }
                 }

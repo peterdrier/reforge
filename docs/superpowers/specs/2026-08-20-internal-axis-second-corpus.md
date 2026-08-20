@@ -252,6 +252,21 @@ The residual risk is a 300-line straight-line method charging zero. If that show
 answer is a single high-threshold folded-LOC backstop (one charge above ~180 call-path lines), not
 the graduated per-10-line curve — a curve is what makes the split profitable in the first place.
 
+**Shipped.** `CallPathComplexity` resolves the fold; `longMethod` is gone. Scored on Humans
+(`283510e`, `Humans.Score.slnf`, not degraded): `cognitiveComplexity` 1,619, internal axis
+**2,530**, combined **19,219**, surface unchanged at 16,689 — within 1% of the projection above.
+The engine differs from the probe by excluding DTO data carriers and generated declarations, which
+is the whole of the gap.
+
+The escape the fold leaves is a *manufactured second call site*: route an existing method through
+the helper and it stops folding, both readings fall under the threshold, and the rule stops. It is
+fixtured as `cognitiveComplexity.Before.cs` with the `gate1-gameable` marker, so the harness asserts
+that it pays — the finding is recorded rather than implied. It is narrower than what it replaces: the
+split an agent reaches for first is now free in both directions, and escaping takes a call site a
+reader can see was added for the score. Closing it means not gating on caller count, and both
+alternatives measured worse (a per-helper charge is a size rule at a 59–80% base rate; folding a
+shared helper into each caller counts it twice).
+
 Secondary consequence: the metric becomes non-local — a method's charge depends on its callees, so
 editing a helper moves its caller's score. `largeClass` is unaffected (a class already contains its
 helpers, which is why it is the one size rule the fake split never fooled).
