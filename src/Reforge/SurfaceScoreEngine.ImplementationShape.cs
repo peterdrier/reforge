@@ -69,10 +69,9 @@ public sealed partial class SurfaceScoreEngine
                 var syntax = GetMethodSyntax(m, ct);
                 if (syntax is null) continue;
 
-                // Locate on the declaration that scored, not whichever location comes first.
-                var loc = m.Locations.FirstOrDefault(l => l.IsInSource && l.SourceTree == syntax.SyntaxTree)
-                       ?? m.Locations.FirstOrDefault(l => l.IsInSource);
-                var (file, line) = LocateMember(loc, c);
+                // Locate on the declaration that scored. For a partial method the symbol's own
+                // location is the defining part, which may be the generated half.
+                var (file, line) = LocateDeclaration(syntax, c);
 
                 // Size + cognitive complexity apply to every method (private god methods are
                 // exactly how complexity hides behind a shrunken public surface).
@@ -233,16 +232,24 @@ public sealed partial class SurfaceScoreEngine
 
     private (string File, int Line) LocateDeclaration(SyntaxNode declaration, ClassifiedType fallback)
     {
-        var identifier = declaration is Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax tds
-            ? tds.Identifier.GetLocation()
-            : declaration.GetLocation();
+        var identifier = declaration switch
+        {
+            Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax tds => tds.Identifier.GetLocation(),
+            Microsoft.CodeAnalysis.CSharp.Syntax.MethodDeclarationSyntax mds => mds.Identifier.GetLocation(),
+            _ => declaration.GetLocation()
+        };
         return LocateMember(identifier, fallback);
     }
 
-    /// <summary>The first declaration in a handwritten file; null when the method is only generated.</summary>
+    /// <summary>
+    /// The first declaration in a handwritten file; null when the method is only generated. Resolves
+    /// <c>PartialImplementationPart</c> first, as <c>SectionMetricsAnalyzer</c> does: for a partial
+    /// method <c>GetMembers</c> hands back the defining part, whose declaration may be the generated
+    /// half while the body a developer wrote lives in the other one.
+    /// </summary>
     private static Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax? GetMethodSyntax(IMethodSymbol m, CancellationToken ct)
     {
-        foreach (var r in m.DeclaringSyntaxReferences)
+        foreach (var r in (m.PartialImplementationPart ?? m).DeclaringSyntaxReferences)
         {
             if (GeneratedCode.IsGeneratedFile(r.SyntaxTree.FilePath)) continue;
             if (r.GetSyntax(ct) is Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax bm)

@@ -293,15 +293,18 @@ public class SectionMetricsTests
         // every method symbol that is not an accessor and not compiler-synthesized, whose
         // implementation declaration carries a body. An allowlist of MethodKinds silently dropped
         // constructors, then explicit interface implementations; this pins the whole class.
+        // Generated-ness is per declaration, not per type: a partial type with a generated half
+        // contributes its handwritten methods and not the others, whichever file is primary.
         int expected = classified
-            .Where(c => !c.File.Contains("/Migrations/") && !c.File.EndsWith(".g.cs")
-                        && !c.File.EndsWith(".Designer.cs"))
             .SelectMany(c => c.Type.GetMembers().OfType<Microsoft.CodeAnalysis.IMethodSymbol>())
             .Where(m => m.AssociatedSymbol is null && !m.IsImplicitlyDeclared)
-            .Count(m => (m.PartialImplementationPart ?? m).DeclaringSyntaxReferences
+            .Select(m => (m.PartialImplementationPart ?? m).DeclaringSyntaxReferences
                 .Select(r => r.GetSyntax(CancellationToken.None))
                 .OfType<BaseMethodDeclarationSyntax>()
-                .Any(bm => bm.Body is not null || bm.ExpressionBody is not null));
+                .FirstOrDefault())
+            .Count(bm => bm is not null
+                         && !GeneratedCode.IsGeneratedFile(bm.SyntaxTree.FilePath)
+                         && (bm.Body is not null || bm.ExpressionBody is not null));
 
         Assert.Equal(expected, solution.Methods);
         Assert.Equal(solution.Methods, bySection.Values.Sum(m => m.Methods));

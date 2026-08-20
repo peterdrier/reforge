@@ -12,6 +12,9 @@ public partial class GeneratedPrimaryFixture
 {
     private int GeneratedPrimaryStep(int i) => i + 2;
 
+    // Defining declaration only. GetMembers() returns this symbol; the body is in the other half.
+    private partial int PartialWorkDefinedHere();
+
     private int GeneratedPrimaryWork()
     {
         int total = 0;

@@ -55,6 +55,18 @@ public class GeneratedPartialScoringTests
         Assert.DoesNotContain(entries, e => e.Symbol.Contains("GeneratedPrimaryWork", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task PartialMethod_DefinedInTheGeneratedHalf_IsScoredWhereItsBodyIs()
+    {
+        var entries = await ScoreAsync();
+
+        // GetMembers() hands back the defining part, which lives in the generated file. Filtering its
+        // declarations without resolving PartialImplementationPart first loses the handwritten body.
+        var longMethod = Assert.Single(entries.Where(e =>
+            e.Rule == "longMethod" && e.Symbol.Contains("PartialWorkDefinedHere", StringComparison.Ordinal)));
+        Assert.EndsWith("GeneratedPrimaryFixture.Bb.cs", longMethod.File, StringComparison.OrdinalIgnoreCase);
+    }
+
     private async Task<List<ScoreEntry>> ScoreAsync()
     {
         var cfg = SurfaceScoreConfig.Default();
