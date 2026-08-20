@@ -143,6 +143,85 @@ sections' helpers, which this round did not do.
 Too small and too unambiguous to score — a `reforge dead-private` diagnostic at most, and only if
 someone asks for it.
 
+## The size rules — measure the call path, not the declaration
+
+#19's principal complaint, stated plainly by the owner: an 800-line method `Foo` scores for being
+long; split into `Foo1`..`Foo4` it scores less or nothing, and the code is worse. The counterweight
+this issue proposes (charge the helpers) is dead in both forms above. The alternative is to change
+the **unit of measure**: a method with exactly one caller is not a method, it is part of its caller.
+
+### The predicate
+
+`effLoc(M) = LOC(M) + Σ effLoc(H)` over every private helper `H` that `M` **invokes** and whose
+caller set is exactly `{M}`, computed transitively with a cycle guard. `effCognitive` is the same
+sum over Sonar cognitive complexity, which composes because it is itself a sum of local increments.
+
+Two details are load-bearing:
+
+- **Fold only into the sole caller.** A helper with two callers is shared code and folding it into
+  both would double-count it. It also stops folding the moment it gains a second caller, which is
+  the incentive: give a helper a real second use and the caller's charge falls. That is reuse, which
+  is what the tool exists to encourage.
+- **Follow invocations, not method groups.** A method handed to something else as a delegate is a
+  separate entry point. Folding registered callbacks into a Roslyn analyzer's `Initialize` read
+  15 six-line registration methods as 55–129 line bodies. Excluding method groups removed all 15
+  and introduced no new hits.
+
+### Result
+
+Both corpora, with reforge's own `NonBlankLines` and `CognitiveDetail` so the syntactic column
+reproduces the tool exactly (`longMethod` 1,387 and `cognitiveComplexity` 740 on Humans — the same
+figures `surface-score` reports):
+
+| | Humans syntactic | Humans folded | Reforge syntactic | Reforge folded |
+|---|---:|---:|---:|---:|
+| `longMethod` points | 1,387 | **3,953** (2.9×) | 498 | **1,967** (4.0×) |
+| `cognitiveComplexity` points | 740 | **1,962** (2.7×) | 1,298 | **3,645** (2.8×) |
+| methods over 40 LOC | 350 | 483 | 80 | 102 |
+| methods over CC 15 | 83 | 158 | 70 | 93 |
+| methods charged only after folding | — | 168 | — | 29 |
+
+Reforge's `longMethod` multiplier is 4.0× against Humans' 2.9×, consistent with its 43%-vs-13%
+single-caller-helper share: the LLM-written corpus hides proportionally more behind helper
+boundaries.
+
+### What the fold finds that the declaration does not
+
+The 168 newly-charged methods are the population #19 is about. The clearest cases:
+
+| declared | call path | declared CC | call-path CC | method |
+|---:|---:|---:|---:|---|
+| 6 | 182 | 0 | 30 | `StoreWebhookRegistrationService.StartAsync` |
+| 12 | 186 | 1 | 32 | `ShiftManagementService.GetDashboardOverviewAsync` |
+| 23 | 234 | 4 | 25 | `ExternalLoginService.CompleteExternalLoginAsync` |
+| 42 | 239 | 2 | 40 | `WorkloadService.GetForActiveEventAsync` |
+| 33 | 196 | 1 | 36 | `VolunteerTrackingService.GetTrackingDataAsync` |
+
+A six-line method carrying 182 lines of call path charges **nothing** today.
+
+Folding also **reorders** the findings rather than merely inflating them: the top-20 by points under
+the two measures overlap by 7 of 20. The syntactic measure does not point at the same methods.
+
+### Gate 1
+
+The cheapest edit that satisfies the folded measure is to remove logic from the call path, or to give
+a single-caller helper a second real caller. Splitting a method into single-caller parts leaves the
+number **unchanged by construction** — the property the syntactic measure lacks and the reason this
+succeeds where the per-helper counterweight failed. There is no cheap edit that is not an
+improvement.
+
+### The calibration this forces
+
+The fold is not weight-neutral. At current weights Humans' internal axis goes 3,038 → 6,826 and the
+combined total 19,727 → 23,515, taking internal from 15% of the score to 29%. Either the weights are
+rescaled to hold the total, or the axis is accepted as larger because it is now measuring what was
+previously hidden. That is a calibration decision, not a measurement one, and it is the only thing
+between this measurement and an implementation.
+
+Secondary consequence: the metric becomes non-local — a method's charge depends on its callees, so
+editing a helper moves its caller's score. `largeClass` is unaffected (a class already contains its
+helpers, which is why it is the one size rule the fake split never fooled).
+
 ## The read-surface retirement, rejected
 
 #19's "related but separable" section proposes retiring the read-surface rules. Measured on
