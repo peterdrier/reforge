@@ -66,6 +66,22 @@ public class CrossProjectEnvelopeBase
     public string Origin { get; set; } = "";
 }
 
+// Base for the boundary tests in InheritedDtoFixtures: DATA declared outside the deriving type's
+// own solution is not that type's published shape, while BEHAVIOUR declared outside it is still
+// callable on the type. Only one of the two crosses, so the pair needs a data-only base and a
+// behavioural one, both declared in a section other than the deriving type's.
+public class CrossProjectShapeBase
+{
+    public Guid Key { get; set; }
+    public string Label { get; set; } = "";
+}
+
+public class CrossProjectBehaviourBase
+{
+    public Guid Key { get; set; }
+    public string Describe() => "";
+}
+
 // Property type for the cross-project nested-DTO test: a solution type declared in a different
 // section from the DTO that references it.
 public sealed class CrossProjectNestedPayload

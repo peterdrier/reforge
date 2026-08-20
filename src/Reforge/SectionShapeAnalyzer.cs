@@ -16,6 +16,21 @@ public sealed record InterfaceAnchor(string Display, string Section, string Role
 public sealed record ShardAnchor(string Name, string Purpose, IReadOnlyList<string> Methods);
 
 /// <summary>
+/// One service interface in a section's shape, carrying whether its declaring assembly
+/// <b>exports</b> it.
+/// </summary>
+/// <remarks>
+/// The flag is the population marker, and it is load-bearing rather than decorative. The scoring
+/// passes charge exported types only (an internal interface is unreachable from another section,
+/// so no consumer can be broken by changing it), while this view lists every classified interface
+/// because an internal full-service interface is still a real fact about the section's shape. Both
+/// are right, and while the two counts were bare strings nothing in the output said they were
+/// different sets: a measurement taken off this list read 93 write interfaces where the engine
+/// charges 47, and recommended a per-interface charge on the strength of it.
+/// </remarks>
+public sealed record ServiceInterfaceListing(string Name, bool Exported);
+
+/// <summary>
 /// A cross-section dependency use: <see cref="Caller"/> in <see cref="CallerSection"/> injects
 /// <see cref="Dependency"/> (owned by <see cref="DependencySection"/>). File/Line locate the
 /// consumer's constructor parameter for scoring.
@@ -60,8 +75,8 @@ public sealed record SectionShape
     public required SectionFacts Facts { get; init; }
     public IReadOnlyList<string> OwnedRepositoryInterfaces { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> OwnedRepositoryImplementations { get; init; } = Array.Empty<string>();
-    public IReadOnlyList<string> FullServiceInterfaces { get; init; } = Array.Empty<string>();
-    public IReadOnlyList<string> ReadServiceInterfaces { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<ServiceInterfaceListing> FullServiceInterfaces { get; init; } = Array.Empty<ServiceInterfaceListing>();
+    public IReadOnlyList<ServiceInterfaceListing> ReadServiceInterfaces { get; init; } = Array.Empty<ServiceInterfaceListing>();
     public DtoAnchor? PrimaryInfoDto { get; init; }
     public DtoAnchor? SettingsInfoDto { get; init; }
     public DtoAnchor? CacheDto { get; init; }
@@ -119,8 +134,10 @@ public static class SectionShapeAnalyzer
         // nominal: a type counts if it is dto-tagged OR is a pure data carrier (public props,
         // no public methods). The behavioral fallback keeps child-DTO descent working even when
         // the active config carries no "dto" classification rule (e.g. a section-only test config).
+        var analyzedAssemblies = CanonicalReadDtoSet.AnalyzedAssemblies(classified);
         var canonicalDtoNames = new HashSet<string>(
-            classified.Where(c => c.Tags.Contains("dto") || CanonicalReadDtoSet.IsDataCarrier(c.Type)).Select(c => c.Type.Name),
+            classified.Where(c => c.Tags.Contains("dto") || CanonicalReadDtoSet.IsDataCarrier(c.Type, analyzedAssemblies))
+                      .Select(c => c.Type.Name),
             StringComparer.Ordinal);
 
         // Each section's published read API, derived from its exported contracts surface. Used as
@@ -255,8 +272,8 @@ public static class SectionShapeAnalyzer
                 Facts = facts,
                 OwnedRepositoryInterfaces = repoIfaces,
                 OwnedRepositoryImplementations = repoImpls,
-                FullServiceInterfaces = fullIfaceTypes.Select(c => c.Type.Name).ToList(),
-                ReadServiceInterfaces = readIfaceTypes.Select(c => c.Type.Name).ToList(),
+                FullServiceInterfaces = fullIfaceTypes.Select(Listing).ToList(),
+                ReadServiceInterfaces = readIfaceTypes.Select(Listing).ToList(),
                 PrimaryInfoDto = primaryAnchor,
                 SettingsInfoDto = settingsAnchor,
                 CacheDto = cacheAnchor,
@@ -473,6 +490,9 @@ public static class SectionShapeAnalyzer
                 return true;
         return false;
     }
+
+    private static ServiceInterfaceListing Listing(ClassifiedType iface)
+        => new(iface.Type.Name, iface.IsExported);
 
     private static InterfaceAnchor BuildInterfaceAnchor(ClassifiedType iface, string section, string role)
     {

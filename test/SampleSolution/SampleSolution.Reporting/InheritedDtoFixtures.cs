@@ -111,6 +111,42 @@ public sealed class ExplicitlyImplementedReportInfo : IExplicitBehaviour
     string IExplicitBehaviour.Describe() => "";
 }
 
+// Inherits its ENTIRE shape from a base in another section and declares nothing of its own. What
+// it is depends on where the boundary is drawn: inside one solution the base's properties are the
+// section's published shape, and from outside it (an EF `Migration`, say) they are the framework's.
+// This is the type the walk used to admit as a read DTO on the strength of a framework base.
+public sealed class BorrowedShapeInfo : SampleSolution.Camp.CrossProjectShapeBase
+{
+}
+
+// Inherits a public METHOD from a base in another section. Behaviour is callable on this type
+// wherever it was declared, so this is not a data carrier no matter where the boundary falls —
+// the `class SearchHit : List<int>` case, which a walk that simply stopped at the boundary lost.
+public sealed class BorrowedBehaviourInfo : SampleSolution.Camp.CrossProjectBehaviourBase
+{
+    public string Title { get; set; } = "";
+}
+
+// An explicitly implemented interface EVENT. Roslyn reports it as `private`, so an accessibility
+// filter reads it as unreachable, while anyone holding the interface can subscribe; and the
+// interface's own declaration is abstract, so the interface scan skips it too. Missed from both
+// directions, exactly like the explicit method above.
+public interface IExplicitNotification
+{
+    event EventHandler? Changed;
+}
+
+public sealed class ExplicitEventReportInfo : IExplicitNotification
+{
+    public string Title { get; set; } = "";
+
+    event EventHandler? IExplicitNotification.Changed
+    {
+        add { }
+        remove { }
+    }
+}
+
 // A DTO whose only published properties are indexers. It must not fall between the two halves of
 // the rule: not a data carrier (so no publicDtoType) yet never reached (so no per-indexer charge).
 public sealed class IndexerOnlyReportInfo

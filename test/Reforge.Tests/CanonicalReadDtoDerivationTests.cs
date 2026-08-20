@@ -157,7 +157,8 @@ public class CanonicalReadDtoDerivationTests
 
         var record = classified.Single(c => c.Type.Name == "LodgeTariffRow");
         Assert.True(record.Type.IsRecord);
-        Assert.True(CanonicalReadDtoSet.IsDataCarrier(record.Type));
+        Assert.True(CanonicalReadDtoSet.IsDataCarrier(
+            record.Type, CanonicalReadDtoSet.AnalyzedAssemblies(classified)));
     }
 
     [Fact]

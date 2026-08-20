@@ -134,8 +134,8 @@ public static class SectionShapeCommand
                 repoBacked = s.Facts.RepoBacked,
                 ownedRepositoryInterfaces = s.OwnedRepositoryInterfaces,
                 ownedRepositoryImplementations = s.OwnedRepositoryImplementations,
-                readServiceInterfaces = s.ReadServiceInterfaces,
-                fullServiceInterfaces = s.FullServiceInterfaces,
+                readServiceInterfaces = s.ReadServiceInterfaces.Select(Iface).ToArray(),
+                fullServiceInterfaces = s.FullServiceInterfaces.Select(Iface).ToArray(),
                 primaryInfoDto = Dto(s.PrimaryInfoDto),
                 settingsInfoDto = Dto(s.SettingsInfoDto),
                 cacheDto = Dto(s.CacheDto),
@@ -159,6 +159,10 @@ public static class SectionShapeCommand
         Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
 
         static object? Dto(DtoAnchor? a) => a is null ? null : new { display = a.Display, paths = a.Paths };
+        // `exported` says which population an entry belongs to: the scoring passes charge exported
+        // types only, so a consumer counting write surface off this array has to filter, and until
+        // the flag was here nothing told it so.
+        static object Iface(ServiceInterfaceListing i) => new { name = i.Name, exported = i.Exported };
         static object Use(CrossSectionUse u) => new { caller = u.Caller, dependency = u.Dependency, dependencySection = u.DependencySection, suggestedReadInterface = u.SuggestedReadInterface, observedCalls = u.ObservedCalls };
     }
 
@@ -182,8 +186,8 @@ public static class SectionShapeCommand
         {
             sb.AppendLine($"{h2}{s.Name}{(s.Facts.RepoBacked ? " (repo-backed)" : "")}");
             if (s.OwnedRepositoryInterfaces.Count > 0) sb.AppendLine($"  repositories: {string.Join(", ", s.OwnedRepositoryInterfaces)}");
-            if (s.ReadServiceInterfaces.Count > 0) sb.AppendLine($"  read: {string.Join(", ", s.ReadServiceInterfaces)}");
-            if (s.FullServiceInterfaces.Count > 0) sb.AppendLine($"  full: {string.Join(", ", s.FullServiceInterfaces)}");
+            if (s.ReadServiceInterfaces.Count > 0) sb.AppendLine($"  read: {Ifaces(s.ReadServiceInterfaces)}");
+            if (s.FullServiceInterfaces.Count > 0) sb.AppendLine($"  full: {Ifaces(s.FullServiceInterfaces)}");
             if (s.PrimaryInfoDto is not null) sb.AppendLine($"  primaryInfoDto: {Short(s.PrimaryInfoDto.Display)} ({s.PrimaryInfoDto.Paths.Count} paths)");
             if (s.SettingsInfoDto is not null) sb.AppendLine($"  settingsInfoDto: {Short(s.SettingsInfoDto.Display)}");
             if (s.CacheDto is not null) sb.AppendLine($"  cacheDto: {Short(s.CacheDto.Display)} [{s.CacheDtoProvenance}]");
@@ -204,5 +208,10 @@ public static class SectionShapeCommand
         Console.Write(sb.ToString());
 
         static string Short(string display) => display.Split('.').Last();
+
+        // An interface its assembly does not export reads with the `internal` keyword in front of
+        // it, which is both what the declaration says and the reason it scores nothing.
+        static string Ifaces(IReadOnlyList<ServiceInterfaceListing> list)
+            => string.Join(", ", list.Select(i => i.Exported ? i.Name : $"internal {i.Name}"));
     }
 }

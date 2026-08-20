@@ -93,6 +93,23 @@ public sealed class ScoreReport
     /// </summary>
     public Dictionary<string, SectionMetrics> MetricsBySection { get; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>
+    /// Per section, the write-capable service interfaces the section's assembly <b>exports</b> —
+    /// what it publishes that a consumer in another assembly can call to change state. Reported,
+    /// never scored: no weight reads this, and no rule fires from it.
+    /// </summary>
+    /// <remarks>
+    /// <para>Recorded at the point <c>fullServiceInterfaceMethod</c> is charged, so the population
+    /// is the one the engine actually prices rather than a second derivation that can drift from
+    /// it — including interfaces whose methods happened to charge nothing, because exporting the
+    /// capability is the fact being reported.</para>
+    /// <para>A section is the unit deliberately. On a 44-section corpus the per-interface count is
+    /// one interface in 15 of the 18 positive sections and 16 in a single outlier, so any
+    /// per-interface weight would be calibrated against that one section; whether a section
+    /// publishes write capability at all splits the corpus 18/44. It stays unscored until a second
+    /// corpus says whether that prevalence is normal or high.</para>
+    /// </remarks>
+    public Dictionary<string, List<string>> PublicWriteSurface { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
     /// Compilation health of the analyzed solution. Defaults to a non-degraded value
     /// so the JSON `build` object is always present. Populated by ScoreAsync.
     /// </summary>

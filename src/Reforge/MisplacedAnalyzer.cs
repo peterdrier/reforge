@@ -162,7 +162,8 @@ public static class MisplacedAnalyzer
                 if (ownSection is null) continue;
 
                 var touches = Measure(
-                    symbol, declaration, doc, ownSection, sectionByAssembly, configuredDtos, solutionDirectory, ct);
+                    symbol, declaration, doc, ownSection, sectionByAssembly, configuredDtos,
+                    analyzedAssemblies, solutionDirectory, ct);
                 if (touches is not null) measured.Add(touches);
             }
         }
@@ -253,6 +254,7 @@ public static class MisplacedAnalyzer
         string ownSection,
         Dictionary<string, string> sectionByAssembly,
         HashSet<string> configuredDtos,
+        HashSet<string> analyzedAssemblies,
         string solutionDirectory,
         CancellationToken ct)
     {
@@ -318,7 +320,7 @@ public static class MisplacedAnalyzer
                 continue;
             }
 
-            if (IsData(owner.OriginalDefinition, AccessedThrough(node, doc, ct), touched, configuredDtos))
+            if (IsData(owner.OriginalDefinition, AccessedThrough(node, doc, ct), touched, configuredDtos, analyzedAssemblies))
             {
                 data[section] = data.TryGetValue(section, out var d) ? d + 1 : 1;
                 continue;
@@ -526,12 +528,13 @@ public static class MisplacedAnalyzer
     /// type exposing behavior at all.
     /// </remarks>
     private static bool IsData(
-        INamedTypeSymbol type, INamedTypeSymbol? through, ISymbol touched, HashSet<string> configuredDtos) =>
+        INamedTypeSymbol type, INamedTypeSymbol? through, ISymbol touched, HashSet<string> configuredDtos,
+        HashSet<string> analyzedAssemblies) =>
         // An enum has no behavior to call; the structural test misses them only because it gates on
         // class-or-struct. Counted as calls, enum members let an enum WIN the destination contest —
         // proposing a method be moved onto a type that cannot declare one.
         type.TypeKind == TypeKind.Enum
-        || CanonicalReadDtoSet.IsDataCarrier(type)
+        || CanonicalReadDtoSet.IsDataCarrier(type, analyzedAssemblies)
         || (touched is IPropertySymbol or IFieldSymbol
             && (configuredDtos.Contains(SolutionClassifier.TypeKey(type))
                 || (through is not null && configuredDtos.Contains(SolutionClassifier.TypeKey(through)))));

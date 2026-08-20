@@ -2,6 +2,32 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Populations named: exported interfaces, published write surface
+
+- **`section-shape` says which interfaces its assembly exports** (#53). Every entry in
+  `readServiceInterfaces` / `fullServiceInterfaces` now carries `exported`, and the text view prefixes
+  the rest with `internal`. The scoring passes charge exported types only, so the two counts were
+  always different sets — 93 write interfaces listed against 47 charged on Humans — and nothing in the
+  output said so. A measurement taken off the wider list argued for a per-interface charge; the
+  narrower one argues for per-section.
+- **`publicWriteSurface`: what a section publishes that another assembly can call to change state**
+  (#35). Recorded where `fullServiceInterfaceMethod` is charged, so the population is the one the
+  engine prices, and reported per section in all three formats — never scored, no weight reads it.
+  **13 of 45 sections on Humans, 23 interfaces.** Measured at 24 of 44 and 47 interfaces before #54
+  taught the classifier to decide write capability behaviourally, which is why #50 blocked this metric
+  behind that repair: read off the old classification it would have doubled its own prevalence.
+- **Two scoring fixes, zero points on Humans** (#46, #49). The internal-complexity axis decides
+  generated-ness **per declaration** — a partial type with a generated half used to score its
+  generated methods or skip its handwritten ones depending on which file Roslyn reported first, so the
+  same code scored differently for no reason in the code. And the data-carrier walk now separates the
+  two halves of the boundary question: **behaviour** declared outside the solution still disqualifies
+  a type (`class SearchHit : List<int>`), **data** declared outside it is not the section's published
+  shape (an EF migration is not a read DTO). One predicate now, where there were two that disagreed;
+  an explicitly implemented interface **event** counts as behaviour like the method form already did.
+  Both fixes move nothing on Humans at `ff7881f` — 20,024 points before and after, same anchors, same
+  diagnostics — so the sample-solution fixtures are what prove them, each confirmed failing without
+  its fix.
+
 ## Unreleased - `misplaced`: which methods are in the wrong assembly, and where they belong
 
 - **Lists named problems instead of scoring them.** A score cannot carry a destination, and the

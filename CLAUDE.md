@@ -229,3 +229,18 @@ This tool is built by an AI coding assistant, for AI coding assistants. It will 
 - **Diff ceiling.** Past ~1.5× the first commit's size, stop and report to the user rather than continuing.
 - **Comments explain the code, not its history.** Git holds what it used to be. No round-by-round archaeology in source, changelog, or PR body.
 - **Changelog is bullet points, max 3 per release.** Existing long entries are not precedent.
+
+## PR Protocol
+
+How a pushed branch gets to merged. Applies to every PR opened from this repo.
+
+- **Watch the PR after every push.** Check for new review comments (Codex and human) on a ~4 minute
+  cycle. Nothing is finished at "pushed".
+- **Every finding gets a verdict.** Valid and related to this PR's work → fix it here. Valid but
+  unrelated → file an issue and say which; a P0 or P1 is the exception, fix those now. Wrong →
+  say why.
+- **Every comment gets a reply and a resolve.** The reply names the outcome — fixed, won't fix,
+  filed #N — and the thread is then marked resolved. An unanswered or unresolved thread blocks the
+  merge, so this is not optional bookkeeping.
+- **Twenty quiet minutes means done.** No new review comments for 20 minutes after the last push,
+  with everything above answered and CI green → merge and delete the branch.
