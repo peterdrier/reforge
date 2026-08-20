@@ -175,11 +175,16 @@ figures `surface-score` reports):
 
 | | Humans syntactic | Humans folded | Reforge syntactic | Reforge folded |
 |---|---:|---:|---:|---:|
-| `longMethod` points | 1,387 | **3,953** (2.9×) | 498 | **1,967** (4.0×) |
-| `cognitiveComplexity` points | 740 | **1,962** (2.7×) | 1,298 | **3,645** (2.8×) |
+| `longMethod` points | 1,387 | **3,440** (2.5×) | 498 | **1,444** (2.9×) |
+| `cognitiveComplexity` points | 740 | **1,595** (2.2×) | 1,298 | **2,485** (1.9×) |
 | methods over 40 LOC | 350 | 483 | 80 | 102 |
 | methods over CC 15 | 83 | 158 | 70 | 93 |
 | methods charged only after folding | — | 168 | — | 29 |
+
+A folded-away helper charges nothing of its own — its lines are billed once, to the root that owns
+the call path. Summing every declaration's folded figure instead would double-count the helpers
+(3,953 / 1,962 on Humans); the table above bills roots only, which is what an implementation would
+do.
 
 Reforge's `longMethod` multiplier is 4.0× against Humans' 2.9×, consistent with its 43%-vs-13%
 single-caller-helper share: the LLM-written corpus hides proportionally more behind helper
@@ -210,13 +215,42 @@ number **unchanged by construction** — the property the syntactic measure lack
 succeeds where the per-helper counterweight failed. There is no cheap edit that is not an
 improvement.
 
-### The calibration this forces
+### The calibration, and what it argues for
 
-The fold is not weight-neutral. At current weights Humans' internal axis goes 3,038 → 6,826 and the
-combined total 19,727 → 23,515, taking internal from 15% of the score to 29%. Either the weights are
-rescaled to hold the total, or the axis is accepted as larger because it is now measuring what was
-previously hidden. That is a calibration decision, not a measurement one, and it is the only thing
-between this measurement and an implementation.
+Folding both size rules is not weight-neutral: Humans' internal axis goes 3,038 → 5,946 and the
+combined total 19,727 → 22,635, taking internal from 15% of the score to 26%.
+
+But the fold also settles the LOC-versus-complexity question, because the two rules stop being
+independent once they measure the same call path. Of the 388 Humans methods that charge under the
+folded measure, 274 charge on **lines only** — 1,166 points on call paths whose cognitive complexity
+is under threshold:
+
+| points | folded LOC | folded CC | method |
+|---:|---:|---:|---|
+| 55 | 241 | 4 | `TeamConfiguration.Configure` |
+| 23 | 171 | 9 | `PreMigrationSnapshot.EnsureCapturedAsync` |
+| 22 | 163 | 14 | `ProfileController.BuildEmailsViewModelAsync` |
+| 21 | 155 | 8 | `GoogleWorkspaceSyncService.GetAllDomainGroupsAsync` |
+| 21 | 151 | 6 | `UserService.ContributeForUserAsync` |
+
+The top hit is an EF entity configuration: 241 declarative lines, four branches. These are long
+because the domain is wide, not because they are hard, and there is no edit that shortens them
+except moving lines somewhere else — the fake split again, one level up. Only 8 methods charge on
+complexity alone, so cognitive complexity is very nearly a subset of what LOC charges, minus the
+declarative bulk.
+
+So the recommendation is not "fold both" but **fold, and let folded cognitive complexity be the
+only size charge** — retire `longMethod`. That is weight-neutral without touching any other rule:
+
+| | today | fold both | fold, retire `longMethod` |
+|---|---:|---:|---:|
+| Humans internal axis | 3,038 | 5,946 | **2,506** |
+| combined total | 19,727 | 22,635 | **19,195** |
+| internal share | 15% | 26% | **13%** |
+
+The residual risk is a 300-line straight-line method charging zero. If that shows up in practice the
+answer is a single high-threshold folded-LOC backstop (one charge above ~180 call-path lines), not
+the graduated per-10-line curve — a curve is what makes the split profitable in the first place.
 
 Secondary consequence: the metric becomes non-local — a method's charge depends on its callees, so
 editing a helper moves its caller's score. `largeClass` is unaffected (a class already contains its
