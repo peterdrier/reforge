@@ -6,11 +6,12 @@
 // order, and one call site was added.
 //
 // This is the hole the fold leaves, and it is narrower than the one it closes. The split an agent
-// reaches for first — pull the branchy middle into a private helper and call it once — is now
-// free of charge in both directions: `effCognitive` is unchanged by construction, so the split
-// neither pays nor costs. Escaping the charge takes a *second real call site*, which is either
-// genuine reuse (the incentive this rule is built around) or, as here, a manufactured one that a
-// reader can see is manufactured.
+// reaches for first — pull the branchy middle into a private helper and call it once — no longer
+// pays for itself: at the same nesting depth `effCognitive` does not move. What still pays is an
+// extraction that takes a block out of a nest, since a helper's body is charged from its own root;
+// that is a real reduction in reading difficulty rather than a relabelling. Escaping the charge
+// outright takes a *second real call site*, which is either genuine reuse (the incentive this rule
+// is built around) or, as here, a manufactured one a reader can see is manufactured.
 //
 // Closing it means not gating on caller count, and every alternative measured worse: charging every
 // helper separately made the rule a size rule (it fires on 59-80% of all private methods on two
