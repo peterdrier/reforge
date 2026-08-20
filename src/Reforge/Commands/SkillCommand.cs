@@ -104,6 +104,14 @@ public static class SkillCommand
         apart. The corpus is the scored corpus — no test projects, no generated code, complexity
         over methods with a body. Informational only; no metric feeds a score.
 
+        **Test mass is reported per section, and scored nowhere.** A `tests` block per group (plus a
+        solution rollup) carries `loc`, `files`, `projects`, and `locVsProdPercent` — test LOC as a
+        percentage of the section's production LOC, which is the figure that compares two sections
+        (raw test LOC scales with section size). A test project is attributed to the section its
+        **non-test project references** name, so `X.Tests` and `X.IntegrationTests` land together;
+        where the references name several sections the project name breaks the tie, and where
+        nothing breaks it the project appears in `unattributedTestProjects` and in no column.
+
         The config file is optional, searched for upward from the solution directory, and carries
         policy only. With no file present the built-in name-pattern classifications and default
         weights still produce a full score.

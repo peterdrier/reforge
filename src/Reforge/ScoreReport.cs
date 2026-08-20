@@ -68,6 +68,12 @@ public sealed class GroupScore
     /// report was built without a metrics pass (a hand-built report in a test, say).
     /// </summary>
     public SectionMetrics Metrics { get; set; } = SectionMetrics.Empty;
+
+    /// <summary>
+    /// Size of the section's test corpus — see <see cref="TestMass"/>. Informational, like
+    /// <see cref="Metrics"/>: the test corpus is not scored at all.
+    /// </summary>
+    public TestMass Tests { get; set; } = TestMass.Empty;
 }
 
 public sealed class ScoreReport
@@ -92,6 +98,19 @@ public sealed class ScoreReport
     /// no <see cref="GroupScore"/>. Keyed by section name.
     /// </summary>
     public Dictionary<string, SectionMetrics> MetricsBySection { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Solution-level test-corpus rollup, including the mass of test projects no section claimed.
+    /// </summary>
+    public TestMass Tests { get; set; } = TestMass.Empty;
+    /// <summary>
+    /// Test mass per section, including sections that scored nothing. Keyed by section name.
+    /// </summary>
+    public Dictionary<string, TestMass> TestsBySection { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Test projects whose non-test project references named no section, or named several with
+    /// nothing to break the tie. Their mass is in <see cref="Tests"/> and in no section.
+    /// </summary>
+    public List<string> UnattributedTestProjects { get; } = new();
     /// <summary>
     /// Per section, the write-capable service interfaces its assembly exports. Reported, never
     /// scored — no weight reads it. Recorded where <c>fullServiceInterfaceMethod</c> is charged, so

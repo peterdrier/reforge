@@ -153,6 +153,21 @@ public sealed partial class SurfaceScoreEngine
             if (report.Groups.TryGetValue(section, out var group)) group.Metrics = metrics;
         }
 
+        // Test mass per section. A separate corpus from everything above (the classifier admits
+        // no test project), reported as size and scored nowhere — see TestMassAnalyzer.
+        var (testsBySection, solutionTests, unattributedTests) =
+            await TestMassAnalyzer.AnalyzeAsync(solution, classified, metricsBySection, ct);
+        report.Tests = solutionTests;
+        report.UnattributedTestProjects.AddRange(unattributedTests);
+        foreach (var (section, tests) in testsBySection)
+        {
+            report.TestsBySection[section] = tests;
+            if (report.Groups.TryGetValue(section, out var group)) group.Tests = tests;
+        }
+        if (unattributedTests.Count > 0)
+            report.Diagnostics.Add(new ScoreDiagnostic("info", "unattributedTestProject",
+                $"Test projects whose references named no single section, counted in the solution rollup only: {string.Join(", ", unattributedTests)}."));
+
         // Build health: detect a degraded (unbuilt/erroring) compilation so a partial
         // score is never mistaken for a complete one. Reuses the per-project compilations
         // the passes above already realized (Roslyn caches them), so this is near-free.

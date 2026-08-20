@@ -17,13 +17,20 @@ namespace Reforge;
 /// </remarks>
 public static class SolutionClassifier
 {
+    /// <summary>
+    /// Whether a project is a test project, and so outside the scored corpus: everything in one is
+    /// public by construction, so every surface rule would fire on code no other section can call.
+    /// Named here rather than inlined because the test-mass pass measures exactly the complement of
+    /// this set, and the two predicates drifting apart would double-count or lose a project.
+    /// </summary>
+    public static bool IsTestProject(Project project) =>
+        project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase);
+
     public static async Task<IReadOnlyList<ClassifiedType>> ClassifyAsync(
         Solution solution, SurfaceScoreConfig config, string solutionDirectory, CancellationToken ct)
     {
         var seenByDisplay = new HashSet<string>(StringComparer.Ordinal);
-        var projects = solution.Projects
-            .Where(p => !p.Name.Contains("Test", StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        var projects = solution.Projects.Where(p => !IsTestProject(p)).ToList();
         var analyzed = new HashSet<string>(projects.Select(p => p.AssemblyName), StringComparer.Ordinal);
 
         // Pass 1 — collect types with their raw assembly name. The section name can't be assigned
