@@ -24,9 +24,18 @@ public readonly record struct CallPathScore(
 /// <para>
 /// A private method with exactly one caller is not a method — it is part of its caller, and
 /// measuring it separately is what let a long method be split into single-caller parts for a lower
-/// score while the code got worse. Folding leaves the number unchanged under that split by
-/// construction, so the only edits that reduce it are removing logic from the path or giving a
-/// helper a second real caller.
+/// score while the code got worse. Folding removes the reward for splitting by volume: move a block
+/// into a helper at the same nesting depth and the number does not move.
+/// </para>
+/// <para>
+/// It does not make every split free of effect, because cognitive complexity charges
+/// <c>1 + nestingDepth</c> per control structure and a helper's body is charged from its own root.
+/// An extraction that takes a block <i>out of a nest</i> still pays, in proportion to the depth it
+/// removes — which is the one split that genuinely reduces reading difficulty, and the one Sonar's
+/// nesting penalty exists to reward. This file is its own worked example: as one four-deep loop nest
+/// it read CC 104 for 89 points; the same logic as four methods at depth 2 reads CC 65 for 50. The
+/// helpers fold straight back into it, so none of that came from the split — all 39 points came from
+/// the two levels of nesting the split removed.
 /// </para>
 /// <para>
 /// Two details are load-bearing and both were established by measuring the alternatives:
@@ -42,6 +51,20 @@ public readonly record struct CallPathScore(
 /// </summary>
 public static class CallPathComplexity
 {
+    /// <summary>The call graph as it is collected: one entry per declaration, plus both edge directions.</summary>
+    private sealed class Graph
+    {
+        public Dictionary<string, MethodInfo> Methods { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, HashSet<string>> Callers { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, HashSet<string>> Callees { get; } = new(StringComparer.Ordinal);
+
+        public void Add(Dictionary<string, HashSet<string>> edges, string from, string to)
+        {
+            if (!edges.TryGetValue(from, out var set)) edges[from] = set = new HashSet<string>(StringComparer.Ordinal);
+            set.Add(to);
+        }
+    }
+
     private sealed class MethodInfo
     {
         public int Cognitive;
@@ -59,71 +82,13 @@ public static class CallPathComplexity
     public static async Task<CallPathFold> BuildAsync(Solution solution,
         HashSet<string> analyzedAssemblies, CancellationToken ct)
     {
-        var methods = new Dictionary<string, MethodInfo>(StringComparer.Ordinal);
-        var callers = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        var callees = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-
+        var graph = new Graph();
         foreach (var project in solution.Projects)
         {
             ct.ThrowIfCancellationRequested();
             if (project.AssemblyName is null || !analyzedAssemblies.Contains(project.AssemblyName)) continue;
             var compilation = await project.GetCompilationAsync(ct);
-            if (compilation is null) continue;
-
-            // Declarations first: the private names collected here are the only ones worth
-            // resolving in the reference walk, which is what keeps this pass affordable — most
-            // invocations in a project target framework or cross-type members that can never fold.
-            var privateNames = new HashSet<string>(StringComparer.Ordinal);
-            var trees = new List<(SyntaxTree Tree, SemanticModel Model)>();
-            foreach (var tree in compilation.SyntaxTrees)
-            {
-                if (GeneratedCode.IsGeneratedFile(tree.FilePath)) continue;
-                var model = compilation.GetSemanticModel(tree);
-                trees.Add((tree, model));
-                foreach (var decl in (await tree.GetRootAsync(ct)).DescendantNodes().OfType<BaseMethodDeclarationSyntax>())
-                {
-                    if (model.GetDeclaredSymbol(decl) is not IMethodSymbol m) continue;
-                    var info = new MethodInfo
-                    {
-                        Cognitive = ImplementationComplexity.CognitiveDetail(decl).Score,
-                        Lines = ImplementationComplexity.NonBlankLines(decl),
-                        Name = m.Name,
-                        Scored = m.MethodKind == MethodKind.Ordinary
-                            && m.AssociatedSymbol is null && !m.IsImplicitlyDeclared,
-                        Private = m.DeclaredAccessibility == Accessibility.Private && !m.IsAbstract
-                    };
-                    methods[Key(m)] = info;
-                    if (info.Private) privateNames.Add(m.Name);
-                }
-            }
-            if (privateNames.Count == 0) continue;
-
-            foreach (var (tree, model) in trees)
-            {
-                ct.ThrowIfCancellationRequested();
-                foreach (var node in (await tree.GetRootAsync(ct)).DescendantNodes())
-                {
-                    if (node is not SimpleNameSyntax name) continue;
-                    if (!privateNames.Contains(name.Identifier.ValueText)) continue;
-                    if (name.Parent is MemberAccessExpressionSyntax ma && ma.Name != name) continue;
-                    if (name.Parent is BaseMethodDeclarationSyntax) continue;
-                    if (model.GetSymbolInfo(name, ct).Symbol is not IMethodSymbol called) continue;
-                    var key = Key(called.OriginalDefinition);
-                    if (!methods.TryGetValue(key, out var target) || !target.Private) continue;
-
-                    var enclosing = EnclosingMethodKey(name, model, ct);
-                    if (enclosing is null) continue;
-                    if (!callers.TryGetValue(key, out var set))
-                        callers[key] = set = new HashSet<string>(StringComparer.Ordinal);
-                    set.Add(enclosing);
-                    if (IsInvoked(name))
-                    {
-                        if (!callees.TryGetValue(enclosing, out var outs))
-                            callees[enclosing] = outs = new HashSet<string>(StringComparer.Ordinal);
-                        outs.Add(key);
-                    }
-                }
-            }
+            if (compilation is not null) await CollectProjectAsync(compilation, graph, ct);
         }
 
         // Foldable: private, exactly one caller, not itself, and the caller is a method the
@@ -131,23 +96,93 @@ public static class CallPathComplexity
         // constructor or a property accessor would fold into something that is never scored and
         // so drop out of the report entirely.
         var foldable = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (key, info) in methods)
+        foreach (var (key, info) in graph.Methods)
         {
             if (!info.Private) continue;
-            if (!callers.TryGetValue(key, out var cs) || cs.Count != 1 || cs.Contains(key)) continue;
-            var sole = cs.First();
-            if (methods.TryGetValue(sole, out var caller) && caller.Scored) foldable.Add(key);
+            if (!graph.Callers.TryGetValue(key, out var cs) || cs.Count != 1 || cs.Contains(key)) continue;
+            if (graph.Methods.TryGetValue(cs.First(), out var caller) && caller.Scored) foldable.Add(key);
         }
 
-        return new CallPathFold(Fold(methods, callees, callers, foldable), foldable);
+        return new CallPathFold(Fold(graph, foldable), foldable);
     }
 
-    private static Dictionary<string, CallPathScore> Fold(
-        Dictionary<string, MethodInfo> methods,
-        Dictionary<string, HashSet<string>> callees,
-        Dictionary<string, HashSet<string>> callers,
-        HashSet<string> foldable)
+    /// <summary>
+    /// Declarations first: the private names collected here are the only ones worth resolving in the
+    /// reference walk, which is what keeps this pass affordable — most invocations in a project
+    /// target framework or cross-type members that can never fold.
+    /// </summary>
+    private static async Task CollectProjectAsync(Compilation compilation, Graph graph, CancellationToken ct)
     {
+        var privateNames = new HashSet<string>(StringComparer.Ordinal);
+        var trees = new List<(SyntaxNode Root, SemanticModel Model)>();
+        foreach (var tree in compilation.SyntaxTrees)
+        {
+            if (GeneratedCode.IsGeneratedFile(tree.FilePath)) continue;
+            var model = compilation.GetSemanticModel(tree);
+            var root = await tree.GetRootAsync(ct);
+            trees.Add((root, model));
+            CollectDeclarations(root, model, graph, privateNames, ct);
+        }
+        if (privateNames.Count == 0) return;
+
+        foreach (var (root, model) in trees)
+        {
+            ct.ThrowIfCancellationRequested();
+            CollectEdges(root, model, graph, privateNames, ct);
+        }
+    }
+
+    private static void CollectDeclarations(SyntaxNode root, SemanticModel model, Graph graph,
+        HashSet<string> privateNames, CancellationToken ct)
+    {
+        foreach (var decl in root.DescendantNodes().OfType<BaseMethodDeclarationSyntax>())
+        {
+            if (model.GetDeclaredSymbol(decl, ct) is not IMethodSymbol m) continue;
+            var info = new MethodInfo
+            {
+                Cognitive = ImplementationComplexity.CognitiveDetail(decl).Score,
+                Lines = ImplementationComplexity.NonBlankLines(decl),
+                Name = m.Name,
+                Scored = m.MethodKind == MethodKind.Ordinary
+                    && m.AssociatedSymbol is null && !m.IsImplicitlyDeclared,
+                Private = m.DeclaredAccessibility == Accessibility.Private && !m.IsAbstract
+            };
+            graph.Methods[Key(m)] = info;
+            if (info.Private) privateNames.Add(m.Name);
+        }
+    }
+
+    private static void CollectEdges(SyntaxNode root, SemanticModel model, Graph graph,
+        HashSet<string> privateNames, CancellationToken ct)
+    {
+        foreach (var node in root.DescendantNodes())
+        {
+            if (node is not SimpleNameSyntax name) continue;
+            if (!privateNames.Contains(name.Identifier.ValueText)) continue;
+            var callee = FoldableCallee(name, model, graph, ct);
+            if (callee is null) continue;
+            var enclosing = EnclosingMethodKey(name, model, ct);
+            if (enclosing is null) continue;
+
+            graph.Add(graph.Callers, callee, enclosing);
+            if (IsInvoked(name)) graph.Add(graph.Callees, enclosing, callee);
+        }
+    }
+
+    /// <summary>The private method this name refers to, or null when it is not one.</summary>
+    private static string? FoldableCallee(SimpleNameSyntax name, SemanticModel model, Graph graph,
+        CancellationToken ct)
+    {
+        if (name.Parent is MemberAccessExpressionSyntax ma && ma.Name != name) return null;
+        if (name.Parent is BaseMethodDeclarationSyntax) return null;
+        if (model.GetSymbolInfo(name, ct).Symbol is not IMethodSymbol called) return null;
+        var key = Key(called.OriginalDefinition);
+        return graph.Methods.TryGetValue(key, out var target) && target.Private ? key : null;
+    }
+
+    private static Dictionary<string, CallPathScore> Fold(Graph graph, HashSet<string> foldable)
+    {
+        var methods = graph.Methods;
         var memo = new Dictionary<string, CallPathScore>(StringComparer.Ordinal);
         foreach (var key in methods.Keys) Eff(key, new HashSet<string>(StringComparer.Ordinal));
         return memo;
@@ -163,12 +198,12 @@ public static class CallPathComplexity
 
             int score = info.Cognitive, lines = info.Lines, folded = 0, best = 0;
             string? top = null;
-            if (callees.TryGetValue(key, out var cs))
+            if (graph.Callees.TryGetValue(key, out var cs))
             {
                 foreach (var c in cs)
                 {
                     if (c == key || !foldable.Contains(c)) continue;
-                    if (!callers.TryGetValue(c, out var cc) || cc.Count != 1 || !cc.Contains(key)) continue;
+                    if (!graph.Callers.TryGetValue(c, out var cc) || cc.Count != 1 || !cc.Contains(key)) continue;
                     var sub = Eff(c, path);
                     score += sub.Score;
                     lines += sub.FoldedLines;

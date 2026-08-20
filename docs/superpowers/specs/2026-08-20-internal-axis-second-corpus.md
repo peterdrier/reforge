@@ -209,11 +209,20 @@ the two measures overlap by 7 of 20. The syntactic measure does not point at the
 
 ### Gate 1
 
-The cheapest edit that satisfies the folded measure is to remove logic from the call path, or to give
-a single-caller helper a second real caller. Splitting a method into single-caller parts leaves the
-number **unchanged by construction** — the property the syntactic measure lacks and the reason this
-succeeds where the per-helper counterweight failed. There is no cheap edit that is not an
-improvement.
+The cheapest edit that satisfies the folded measure is to remove logic from the call path, to give a
+single-caller helper a second real caller, or to take a block out of a nest. Splitting a method into
+single-caller parts **at the same nesting depth leaves the number unchanged** — the property the
+syntactic measure lacks and the reason this succeeds where the per-helper counterweight failed.
+
+One qualification, found by scoring this change against itself. Cognitive complexity charges
+`1 + nestingDepth` per control structure and a helper's body is charged from its own root, so an
+extraction that *flattens* still pays, in proportion to the depth it removes. `CallPathComplexity`
+itself is the worked example: one four-deep loop nest read CC 104 for 89 points, and the same logic
+as four methods at depth 2 reads CC 65 for 50. The four helpers are private and single-caller, so
+they fold straight back in — none of the 39-point drop came from the split, all of it came from the
+two levels of nesting the split removed. That is not the fake split; it is the edit Sonar's nesting
+penalty exists to reward. But "unchanged by construction" is true only of a split that keeps the
+depth.
 
 ### The calibration, and what it argues for
 

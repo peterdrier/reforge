@@ -6,8 +6,8 @@ What changed and why. Newest first.
 
 - **`cognitiveComplexity` measures the call path, not the declaration; `longMethod` is retired**
   (#19). A private helper with exactly one caller is billed to that caller, transitively, so
-  splitting a complex method into single-caller parts leaves the number unchanged by construction —
-  the split was free before, and 168 Humans methods charged nothing while carrying up to 182 lines
+  splitting a complex method into single-caller parts at the same nesting depth no longer moves the
+  number — the split paid for itself before, and 168 Humans methods charged nothing while carrying up to 182 lines
   of call path (`StoreWebhookRegistrationService.StartAsync`: 6 declared lines, CC 0 → 30 folded).
   Only the sole caller folds, so a helper that gains a second real caller drops out and its caller's
   charge falls; only invocations fold, not method groups, or a Roslyn analyzer's six-line
