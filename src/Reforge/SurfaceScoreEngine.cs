@@ -127,9 +127,12 @@ public sealed partial class SurfaceScoreEngine
         await ScoreDiRegistrationsAsync(solution, typesByDisplay, report, ct);
         ScoreOneImplementationInterfaces(classified, report);
 
-        // Pass 6 — internal complexity (separate scalar). Cognitive complexity, method/class
-        // size, and structural action-dispatcher detection — the counterweight to surface.
-        ScoreImplementationComplexity(classified, report, ct, analyzedAssemblies);
+        // Pass 6 — internal complexity (separate scalar). Call-path cognitive complexity, class
+        // size, and structural action-dispatcher detection — the counterweight to surface. The
+        // fold is resolved first because it is solution-wide: a method's complexity depends on the
+        // private helpers only it calls, which the per-type walk below cannot see.
+        var fold = await CallPathComplexity.BuildAsync(solution, analyzedAssemblies, ct);
+        ScoreImplementationComplexity(classified, report, ct, analyzedAssemblies, fold);
 
         // Pass 7 — boundary-input surface. Charges for parameter/command objects that hide a
         // long argument list (so a parameter-object refactor can't game methodParameterOverflow).

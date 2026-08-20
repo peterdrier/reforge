@@ -33,11 +33,11 @@ public class GeneratedPartialScoringTests
 
         // The other half of the same assertion: skipping the type outright — which is what the
         // primary-file filter did whenever the generated declaration came first — would leave the
-        // handwritten long method uncharged and the section quietly cheaper.
-        var longMethod = Assert.Single(entries.Where(e =>
-            e.Rule == "longMethod" && e.Symbol.Contains("HandwrittenWork", StringComparison.Ordinal)));
-        Assert.EndsWith("GeneratedPartialFixture.cs", longMethod.File, StringComparison.OrdinalIgnoreCase);
-        Assert.True(longMethod.Points > 0);
+        // handwritten complex method uncharged and the section quietly cheaper.
+        var charge = Assert.Single(entries.Where(e =>
+            e.Rule == "cognitiveComplexity" && e.Symbol.Contains("HandwrittenWork", StringComparison.Ordinal)));
+        Assert.EndsWith("GeneratedPartialFixture.cs", charge.File, StringComparison.OrdinalIgnoreCase);
+        Assert.True(charge.Points > 0);
     }
 
     [Fact]
@@ -48,9 +48,9 @@ public class GeneratedPartialScoringTests
         // GeneratedPrimaryFixture's generated declaration sorts first, so it is the file
         // SolutionClassifier reports for the type — the ordering under which the old filter
         // discarded the handwritten half along with it.
-        var longMethod = Assert.Single(entries.Where(e =>
-            e.Rule == "longMethod" && e.Symbol.Contains("HandwrittenSecondWork", StringComparison.Ordinal)));
-        Assert.EndsWith("GeneratedPrimaryFixture.Bb.cs", longMethod.File, StringComparison.OrdinalIgnoreCase);
+        var charge = Assert.Single(entries.Where(e =>
+            e.Rule == "cognitiveComplexity" && e.Symbol.Contains("HandwrittenSecondWork", StringComparison.Ordinal)));
+        Assert.EndsWith("GeneratedPrimaryFixture.Bb.cs", charge.File, StringComparison.OrdinalIgnoreCase);
 
         Assert.DoesNotContain(entries, e => e.Symbol.Contains("GeneratedPrimaryWork", StringComparison.Ordinal));
     }
@@ -62,9 +62,9 @@ public class GeneratedPartialScoringTests
 
         // GetMembers() hands back the defining part, which lives in the generated file. Filtering its
         // declarations without resolving PartialImplementationPart first loses the handwritten body.
-        var longMethod = Assert.Single(entries.Where(e =>
-            e.Rule == "longMethod" && e.Symbol.Contains("PartialWorkDefinedHere", StringComparison.Ordinal)));
-        Assert.EndsWith("GeneratedPrimaryFixture.Bb.cs", longMethod.File, StringComparison.OrdinalIgnoreCase);
+        var charge = Assert.Single(entries.Where(e =>
+            e.Rule == "cognitiveComplexity" && e.Symbol.Contains("PartialWorkDefinedHere", StringComparison.Ordinal)));
+        Assert.EndsWith("GeneratedPrimaryFixture.Bb.cs", charge.File, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<List<ScoreEntry>> ScoreAsync()

@@ -59,9 +59,8 @@ public static class SurfaceScoreRuleGlossary
         ["oneImplementationInterface"] = "A classified interface has exactly one classified class implementing it.",
 
         // Internal complexity axis
-        ["longMethod"] = "A method's nonblank line count exceeds 40; points scale with length (steeper past 100 and 180 lines).",
         ["largeClass"] = "A service/repository/controller class's nonblank line count exceeds 750; points scale with size (steeper past 1500 lines).",
-        ["cognitiveComplexity"] = "A method's SonarSource cognitive-complexity score (nesting-weighted branching) exceeds the threshold; points scale with the excess.",
+        ["cognitiveComplexity"] = "SonarSource cognitive complexity (nesting-weighted branching) over a method's whole call path — its own body plus every private helper only it calls — exceeds the threshold; points scale with the excess.",
         ["actionDispatcher"] = "A method that mutates state dispatches on a parameter via a switch or if-chain whose arms route to different members with disjoint bodies (low arm cohesion); flagged on both the implementation and any interface method it implements. Surcharges apply when the selector is an action/mode enum, when the name is a generic verb (Apply/Handle/Process/Execute/Create/Save) that hides which operation runs, and when the declaring type is an application service. Read methods, arms sharing a base body, and state-machine entry points (transition validation/vocabulary) are exempt.",
         ["mutationModeParameter"] = "A public mutation method takes an action/mode enum parameter that selects behavior, even when the body is small and does not delegate; the parameter folds multiple distinct operations behind one signature.",
         ["flagsControlFlow"] = "A method that mutates state branches on a [Flags] enum parameter via HasFlag or bitwise tests; read methods are exempt."

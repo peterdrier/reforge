@@ -17,7 +17,6 @@ public static class SurfaceScoreRuleGroups
 {
     public static readonly IReadOnlySet<string> InternalComplexity = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "longMethod",
         "largeClass",
         "cognitiveComplexity",
         "actionDispatcher",
@@ -63,16 +62,6 @@ public static class ImplementationComplexity
             if (!string.IsNullOrWhiteSpace(s)) n++;
         }
         return n;
-    }
-
-    /// <summary>longMethod base points: +1 per 10 nonblank LOC over 40, +10 over 100, +25 over 180.</summary>
-    public static int LongMethodPoints(int loc)
-    {
-        if (loc <= 40) return 0;
-        int p = (loc - 40) / 10;
-        if (loc > 100) p += 10;
-        if (loc > 180) p += 25;
-        return p;
     }
 
     /// <summary>largeClass base points: +10 per 250 nonblank LOC over 750, +25 over 1500.</summary>
