@@ -3,7 +3,7 @@ namespace SampleSolution.Services;
 /// <summary>
 /// The handwritten half of a partial type whose other half is a generated
 /// <c>.Designer.cs</c> file. Both halves declare a method branchy enough to fire
-/// <c>cognitiveComplexity</c>, which is what makes the pair a test: the internal-complexity axis must
+/// <c>cognitiveComplexity</c>, which is what makes the pair a test: the implementation-shape axis must
 /// charge this half and not the generated one, whichever declaration Roslyn reports first.
 /// </summary>
 public partial class GeneratedPartialFixture

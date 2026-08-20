@@ -44,7 +44,7 @@ public class SectionArchitectureTests
         })
         {
             Assert.True(SurfaceScoreRuleGlossary.Descriptions.ContainsKey(rule), $"missing glossary: {rule}");
-            Assert.False(SurfaceScoreRuleGroups.IsInternalComplexity(rule), $"should be surface axis: {rule}");
+            Assert.False(SurfaceScoreRuleGroups.IsImplementationShape(rule), $"should be surface axis: {rule}");
         }
     }
 
@@ -62,8 +62,8 @@ public class SectionArchitectureTests
         // The surcharge is for the shape a read interface publishes, so where it publishes from
         // is exactly what the contracts multiplier prices.
         Assert.Equal(16, camp.ByRule["readSurfaceProjectionMethod"]);
-        // surcharge is on the surface axis, not internal complexity
-        Assert.False(SurfaceScoreRuleGroups.IsInternalComplexity("readSurfaceProjectionMethod"));
+        // surcharge is on the surface axis, not implementation shape
+        Assert.False(SurfaceScoreRuleGroups.IsImplementationShape("readSurfaceProjectionMethod"));
     }
 
     // ---------------- Task 4: missing* rules (repo-backed gated) ----------------
@@ -185,14 +185,14 @@ public class SectionArchitectureTests
         {
             total = now.Total,
             surfaceTotal = now.SurfaceTotal,
-            internalComplexityTotal = now.InternalComplexityTotal,
+            implementationShapeTotal = now.ImplementationShapeTotal,
             byRule = now.ByRule,
             groups = now.Groups.Values.Select(g => new
             {
                 name = g.Name,
                 total = g.Total,
                 surfaceTotal = g.Name == section ? g.SurfaceTotal + 6 : g.SurfaceTotal,
-                internalComplexityTotal = g.InternalComplexityTotal,
+                implementationShapeTotal = g.ImplementationShapeTotal,
                 byRule = g.Name == section
                     ? g.ByRule.ToDictionary(kv => kv.Key, kv => kv.Key == "readServiceInterfaceMethod" ? kv.Value + 6 : kv.Value)
                     : g.ByRule.ToDictionary(kv => kv.Key, kv => kv.Value)

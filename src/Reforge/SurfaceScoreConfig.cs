@@ -75,7 +75,7 @@ public sealed class SurfaceScoreConfig
     /// once. The difference is reach: reaching the folder means referencing the whole assembly,
     /// while a satellite assembly can be referenced on its own, by anyone, without taking a
     /// dependency on the implementation. That is the point of the shape and also what makes it the
-    /// most expensive surface to withdraw. Credits and the internal-complexity axis are never
+    /// most expensive surface to withdraw. Credits and the implementation-shape axis are never
     /// scaled — see <c>SurfaceScoreEngine.ApplyContractsMultiplier</c>.
     /// </remarks>
     public int ContractsAssemblyMultiplier { get; set; } = 2;
@@ -263,7 +263,7 @@ public sealed class SurfaceScoreConfig
                 ["missingPrimaryInfoDto"] = 10,
                 ["readSurfaceProjectionMethod"] = 4,
 
-                // Internal shape (surface axis — method/return shape smells)
+                // Signature shape (surface axis — method/return shape smells)
                 ["methodParameterOverflow"] = 1, // per param after 2
                 ["booleanParameter"] = 3,
                 ["tupleReturn"] = 4,
@@ -271,11 +271,11 @@ public sealed class SurfaceScoreConfig
                 ["dashboardAdminPageName"] = 6,
                 ["oneImplementationInterface"] = 8,
 
-                // Internal complexity axis — implementation cost hiding behind the surface.
+                // Implementation-shape axis — implementation cost hiding behind the surface.
                 // These weights are MULTIPLIERS over base points computed from syntax
                 // (cognitive complexity, LOC tiers, dispatcher arm count); default 1 applies
                 // the base points as-is, 0 disables the rule. They are tracked on a separate
-                // scalar (internalComplexityTotal) and are never added into the surface score.
+                // scalar (implementationShapeTotal) and are never added into the surface score.
                 // No longMethod key: length is not charged separately from the call-path
                 // complexity it almost entirely duplicated.
                 ["largeClass"] = 1,

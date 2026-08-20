@@ -21,7 +21,7 @@ public sealed partial class SurfaceScoreEngine
         {
             // Durable surface is what the assembly exports. An internal type's members cannot be
             // called from another section, so they are not API — no consumer can be broken by
-            // changing them. Their implementation still scores on the internal-complexity axis.
+            // changing them. Their implementation still scores on the implementation-shape axis.
             if (!c.IsExported) continue;
 
             if (c.Tags.Contains("dto") && LooksLikeDataCarrier(c.Type, analyzedAssemblies))

@@ -9,11 +9,33 @@ namespace Reforge.Tests;
 /// </summary>
 public class SurfaceScoreBaselineTests
 {
+    /// <summary>
+    /// A baseline is a committed file that outlives the build that wrote it, so a baseline written
+    /// before the axis was renamed has to keep comparing.
+    /// </summary>
+    [Fact]
+    public void Compare_BaselineWithPreRenameAxisKey_StillReadsTheAxis()
+    {
+        var baseline = """
+            { "total": 130, "surfaceTotal": 100, "internalComplexityTotal": 30, "byRule": {}, "groups": [] }
+            """;
+        var path = Path.GetTempFileName();
+        File.WriteAllText(path, baseline);
+        try
+        {
+            var now = new ScoreReport { SurfaceTotal = 100, ImplementationShapeTotal = 40, Total = 140 };
+            var cmp = SurfaceScoreBaseline.Compare(now, path);
+            Assert.Equal(30, cmp.Solution.BaseShape);
+            Assert.Equal(10, cmp.Solution.ShapeDelta);
+        }
+        finally { File.Delete(path); }
+    }
+
     [Fact]
     public void Compare_BaselineMissingAnchors_AddsPrecisionDiagnostic()
     {
         var baseline = """
-            { "total": 10, "surfaceTotal": 10, "internalComplexityTotal": 0, "byRule": {}, "groups": [] }
+            { "total": 10, "surfaceTotal": 10, "implementationShapeTotal": 0, "byRule": {}, "groups": [] }
             """;
         var path = Path.GetTempFileName();
         File.WriteAllText(path, baseline);
@@ -151,14 +173,14 @@ public class SurfaceScoreBaselineTests
         {
             total = baselineReadSurface,
             surfaceTotal = baselineReadSurface,
-            internalComplexityTotal = 0,
+            implementationShapeTotal = 0,
             byRule = new Dictionary<string, int>(),
             groups = new[]
             {
                 new
                 {
                     name = section, total = baselineReadSurface, surfaceTotal = baselineReadSurface,
-                    internalComplexityTotal = 0,
+                    implementationShapeTotal = 0,
                     byRule = new Dictionary<string, int> { ["readServiceInterfaceMethod"] = baselineReadSurface }
                 }
             },

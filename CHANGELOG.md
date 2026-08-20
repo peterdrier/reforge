@@ -4,6 +4,19 @@ What changed and why. Newest first.
 
 ## Unreleased - Populations named: exported interfaces, published write surface
 
+- **The second axis is `implementationShape`, not `internalComplexity`** (#19). The old name read as
+  an accessibility gate the axis has never had: it is a fixed rule partition, so public code scores
+  on it too. `implementationShapeTotal` in JSON, `implementationShape=` in compact, **Implementation
+  shape** in markdown; baselines written under the old key still compare. Pass 3 — the surface-axis
+  signature rules — is no longer also called "internal shape". Score-neutral: Humans 16,689 / 2,530,
+  reforge surface 53.
+- **`largeClass` keeps its weight, and #19's last open decision is recorded.** 16 Humans classes,
+  455 points, 8 of 44 sections; four classes over 1,700 LOC carry 270 of it. The partial-split
+  escape is already closed by summing partial declarations, the remaining one costs a partition of a
+  47-dependency constructor, and sizes do not bunch under the 750-line threshold — so the rule has
+  no cheap boundary of the kind that retired `longMethod`. Its Gate 1 exemption now states the real
+  reason: a 750-LOC threshold makes a fixture pair ~1,600 lines of synthetic class.
+
 - **`cognitiveComplexity` measures the call path, not the declaration; `longMethod` is retired**
   (#19). A private helper with exactly one caller is billed to that caller, transitively, so
   splitting a complex method into single-caller parts at the same nesting depth no longer moves the

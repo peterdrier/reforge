@@ -887,7 +887,7 @@ public sealed record ClassifiedType(
     /// <summary>
     /// Whether this type is visible outside its declaring assembly — see <see cref="SurfaceVisibility"/>.
     /// Internal types stay in the corpus (their implementation still counts toward the
-    /// internal-complexity axis) but score nothing on the surface axis.
+    /// implementation-shape axis) but score nothing on the surface axis.
     /// </summary>
     public bool IsExported => SurfaceVisibility.IsExported(Type);
 }

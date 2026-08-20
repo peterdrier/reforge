@@ -6,7 +6,7 @@ namespace Reforge;
 // bags, and dashboard/admin naming. The shape of a published signature, not its body.
 public sealed partial class SurfaceScoreEngine
 {
-    private async Task ScoreInternalShape(List<ClassifiedType> classified, ScoreReport report, CancellationToken ct)
+    private async Task ScoreSignatureShape(List<ClassifiedType> classified, ScoreReport report, CancellationToken ct)
     {
         var overflowWeight = _config.Weight("methodParameterOverflow");
         var boolWeight = _config.Weight("booleanParameter");

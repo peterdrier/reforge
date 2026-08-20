@@ -67,7 +67,7 @@ public static class SkillCommand
         reforge audit-ef                                    # EF Core pitfalls: sentinel defaults, string enums, interpolation in LINQ
         reforge audit-surface <type>                        # Per-method caller counts (prod/test); body shape for classes
         reforge audit-downstream <class>                    # Per-method outbound: dependency calls, DbSet read/write, external IO
-        reforge surface-score [--group X] [--top N]         # Solution-wide score: durable surface + dependency use + internal shape
+        reforge surface-score [--group X] [--top N]         # Solution-wide score: durable surface + dependency use + implementation shape
                               [--config path] [--list-groups]
                               [--format compact|markdown|json]
         ```
@@ -92,7 +92,7 @@ public static class SkillCommand
         The difference is reach: the folder is only reachable by referencing the whole assembly,
         while a satellite assembly can be referenced on its own — which is the point of the shape
         and also what makes it the hardest surface to withdraw. Credits and the
-        internal-complexity axis are never scaled. Each entry carries `origin` (`main` /
+        implementation-shape axis are never scaled. Each entry carries `origin` (`main` /
         `contracts`) and `multiplied`, and each group reports `mainSurfaceTotal` and
         `contractsSurfaceTotal` beside `surfaceTotal`.
 
@@ -185,7 +185,7 @@ public static class SkillCommand
           //     interface — via inheritance or "{Full}Read" sibling — where every observed call
           //     on the injected dep also exists on the read interface)
           //
-          // Internal shape (per method):
+          // Signature shape (per method):
           //   methodParameterOverflow (1, per param beyond 2), booleanParameter (3),
           //   tupleReturn (4), optionsBag (8), dashboardAdminPageName (6),
           //   oneImplementationInterface (8)

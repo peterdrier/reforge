@@ -283,7 +283,7 @@ public class SurfaceScoreTests
         // Positive surface charges only — the two exclusions are asserted separately below.
         var contracts = camp.Entries
             .Where(e => e.Origin == ScoreOrigin.Contracts && e.Points > 0
-                        && !SurfaceScoreRuleGroups.IsInternalComplexity(e.Rule))
+                        && !SurfaceScoreRuleGroups.IsImplementationShape(e.Rule))
             .ToList();
         Assert.NotEmpty(contracts);
         Assert.All(contracts, e => Assert.True(e.Multiplied, $"{e.Rule} on {e.Symbol} was not scaled"));
@@ -345,14 +345,14 @@ public class SurfaceScoreTests
     }
 
     [Fact]
-    public async Task ContractsMultiplier_DoesNotScaleCreditsOrInternalComplexity()
+    public async Task ContractsMultiplier_DoesNotScaleCreditsOrImplementationShape()
     {
         var report = await ScoreDefaultAsync();
 
         // Doubling a credit would make publishing pay, which inverts the rule's whole point.
         Assert.All(AllEntries(report).Where(e => e.Points < 0), e => Assert.False(e.Multiplied));
         // The internal axis is the counterweight to surface and has to keep one unit everywhere.
-        Assert.All(AllEntries(report).Where(e => SurfaceScoreRuleGroups.IsInternalComplexity(e.Rule)),
+        Assert.All(AllEntries(report).Where(e => SurfaceScoreRuleGroups.IsImplementationShape(e.Rule)),
             e => Assert.False(e.Multiplied));
     }
 
@@ -627,8 +627,8 @@ public class SurfaceScoreTests
     {
         var report = await ScoreDefaultAsync();
         Assert.True(report.SurfaceTotal > 0, "expected surface points");
-        Assert.True(report.InternalComplexityTotal > 0, "expected internal-complexity points from fixtures");
-        Assert.Equal(report.SurfaceTotal + report.InternalComplexityTotal, report.Total);
+        Assert.True(report.ImplementationShapeTotal > 0, "expected implementation-shape points from fixtures");
+        Assert.Equal(report.SurfaceTotal + report.ImplementationShapeTotal, report.Total);
     }
 
     // ---------------- Boundary-input surface ----------------
@@ -663,32 +663,32 @@ public class SurfaceScoreTests
     }
 
     [Fact]
-    public async Task BoundaryInputRules_AreOnSurfaceAxis_NotInternalComplexity()
+    public async Task BoundaryInputRules_AreOnSurfaceAxis_NotImplementationShape()
     {
         // The whole point: these counter a surface reduction, so they must land on surface.
         var report = await ScoreDefaultAsync();
         foreach (var rule in new[] { "publicInputWithHiddenState", "parameterBagInput", "inlineParameterObjectConstruction" })
-            Assert.False(SurfaceScoreRuleGroups.IsInternalComplexity(rule), $"{rule} must be a surface rule");
+            Assert.False(SurfaceScoreRuleGroups.IsImplementationShape(rule), $"{rule} must be a surface rule");
     }
 
     [Fact]
     public void Pareto_ParameterBagConsolidation_IsFlaggedEvenWhenInternalFlat()
     {
         // methodParameterOverflow falls (signature shortened) but equivalent input-bag surface
-        // appears — flagged regardless of verdict, even with internal complexity unchanged.
+        // appears — flagged regardless of verdict, even with implementation shape unchanged.
         var basePath = WriteBaselineJson(new
         {
             total = 1000,
             surfaceTotal = 1000,
-            internalComplexityTotal = 0,
+            implementationShapeTotal = 0,
             byRule = new Dictionary<string, int> { ["methodParameterOverflow"] = 30 }
         });
 
-        var now = new ScoreReport { SurfaceTotal = 1010, InternalComplexityTotal = 0, Total = 1010 };
+        var now = new ScoreReport { SurfaceTotal = 1010, ImplementationShapeTotal = 0, Total = 1010 };
         now.ByRule["methodParameterOverflow"] = 6;
         now.ByRule["parameterBagInput"] = 24;
         now.ByRule["publicInputWithHiddenState"] = 23;
-        var g = new GroupScore { Name = "Camps", SurfaceTotal = 1010, InternalComplexityTotal = 0 };
+        var g = new GroupScore { Name = "Camps", SurfaceTotal = 1010, ImplementationShapeTotal = 0 };
         g.ByRule["methodParameterOverflow"] = 6;
         g.ByRule["parameterBagInput"] = 24;
         g.Entries.Add(new ScoreEntry("parameterBagInput", 24, "CampRegistrationInput", "Camps", "CampFixtures.cs", 1, "CampRegistrationInput"));
@@ -734,25 +734,25 @@ public class SurfaceScoreTests
     [Fact]
     public void Pareto_TradedWithSmallInternalRise_StillEmitsSuspicious_WithSymbolAttribution()
     {
-        // Regression for PR #820 a51bfc62b: surfaceDelta -80, internalDelta only +10, verdict
+        // Regression for PR #820 a51bfc62b: surfaceDelta -80, shapeDelta only +10, verdict
         // traded — but suspiciousImprovements was empty (old threshold gated it out). A traded
         // verdict must ALWAYS be non-empty AND name the dispatcher symbol.
         var basePath = WriteBaselineJson(new
         {
             total = 1050,
             surfaceTotal = 1000,
-            internalComplexityTotal = 50,
+            implementationShapeTotal = 50,
             byRule = new Dictionary<string, int> { ["fullServiceInterfaceMethod"] = 200 },
             groups = new[]
             {
-                new { name = "Shifts", surfaceTotal = 300, internalComplexityTotal = 50, byRule = new Dictionary<string, int> { ["fullServiceInterfaceMethod"] = 120 } }
+                new { name = "Shifts", surfaceTotal = 300, implementationShapeTotal = 50, byRule = new Dictionary<string, int> { ["fullServiceInterfaceMethod"] = 120 } }
             }
         });
 
-        var now = new ScoreReport { SurfaceTotal = 920, InternalComplexityTotal = 60, Total = 980 };
+        var now = new ScoreReport { SurfaceTotal = 920, ImplementationShapeTotal = 60, Total = 980 };
         now.ByRule["fullServiceInterfaceMethod"] = 120;
         now.ByRule["actionDispatcher"] = 40;
-        var g = new GroupScore { Name = "Shifts", SurfaceTotal = 220, InternalComplexityTotal = 60 };
+        var g = new GroupScore { Name = "Shifts", SurfaceTotal = 220, ImplementationShapeTotal = 60 };
         g.ByRule["actionDispatcher"] = 40;
         g.Entries.Add(new ScoreEntry("actionDispatcher", 40, "ApplySignupActionAsync", "Shifts", "ShiftSignupService.cs", 42, "ApplySignupActionAsync (3-arm dispatch on action)"));
         now.Groups["Shifts"] = g;
@@ -793,7 +793,7 @@ public class SurfaceScoreTests
 
     private static ScoreReport MakeReport(int surface, int internalC, Dictionary<string, int> byRule)
     {
-        var r = new ScoreReport { SurfaceTotal = surface, InternalComplexityTotal = internalC, Total = surface + internalC };
+        var r = new ScoreReport { SurfaceTotal = surface, ImplementationShapeTotal = internalC, Total = surface + internalC };
         foreach (var (k, v) in byRule) r.ByRule[k] = v;
         return r;
     }
@@ -812,7 +812,7 @@ public class SurfaceScoreTests
         {
             total = surface + internalC,
             surfaceTotal = surface,
-            internalComplexityTotal = internalC,
+            implementationShapeTotal = internalC,
             combinedTotal = surface + internalC,
             byRule,
             groups = Array.Empty<object>()

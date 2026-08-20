@@ -91,7 +91,7 @@ public class TestMassTests
         var report = await Score();
 
         Assert.True(report.Tests.Loc > 0);
-        Assert.Equal(report.SurfaceTotal + report.InternalComplexityTotal, report.Total);
+        Assert.Equal(report.SurfaceTotal + report.ImplementationShapeTotal, report.Total);
         Assert.DoesNotContain(report.ByRule.Keys, k => k.Contains("test", StringComparison.OrdinalIgnoreCase));
     }
 }

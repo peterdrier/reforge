@@ -50,7 +50,7 @@ public static class SurfaceScoreRuleGlossary
         ["missingPrimaryInfoDto"] = "A repo-backed section has no DTO matching its primary Info DTO name.",
         ["readSurfaceProjectionMethod"] = "A read-service-interface method returns a projection, predicate, scalar fact, or composed view rather than the section's primary Info DTO.",
 
-        // Internal shape
+        // Signature shape
         ["methodParameterOverflow"] = "A public method has more than two parameters; points scale per parameter beyond two.",
         ["booleanParameter"] = "A public method has a boolean parameter (often a control flag that splits the method into hidden branches).",
         ["tupleReturn"] = "A public method's return type is a value tuple.",
@@ -58,7 +58,7 @@ public static class SurfaceScoreRuleGlossary
         ["dashboardAdminPageName"] = "A public method's name contains 'Dashboard', 'ForAdmin', 'ForPage', or 'AdminPage' — caller-shaped naming that often signals a leaked UI concern.",
         ["oneImplementationInterface"] = "A classified interface has exactly one classified class implementing it.",
 
-        // Internal complexity axis
+        // Implementation-shape axis
         ["largeClass"] = "A service/repository/controller class's nonblank line count exceeds 750; points scale with size (steeper past 1500 lines).",
         ["cognitiveComplexity"] = "SonarSource cognitive complexity (nesting-weighted branching) over a method's whole call path — its own body plus every private helper only it calls — exceeds the threshold; points scale with the excess.",
         ["actionDispatcher"] = "A method that mutates state dispatches on a parameter via a switch or if-chain whose arms route to different members with disjoint bodies (low arm cohesion); flagged on both the implementation and any interface method it implements. Surcharges apply when the selector is an action/mode enum, when the name is a generic verb (Apply/Handle/Process/Execute/Create/Save) that hides which operation runs, and when the declaring type is an application service. Read methods, arms sharing a base body, and state-machine entry points (transition validation/vocabulary) are exempt.",

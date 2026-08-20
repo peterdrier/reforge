@@ -12,7 +12,7 @@ namespace Reforge;
 /// <para>That has produced wrong numbers in a CHANGELOG, a design spec and a PR body. What made
 /// them convincing is that two runs against the same broken tree <i>agree with each other</i> —
 /// during #14 an A/B on a tree carrying 3,723 compilation errors matched on <c>typesAnalyzed</c>
-/// and <c>internalComplexityTotal</c> while reporting <c>canonicalReadDtoReturn</c> at -81 against
+/// and <c>implementationShapeTotal</c> while reporting <c>canonicalReadDtoReturn</c> at -81 against
 /// the clean tree's -162. Corpus agreement is not evidence of soundness; <c>build.degraded</c> is
 /// the only reliable check, and nothing forced anyone to make it.</para>
 ///

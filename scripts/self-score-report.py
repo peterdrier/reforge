@@ -52,6 +52,10 @@ def main():
     bm, hm = base["metrics"], head["metrics"]
     bt, ht = base["tests"], head["tests"]
 
+    # Both key spellings: the axis was renamed, and a baseline JSON can predate the rename.
+    def shape(r):
+        return r.get("implementationShapeTotal", r.get("internalComplexityTotal", 0))
+
     out = [
         MARKER,
         "## Reforge self-score",
@@ -64,7 +68,7 @@ def main():
         "| Axis | Base | Head | Δ |",
         "|---|---:|---:|---:|",
         row("Surface", base["surfaceTotal"], head["surfaceTotal"]),
-        row("Internal complexity", base["internalComplexityTotal"], head["internalComplexityTotal"]),
+        row("Implementation shape", shape(base), shape(head)),
         row("**Total**", base["total"], head["total"]),
         row("Types analyzed", base["typesAnalyzed"], head["typesAnalyzed"]),
         "",

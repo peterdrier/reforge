@@ -6,7 +6,7 @@ namespace Reforge;
 
 /// <summary>
 /// Which scoring axis a rule belongs to. The surface axis (durable public surface,
-/// dependency use, return shape) and the internal-complexity axis (implementation
+/// dependency use, return shape) and the implementation-shape axis (implementation
 /// cost of what hides behind that surface) are kept as <b>separate scalars</b> on
 /// purpose. They are never summed into a single number that a refactoring loop is
 /// allowed to optimize — that would let the loop trade surface for complexity and
@@ -15,7 +15,7 @@ namespace Reforge;
 /// </summary>
 public static class SurfaceScoreRuleGroups
 {
-    public static readonly IReadOnlySet<string> InternalComplexity = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    public static readonly IReadOnlySet<string> ImplementationShape = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "largeClass",
         "cognitiveComplexity",
@@ -24,7 +24,7 @@ public static class SurfaceScoreRuleGroups
         "flagsControlFlow"
     };
 
-    public static bool IsInternalComplexity(string rule) => InternalComplexity.Contains(rule);
+    public static bool IsImplementationShape(string rule) => ImplementationShape.Contains(rule);
 }
 
 /// <summary>
