@@ -12,15 +12,8 @@ public class SectionShapeTests
     public async Task SectionShape_RendersCampShapeAndAdvisory()
     {
         // Drive the analyzer directly (command IO is covered by a CLI smoke test in dogfooding).
-        // Section membership needs no config; only the escape hatch (visible debt) is policy.
+        // Section membership needs no config at all.
         var cfg = SurfaceScoreConfig.Default();
-        cfg.Sections["Camp"] = new SectionRule
-        {
-            EscapeHatchReadMethods =
-            {
-                new EscapeHatchReadMethod { Method = "ICampServiceRead.IsUserCampLeadAsync", Reason = "legacy", Since = "2026-02", Owner = "camps" }
-            }
-        };
 
         var dir = LocationHelper.GetSolutionDirectory(_fixture.Solution);
         var classified = (await SolutionClassifier.ClassifyAsync(_fixture.Solution, cfg, dir, CancellationToken.None)).ToList();
@@ -29,7 +22,6 @@ public class SectionShapeTests
 
         Assert.NotNull(camp.PrimaryInfoDto);
         Assert.NotEmpty(camp.DerivableReadMethods);                       // advisory present
-        Assert.Single(camp.EscapeHatches);                               // visible debt rendered
-        Assert.Contains(camp.ChargedReadMethods, m => m.Method == "IsUserCampLeadAsync" && m.EscapeHatch);
+        Assert.Contains(camp.ChargedReadMethods, m => m.Method == "IsUserCampLeadAsync");
     }
 }

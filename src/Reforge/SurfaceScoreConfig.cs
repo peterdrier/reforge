@@ -15,12 +15,12 @@ namespace Reforge;
 public sealed class SurfaceScoreConfig
 {
     /// <summary>
-    /// Per-section <b>policy</b>, keyed by the assembly-derived section name (e.g. "Store" for
-    /// <c>Humans.Store</c>). Purely optional: a section with no entry gets <see cref="SectionRule.None"/>.
-    /// This map no longer decides membership — it only carries the DTO anchors, surface-requirement
-    /// overrides, and visible-debt lists that cannot be derived from structure.
+    /// Top-level keys this version does not read, captured so a stale file is reported rather than
+    /// silently ignored. <c>sections</c> lives here: sections are the solution's assemblies, and
+    /// per-section policy is gone with the block that carried it.
     /// </summary>
-    public Dictionary<string, SectionRule> Sections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? Unrecognized { get; set; }
 
     public Dictionary<string, ClassificationRule> Classifications { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, int> Weights { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -129,7 +129,6 @@ public sealed class SurfaceScoreConfig
         // section names come from assembly names (a hand-written "camp" key vs the derived "Camp")
         // rather than being defined by these keys themselves. Rebuild before the defaults merge, so
         // TryAdd below also dedupes case-variants instead of keeping both.
-        loaded.Sections = CaseInsensitive(loaded.Sections);
         loaded.Classifications = CaseInsensitive(loaded.Classifications);
         loaded.Weights = CaseInsensitive(loaded.Weights);
 
@@ -293,77 +292,20 @@ public sealed class SurfaceScoreConfig
     public int Weight(string key) => Weights.TryGetValue(key, out var v) ? v : 0;
 
     /// <summary>
-    /// The policy block for an assembly-derived section, or <see cref="SectionRule.None"/> when
-    /// the section has no config entry (the normal case — policy is the exception, not the rule).
+    /// The warning for config keys this version no longer reads, or null when there are none.
+    /// A dropped key that used to change the score has to be visible: <c>sections</c> carried DTO
+    /// anchors, surface-requirement overrides and grandfathered debt, and a file still declaring it
+    /// would otherwise look like it were still doing that job.
     /// </summary>
-    public SectionRule Policy(string section) =>
-        Sections.TryGetValue(section, out var rule) ? rule : SectionRule.None;
-
-    /// <summary>
-    /// The warning for section blocks that still declare the removed <c>canonicalReadDtos</c> list,
-    /// or null when none do. Every command that resolves DTO anchors reports it — the field used to
-    /// change both the return-type score and the primary/settings anchors, so silence would let a
-    /// stale config look like it is still doing its job.
-    /// </summary>
-    public string? RemovedCanonicalReadDtosWarning()
+    public string? UnreadConfigKeysWarning()
     {
-        var stale = Sections
-            .Where(s => s.Value.DeclaresRemovedCanonicalReadDtos)
-            .Select(s => s.Key)
-            .OrderBy(k => k, StringComparer.Ordinal)
-            .ToList();
-        if (stale.Count == 0) return null;
+        if (Unrecognized is null || Unrecognized.Count == 0) return null;
 
-        return $"'canonicalReadDtos' is no longer read and is ignored in: {string.Join(", ", stale)}. " +
-               "Canonical read DTOs are derived from each section's exported contracts surface " +
-               "(a <Section>.Contracts assembly, or a Contracts/ folder in the section's assembly).";
+        var keys = Unrecognized.Keys.OrderBy(k => k, StringComparer.Ordinal).ToList();
+        return $"Config declares keys this version does not read, so they are ignored: {string.Join(", ", keys)}. " +
+               "Sections are the solution's assemblies and carry no config policy; type classification " +
+               "is the only per-project input.";
     }
-}
-
-/// <summary>
-/// Per-section policy: the facts about a section that structure cannot state. Section
-/// <i>membership</i> is not here — that is the containing assembly (see <see cref="AssemblySections"/>).
-/// </summary>
-public sealed class SectionRule
-{
-    /// <summary>Shared empty policy for sections with no config entry. Never mutated by the engine.</summary>
-    public static readonly SectionRule None = new();
-
-    /// <summary>
-    /// Config members this version no longer reads, captured so a stale block can be reported
-    /// instead of silently changing meaning. <c>canonicalReadDtos</c> lived here until it became
-    /// derived (see <see cref="CanonicalReadDtoSet"/>).
-    /// </summary>
-    [JsonExtensionData]
-    public Dictionary<string, JsonElement>? Unrecognized { get; set; }
-
-    /// <summary>Primary read/cache DTO for this section. Default convention: "&lt;Section&gt;Info".</summary>
-    public string? PrimaryInfoDto { get; set; }
-    /// <summary>Settings DTO for this section. Default convention: "&lt;Section&gt;SettingsInfo".</summary>
-    public string? SettingsInfoDto { get; set; }
-    /// <summary>Cache value DTO. Default: == PrimaryInfoDto; else inferred from a caching decorator.</summary>
-    public string? CacheDto { get; set; }
-    /// <summary>Documented read shards (narrow read models intentionally split off the primary read surface).</summary>
-    public List<ReadShard> ReadShards { get; set; } = new();
-    /// <summary>Override: does this section require a read surface? Null = inferred from repo-backed.</summary>
-    public bool? RequiresReadSurface { get; set; }
-    /// <summary>Override: does this section require a write/full surface? Null = inferred from repo-backed.</summary>
-    public bool? RequiresWriteSurface { get; set; }
-    /// <summary>Override: does this section require a primary Info DTO? Null = inferred from repo-backed.</summary>
-    public bool? RequiresPrimaryInfoDto { get; set; }
-    /// <summary>
-    /// Whether this block still carries the removed <c>canonicalReadDtos</c> list. The set is now
-    /// derived from the section's exported contracts surface, so the list is inert — and inert
-    /// config that used to grant credit and suppress a penalty must be reported, not ignored.
-    /// </summary>
-    public bool DeclaresRemovedCanonicalReadDtos =>
-        Unrecognized is not null
-        && Unrecognized.Keys.Any(k => k.Equals("canonicalReadDtos", StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>Cross-section write/full dependencies exempt from crossSectionWriteSurface (visible debt).</summary>
-    public List<GrandfatheredDependency> GrandfatheredDependencies { get; set; } = new();
-    /// <summary>Read methods exempt from readSurfaceProjectionMethod (visible debt).</summary>
-    public List<EscapeHatchReadMethod> EscapeHatchReadMethods { get; set; } = new();
 }
 
 public sealed class ClassificationRule
@@ -375,29 +317,8 @@ public sealed class ClassificationRule
     public List<string> AttributeNames { get; set; } = new();
 }
 
-public sealed class ReadShard
-{
-    public string Name { get; set; } = "";
-    public string Purpose { get; set; } = "";
-}
 
-public sealed class GrandfatheredDependency
-{
-    /// <summary>"CallerType" or "CallerType-&gt;ICalleeInterface".</summary>
-    public string Dependency { get; set; } = "";
-    public string Reason { get; set; } = "";
-    public string Since { get; set; } = "";
-    public string? Owner { get; set; }
-}
 
-public sealed class EscapeHatchReadMethod
-{
-    /// <summary>Glob over "Interface.Method" or "Method".</summary>
-    public string Method { get; set; } = "";
-    public string Reason { get; set; } = "";
-    public string Since { get; set; } = "";
-    public string? Owner { get; set; }
-}
 
 /// <summary>
 /// Compiled matchers — glob-to-regex once, then reuse. The regex cache lives here
