@@ -105,9 +105,6 @@ public class GateOneFixtureTests
         // Isolation removed that blocker — a variant compiled alone IS a section — so they now
         // measure correctly and are merely unwritten. Writing them needs a fixture that establishes
         // a section shape, which is more than a type per file.
-        "missingReadSurface",
-        "missingWriteSurface",
-        "missingPrimaryInfoDto",
         "readSurfaceProjectionMethod",
 
         // Cross-section rules: they only fire when the consumer and the dependency are in
@@ -125,7 +122,6 @@ public class GateOneFixtureTests
         // repo-backed and switch the missing* rules on for every other Gate 1 fixture's
         // neighbourhood. That is why the harness's own probe uses a service. Fixturing it needs the
         // satellite to be excluded from the full-solution build first, which is a harness change.
-        "crossSectionRepository",
         // crossSectionWriteSurface needs its third condition — every observed call read-covered
         // with no escape — to hold, and it measured 0/47 on Humans. Writing a fixture that fires it
         // is easy and would say nothing about why it never fires in the field; the
