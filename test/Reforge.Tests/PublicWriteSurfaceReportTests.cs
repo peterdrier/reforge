@@ -50,6 +50,20 @@ public class PublicWriteSurfaceReportTests
         Assert.Contains("_No scored items found._", output);
     }
 
+    [Fact]
+    public void TextFormats_SayZeroRatherThanNothingWhenNoSectionPublishes()
+    {
+        var report = new ScoreReport();
+        report.MetricsBySection["Quiet"] = SectionMetrics.Empty;
+        report.ConfiguredSections.Add("Quiet");
+
+        // A measured zero and a report that predates the metric must not look the same.
+        Assert.Contains("publicWriteSurface (reported, unscored): 0/1 sections, 0 interfaces",
+            Capture(() => SurfaceScoreCommand.WriteCompact(report, null, 10, 25, null)));
+        Assert.Contains("0 of 1 sections publish write capability",
+            Capture(() => SurfaceScoreCommand.WriteMarkdown(report, null, 10, 25, null)));
+    }
+
     private static ScoreReport ReportWithUnscoredPublisher()
     {
         var report = new ScoreReport();

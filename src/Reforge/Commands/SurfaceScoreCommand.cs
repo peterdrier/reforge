@@ -778,10 +778,13 @@ public static class SurfaceScoreCommand
         };
     }
 
+    /// <summary>
+    /// The block for the two text formats. The summary line is emitted even at zero — a reader who
+    /// sees nothing cannot tell a measured zero from a report that predates the metric.
+    /// </summary>
     private static IEnumerable<string> PublicWriteSurfaceLines(ScoreReport report, string? groupFilter, bool markdown)
     {
         var (sections, publishing, interfaces) = PublicWriteSurface(report, groupFilter);
-        if (publishing.Length == 0) yield break;
 
         yield return markdown
             ? $"## publicWriteSurface — {publishing.Length} of {sections} sections publish write capability ({interfaces} interfaces, reported and unscored)"
