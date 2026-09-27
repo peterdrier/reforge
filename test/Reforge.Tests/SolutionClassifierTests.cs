@@ -548,7 +548,9 @@ public class SolutionClassifierTests
     {
         var facts = SectionFacts.For("Camp", RepoSections("Camp"));
         Assert.True(facts.RepoBacked);
-        Assert.True(facts.RequiresReadSurface);
+        Assert.False(facts.RequiresReadSurface);
+        Assert.True(SectionFacts.For("Camp", RepoSections("Camp"),
+            hasCrossSectionServiceConsumer: true).RequiresReadSurface);
         Assert.True(facts.RequiresWriteSurface);
         Assert.True(facts.RequiresPrimaryInfoDto);
     }

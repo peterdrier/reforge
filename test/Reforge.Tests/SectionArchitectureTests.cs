@@ -74,7 +74,7 @@ public class SectionArchitectureTests
         // Each fixture section is its own assembly; repo-backing is read off what it declares.
         var report = await Score();
 
-        Assert.True(report.Groups["Lodge"].ByRule.ContainsKey("missingReadSurface"));
+        Assert.False(report.Groups["Lodge"].ByRule.ContainsKey("missingReadSurface"));
         Assert.True(report.Groups["Dorm"].ByRule.ContainsKey("missingWriteSurface"));
         Assert.True(report.Groups["Tent"].ByRule.ContainsKey("missingPrimaryInfoDto"));
 

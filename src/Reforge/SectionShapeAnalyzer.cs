@@ -114,6 +114,27 @@ public static class SectionShapeAnalyzer
                       .Select(c => c.Group),
             StringComparer.OrdinalIgnoreCase);
 
+        // A read surface is only required when an exported full-service interface is actually
+        // consumed across a section boundary. Repo-backing alone does not imply a public API.
+        var sectionsWithCrossSectionServiceConsumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var consumer in classified.Where(c => c.Type.TypeKind == TypeKind.Class))
+        {
+            foreach (var ctor in consumer.Type.Constructors.Where(ctor => !ctor.IsImplicitlyDeclared))
+            {
+                foreach (var param in ctor.Parameters)
+                {
+                    var dependencyKey = SolutionClassifier.TypeKey(param.Type);
+                    if (!typesByDisplay.TryGetValue(dependencyKey, out var dependency)
+                        || !dependency.IsExported
+                        || !dependency.Tags.Contains("fullServiceInterface")
+                        || string.Equals(dependency.Group, consumer.Group, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    sectionsWithCrossSectionServiceConsumers.Add(dependency.Group);
+                }
+            }
+        }
+
         // Canonical DTO simple names — the set DtoInventory descends into. Behavioral, not
         // nominal: a type counts if it is dto-tagged OR is a pure data carrier (public props,
         // no public methods). The behavioral fallback keeps child-DTO descent working even when
@@ -144,7 +165,8 @@ public static class SectionShapeAnalyzer
             var readIfaceTypes = members.Where(c => c.Tags.Contains("readServiceInterface")).ToList();
             var fullIfaceTypes = members.Where(c => c.Tags.Contains("fullServiceInterface")).ToList();
 
-            var facts = SectionFacts.For(name, repoSectionNames);
+            var facts = SectionFacts.For(name, repoSectionNames,
+                sectionsWithCrossSectionServiceConsumers.Contains(name));
 
             // Resolve primary / settings DTO: <Section>Info convention -> derived canonical read
             // DTO fallback. The fallback matters for sections whose names are plural ("Camps") but
