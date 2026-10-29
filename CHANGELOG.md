@@ -2,6 +2,19 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Moving a helper to another type no longer lowers its caller's complexity
+
+- **`cognitiveComplexity` charges what a type boundary hides** (#76). A single-caller method in
+  another type still scores on its own, and its caller's group is charged what the split kept under
+  the threshold, at most one threshold per group. One move, or a chain of them, now charges exactly
+  what the same code charged in one type; a dispatcher calling thirty single-use methods pays at most
+  15. Dogfood implementation shape goes from 2732 to 2903.
+- **An interface implementation folds when it is the only implementation** of every member it
+  implements, and calls through the interface resolve to it, so hiding a helper behind a new
+  one-member interface no longer escapes the charge.
+- **Still open:** a group that calls two or more single-caller methods in other types escapes
+  whatever they hide beyond one threshold.
+
 ## Unreleased - Widening a helper no longer lowers its caller's complexity
 
 - **`cognitiveComplexity` folds a single-caller helper whatever its accessibility** (#73), within
