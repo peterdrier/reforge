@@ -134,13 +134,27 @@ public class SurfaceCensusTests
         var report = await ScoreAsync();
         var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None);
 
-        Assert.Equal(report.MetricsBySection.Count + 1, rows.Count);
+        Assert.Equal(report.ConfiguredSections.Count + 1, rows.Count);
         Assert.Equal(SectionSnapshotAnalyzer.SolutionRow, rows[^1].Section);
         var camp = rows.Single(r => r.Section == "Camp");
         Assert.Equal(report.MetricsBySection["Camp"].LocProd, camp.LocProd);
         Assert.Equal(report.SurfaceBySection["Camp"].ExportedWriteMethods, camp.ExportedWriteMethods);
         Assert.Equal(report.TestsBySection["Camp"].Loc, camp.TestLoc);
         Assert.Equal(report.Surface.ExportedTypes, rows[^1].ExportedTypes);
+    }
+
+    [Fact]
+    public async Task SectionSnapshot_CsvNumbersAreInvariant_UnderACommaDecimalCulture()
+    {
+        var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, CancellationToken.None);
+        var original = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
+            var csv = SectionSnapshotAnalyzer.ToCsv(rows, header: true).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            Assert.All(csv, line => Assert.Equal(SectionSnapshotAnalyzer.CsvHeader.Length, line.Split(',').Length));
+        }
+        finally { System.Globalization.CultureInfo.CurrentCulture = original; }
     }
 
     [Fact]
