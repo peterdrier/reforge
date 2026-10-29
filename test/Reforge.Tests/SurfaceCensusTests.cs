@@ -146,7 +146,7 @@ public class SurfaceCensusTests
     [Fact]
     public async Task SectionSnapshot_CsvNumbersAreInvariant_UnderACommaDecimalCulture()
     {
-        var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, CancellationToken.None);
+        var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None);
         var original = System.Globalization.CultureInfo.CurrentCulture;
         try
         {

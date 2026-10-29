@@ -150,9 +150,25 @@ public static class SectionSnapshotAnalyzer
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Appends rows to a history file, writing the header first when the file is new or empty.
+    /// A file whose first line is not this version's header is refused rather than appended to:
+    /// rows wider or narrower than the header would mislabel every later column, and the
+    /// mismatch would not show until something charted it.
+    /// </summary>
     public static void AppendCsv(IReadOnlyList<SectionSnapshotRow> rows, string path)
     {
         bool writeHeader = !File.Exists(path) || new FileInfo(path).Length == 0;
+        if (!writeHeader)
+        {
+            var expected = string.Join(",", CsvHeader);
+            using var reader = new StreamReader(path);
+            var first = (reader.ReadLine() ?? "").TrimEnd('\r');
+            if (!string.Equals(first, expected, StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    $"{path}: header does not match this version's {CsvHeader.Length} columns " +
+                    $"(file has {first.Split(',').Length}); start a new file for this schema rather than mixing row widths.");
+        }
         File.AppendAllText(path, ToCsv(rows, writeHeader));
     }
 }

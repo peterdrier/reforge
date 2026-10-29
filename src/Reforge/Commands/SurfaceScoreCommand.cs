@@ -413,8 +413,11 @@ public static class SurfaceScoreCommand
         sb.AppendLine($"- **Corpus**{(groupFilter is null ? "" : $" (`{groupFilter}`)")}: " +
                       $"{MetricsLine(ScopedMetrics(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
         sb.AppendLine($"- **Surface**: {SurfaceLine(ScopedSurface(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
-        if (report.CoverageFormat is not null)
-            sb.AppendLine($"- **Coverage**: {CoverageLine(ScopedCoverage(report, FilterAndOrderGroups(report, groupFilter), groupFilter))} ({report.CoverageFormat})");
+        // Gated on the scoped value, not on whether a report was given: a report that matched
+        // nothing in this scope leaves it unmeasured, which must not print as a measured 0%.
+        var markdownCoverage = ScopedCoverage(report, FilterAndOrderGroups(report, groupFilter), groupFilter);
+        if (markdownCoverage.HasData)
+            sb.AppendLine($"- **Coverage**: {CoverageLine(markdownCoverage)} ({report.CoverageFormat})");
         sb.AppendLine($"- **Groups**: {report.Groups.Count}");
         sb.AppendLine($"- **Config**: {(report.ConfigPath ?? "(defaults, no reforge.surface-score.json found)")}");
         sb.AppendLine();
