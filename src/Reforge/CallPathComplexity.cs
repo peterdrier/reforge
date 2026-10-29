@@ -5,8 +5,7 @@ namespace Reforge;
 
 /// <summary>
 /// One method's complexity measured over its <b>call path</b> rather than its declaration:
-/// its own cognitive complexity plus that of every private single-caller helper it invokes,
-/// transitively.
+/// its own cognitive complexity plus that of every single-caller helper it invokes, transitively.
 /// </summary>
 /// <param name="Score">Cognitive complexity of the whole call path.</param>
 /// <param name="Own">The part contributed by the method's own body.</param>
@@ -22,7 +21,7 @@ public readonly record struct CallPathScore(
 /// <summary>
 /// Resolves each method's call-path complexity for a solution.
 /// <para>
-/// A private method with exactly one caller is not a method — it is part of its caller, and
+/// A method with exactly one caller is not a method — it is part of its caller, and
 /// measuring it separately is what let a long method be split into single-caller parts for a lower
 /// score while the code got worse. Folding removes the reward for splitting by volume: move a block
 /// into a helper at the same nesting depth and the number does not move.
@@ -38,7 +37,7 @@ public readonly record struct CallPathScore(
 /// the two levels of nesting the split removed.
 /// </para>
 /// <para>
-/// Two details are load-bearing and both were established by measuring the alternatives:
+/// Four details are load-bearing:
 /// <list type="bullet">
 /// <item>Fold only into the <b>sole</b> caller. A helper with two callers is shared code and folding
 /// it into both would count it twice; it also stops folding the moment it gains a second caller,
@@ -46,6 +45,17 @@ public readonly record struct CallPathScore(
 /// <item>Follow <b>invocations</b>, not method groups. A method handed to something else as a
 /// delegate is a separate entry point — folding registered callbacks read a Roslyn analyzer's
 /// six-line <c>Initialize</c> as a 129-line body.</item>
+/// <item>Fold <b>regardless of accessibility</b>. Widening a helper must never lower a score; if
+/// only private helpers folded, making one internal would take its complexity out of its caller's
+/// reading for free. Complexity is therefore independent of visibility and surface pricing alone
+/// orders it. Excluded is what the sole-caller premise does not hold for: overrides and interface
+/// implementations, whose callers bind to the base or interface member and so are not seen here.
+/// A virtual method is still folded, since a call through its declaring type binds to it, or
+/// <c>protected virtual</c> would be the escape.</item>
+/// <item>Fold only within one <b>top-level type</b>, which is where a private helper's caller
+/// already had to be, so the boundary does not move with visibility. Folding across types reads a
+/// composition root as the whole program: this repo's <c>CommandRegistry.Create</c>, which calls
+/// each command's <c>Create</c> once, read CC 2502 over 234 methods.</item>
 /// </list>
 /// </para>
 /// </summary>
@@ -71,94 +81,150 @@ public static class CallPathComplexity
         public int Lines;
         public string Name = "";
         public bool Scored;      // an ordinary method the complexity pass can charge
-        public bool Private;
+        public bool Foldable;    // every call to it binds to this symbol
+        public string TopType = "";
     }
 
     /// <summary>
     /// The fold for one solution. <paramref name="analyzedAssemblies"/> is the classifier's admitted
-    /// set, which is also how test projects stay out: a private helper is only reachable from its own
-    /// type, so no caller can live in a project this skips.
+    /// set, which is also how test projects stay out. A call from a skipped project is not counted:
+    /// a test exercising a helper is not a second production caller, and a helper that folds when it
+    /// should not is still charged, in its caller, so the error cannot lower a score.
     /// </summary>
     public static async Task<CallPathFold> BuildAsync(Solution solution,
         HashSet<string> analyzedAssemblies, CancellationToken ct)
     {
+        // Declarations from every project before edges in any: a non-private helper's second
+        // caller can live in another assembly, and a second caller anywhere makes it shared code.
         var graph = new Graph();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var trees = new List<(SyntaxNode Root, SemanticModel Model)>();
         foreach (var project in solution.Projects)
         {
             ct.ThrowIfCancellationRequested();
             if (project.AssemblyName is null || !analyzedAssemblies.Contains(project.AssemblyName)) continue;
             var compilation = await project.GetCompilationAsync(ct);
-            if (compilation is not null) await CollectProjectAsync(compilation, graph, ct);
+            if (compilation is not null) await CollectDeclarationsAsync(compilation, graph, names, trees, ct);
+        }
+        if (names.Count > 0)
+        {
+            foreach (var (root, model) in trees)
+            {
+                ct.ThrowIfCancellationRequested();
+                CollectEdges(root, model, graph, names, ct);
+            }
         }
 
-        // Foldable: private, exactly one caller, not itself, and the caller is a method the
-        // complexity pass can charge. Without that last condition a helper called only from a
-        // constructor or a property accessor would fold into something that is never scored and
-        // so drop out of the report entirely.
-        var foldable = new HashSet<string>(StringComparer.Ordinal);
+        // Foldable: exactly one caller, not itself, invoked by it rather than handed onward as a
+        // delegate, and the caller is a method the complexity pass can charge. Each condition keeps
+        // a helper from being folded away into something that never bills it — a constructor, a
+        // property accessor, or a caller that only registers it — and so dropping out of the report.
+        var soleCaller = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (key, info) in graph.Methods)
         {
-            if (!info.Private) continue;
+            if (!info.Foldable) continue;
             if (!graph.Callers.TryGetValue(key, out var cs) || cs.Count != 1 || cs.Contains(key)) continue;
-            if (graph.Methods.TryGetValue(cs.First(), out var caller) && caller.Scored) foldable.Add(key);
+            var callerKey = cs.First();
+            if (graph.Methods.TryGetValue(callerKey, out var caller) && caller.Scored
+                && caller.TopType == info.TopType
+                && graph.Callees.TryGetValue(callerKey, out var invoked) && invoked.Contains(key))
+                soleCaller[key] = callerKey;
         }
+        BreakCycles(soleCaller);
 
+        var foldable = soleCaller.Keys.ToHashSet(StringComparer.Ordinal);
         return new CallPathFold(Fold(graph, foldable), foldable);
     }
 
     /// <summary>
-    /// Declarations first: the private names collected here are the only ones worth resolving in the
-    /// reference walk, which is what keeps this pass affordable — most invocations in a project
-    /// target framework or cross-type members that can never fold.
+    /// Methods that are each other's sole caller (<c>Render</c> calls <c>RenderChildren</c>, which
+    /// calls <c>Render</c>) would all fold away with no root left to bill them. Each such cycle
+    /// keeps one member, the ordinally first, as its root.
     /// </summary>
-    private static async Task CollectProjectAsync(Compilation compilation, Graph graph, CancellationToken ct)
+    private static void BreakCycles(Dictionary<string, string> soleCaller)
     {
-        var privateNames = new HashSet<string>(StringComparer.Ordinal);
-        var trees = new List<(SyntaxNode Root, SemanticModel Model)>();
+        foreach (var start in soleCaller.Keys.Order(StringComparer.Ordinal).ToList())
+        {
+            var walk = new List<string>();
+            var cur = start;
+            while (soleCaller.TryGetValue(cur, out var next) && !walk.Contains(cur))
+            {
+                walk.Add(cur);
+                cur = next;
+            }
+            int at = walk.IndexOf(cur);
+            if (at >= 0) soleCaller.Remove(walk.Skip(at).Min(StringComparer.Ordinal)!);
+        }
+    }
+
+    /// <summary>
+    /// The foldable names collected here are the only ones worth resolving in the reference walk,
+    /// which is what keeps this pass affordable — most invocations target framework members that
+    /// can never fold.
+    /// </summary>
+    private static async Task CollectDeclarationsAsync(Compilation compilation, Graph graph,
+        HashSet<string> names, List<(SyntaxNode Root, SemanticModel Model)> trees, CancellationToken ct)
+    {
+        var implementing = new Dictionary<INamedTypeSymbol, HashSet<ISymbol>>(SymbolEqualityComparer.Default);
         foreach (var tree in compilation.SyntaxTrees)
         {
             if (GeneratedCode.IsGeneratedFile(tree.FilePath)) continue;
             var model = compilation.GetSemanticModel(tree);
             var root = await tree.GetRootAsync(ct);
             trees.Add((root, model));
-            CollectDeclarations(root, model, graph, privateNames, ct);
-        }
-        if (privateNames.Count == 0) return;
 
-        foreach (var (root, model) in trees)
-        {
-            ct.ThrowIfCancellationRequested();
-            CollectEdges(root, model, graph, privateNames, ct);
+            foreach (var decl in root.DescendantNodes().OfType<BaseMethodDeclarationSyntax>())
+            {
+                if (model.GetDeclaredSymbol(decl, ct) is not IMethodSymbol m) continue;
+                bool ordinary = m.MethodKind == MethodKind.Ordinary
+                    && m.AssociatedSymbol is null && !m.IsImplicitlyDeclared;
+                bool classOrStruct = m.ContainingType.TypeKind is TypeKind.Class or TypeKind.Struct;
+                var info = new MethodInfo
+                {
+                    Cognitive = ImplementationComplexity.CognitiveDetail(decl).Score,
+                    Lines = ImplementationComplexity.NonBlankLines(decl),
+                    Name = m.Name,
+                    TopType = Key(TopLevelType(m.ContainingType)),
+                    Scored = ordinary && classOrStruct,
+                    Foldable = ordinary && classOrStruct && !m.IsAbstract && !m.IsOverride
+                        && !ImplementsInterface(m, implementing)
+                };
+                graph.Methods[Key(m)] = info;
+                if (info.Foldable) names.Add(m.Name);
+            }
         }
     }
 
-    private static void CollectDeclarations(SyntaxNode root, SemanticModel model, Graph graph,
-        HashSet<string> privateNames, CancellationToken ct)
+    private static INamedTypeSymbol TopLevelType(INamedTypeSymbol type)
     {
-        foreach (var decl in root.DescendantNodes().OfType<BaseMethodDeclarationSyntax>())
+        while (type.ContainingType is { } outer) type = outer;
+        return type;
+    }
+
+    /// <summary>Whether <paramref name="m"/> implicitly implements an interface member.</summary>
+    private static bool ImplementsInterface(IMethodSymbol m,
+        Dictionary<INamedTypeSymbol, HashSet<ISymbol>> implementing)
+    {
+        if (m.DeclaredAccessibility != Accessibility.Public) return false;
+        var type = m.ContainingType;
+        if (!implementing.TryGetValue(type, out var set))
         {
-            if (model.GetDeclaredSymbol(decl, ct) is not IMethodSymbol m) continue;
-            var info = new MethodInfo
-            {
-                Cognitive = ImplementationComplexity.CognitiveDetail(decl).Score,
-                Lines = ImplementationComplexity.NonBlankLines(decl),
-                Name = m.Name,
-                Scored = m.MethodKind == MethodKind.Ordinary
-                    && m.AssociatedSymbol is null && !m.IsImplicitlyDeclared,
-                Private = m.DeclaredAccessibility == Accessibility.Private && !m.IsAbstract
-            };
-            graph.Methods[Key(m)] = info;
-            if (info.Private) privateNames.Add(m.Name);
+            set = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+            foreach (var member in type.AllInterfaces.SelectMany(i => i.GetMembers()))
+                if (type.FindImplementationForInterfaceMember(member) is IMethodSymbol impl)
+                    set.Add(impl.OriginalDefinition);
+            implementing[type] = set;
         }
+        return set.Contains(m);
     }
 
     private static void CollectEdges(SyntaxNode root, SemanticModel model, Graph graph,
-        HashSet<string> privateNames, CancellationToken ct)
+        HashSet<string> names, CancellationToken ct)
     {
         foreach (var node in root.DescendantNodes())
         {
             if (node is not SimpleNameSyntax name) continue;
-            if (!privateNames.Contains(name.Identifier.ValueText)) continue;
+            if (!names.Contains(name.Identifier.ValueText)) continue;
             var callee = FoldableCallee(name, model, graph, ct);
             if (callee is null) continue;
             var enclosing = EnclosingMethodKey(name, model, ct);
@@ -169,15 +235,15 @@ public static class CallPathComplexity
         }
     }
 
-    /// <summary>The private method this name refers to, or null when it is not one.</summary>
+    /// <summary>The foldable method this name refers to, or null when it is not one.</summary>
     private static string? FoldableCallee(SimpleNameSyntax name, SemanticModel model, Graph graph,
         CancellationToken ct)
     {
         if (name.Parent is MemberAccessExpressionSyntax ma && ma.Name != name) return null;
         if (name.Parent is BaseMethodDeclarationSyntax) return null;
         if (model.GetSymbolInfo(name, ct).Symbol is not IMethodSymbol called) return null;
-        var key = Key(called.OriginalDefinition);
-        return graph.Methods.TryGetValue(key, out var target) && target.Private ? key : null;
+        var key = Key((called.ReducedFrom ?? called).OriginalDefinition);
+        return graph.Methods.TryGetValue(key, out var target) && target.Foldable ? key : null;
     }
 
     private static Dictionary<string, CallPathScore> Fold(Graph graph, HashSet<string> foldable)
@@ -242,7 +308,7 @@ public static class CallPathComplexity
         || name.Parent is MemberBindingExpressionSyntax mb && mb.Parent is InvocationExpressionSyntax;
 
     /// <summary>
-    /// Assembly-qualified, so two projects' identically named private helpers never share an entry.
+    /// Assembly-qualified, so two projects' identically named helpers never share an entry.
     /// </summary>
     public static string Key(ISymbol s) => $"{s.ContainingAssembly?.Name}|{s.ToDisplayString()}";
 }
