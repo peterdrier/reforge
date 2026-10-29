@@ -119,7 +119,10 @@ public static class MethodBehaviourAnalyzer
         await foreach (var doc in SolutionWalker.ProductionDocumentsAsync(solution, ct))
         {
             var fromAssembly = doc.Project.AssemblyName;
-            if (!sectionByAssembly.TryGetValue(fromAssembly, out var fromSection)) continue;
+            // A consumer with no classified type of its own (a host that is only top-level
+            // statements, say) still names other assemblies' symbols, and those uses count. It
+            // has no section, so it contributes no edge.
+            sectionByAssembly.TryGetValue(fromAssembly, out var fromSection);
 
             foreach (var name in doc.Root.DescendantNodes().OfType<SimpleNameSyntax>())
             {
@@ -168,7 +171,7 @@ public static class MethodBehaviourAnalyzer
 
                 if (toSection is null) continue;
 
-                if (declaringAssembly != fromAssembly
+                if (declaringAssembly != fromAssembly && fromSection is not null
                     && !string.Equals(toSection, fromSection, StringComparison.OrdinalIgnoreCase))
                 {
                     var edge = (fromSection, toSection);

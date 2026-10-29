@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Microsoft.CodeAnalysis;
 
@@ -80,11 +81,14 @@ public static class SectionSnapshotAnalyzer
         var commit = SnapshotAnalyzer.TryGetGitCommit(solution);
         var solutionName = Path.GetFileName(solution.FilePath ?? "");
 
+        // One row per section of the corpus, not per section with metrics: a section whose every
+        // declaration is generated has no metrics entry but is still a section with a census.
+        var sections = classified.Select(c => c.Group).Distinct(StringComparer.OrdinalIgnoreCase);
         var rows = new List<SectionSnapshotRow>();
-        foreach (var section in metricsBySection.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
+        foreach (var section in sections.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
         {
             rows.Add(Row(commitDate, commit, solutionName, section,
-                metricsBySection[section],
+                metricsBySection.TryGetValue(section, out var m) ? m : SectionMetrics.Empty,
                 census.BySection.TryGetValue(section, out var c) ? c : SurfaceCensus.Empty,
                 testsBySection.TryGetValue(section, out var t) ? t : TestMass.Empty,
                 coverageBySection.TryGetValue(section, out var cov) ? cov : SectionCoverage.Empty));
@@ -131,8 +135,9 @@ public static class SectionSnapshotAnalyzer
             {
                 r.CommitDate, r.Commit, Commands.SnapshotCommand.CsvEscape(r.Solution), Commands.SnapshotCommand.CsvEscape(r.Section),
                 r.LocProd.ToString(), r.Files.ToString(), r.Classes.ToString(), r.Interfaces.ToString(), r.Methods.ToString(),
-                r.CognitiveAvg.ToString("F2"), r.CognitiveP95.ToString(), r.CognitiveMax.ToString(),
-                r.CyclomaticAvg.ToString("F2"), r.CyclomaticP95.ToString(), r.CyclomaticMax.ToString(),
+                // Invariant: a comma decimal separator would split the cell.
+                r.CognitiveAvg.ToString("F2", CultureInfo.InvariantCulture), r.CognitiveP95.ToString(), r.CognitiveMax.ToString(),
+                r.CyclomaticAvg.ToString("F2", CultureInfo.InvariantCulture), r.CyclomaticP95.ToString(), r.CyclomaticMax.ToString(),
                 r.MaxClassLoc.ToString(), Commands.SnapshotCommand.CsvEscape(r.MaxClassLocName),
                 r.ExportedTypes.ToString(), r.InternalTypes.ToString(),
                 r.ExportedReadMethods.ToString(), r.ExportedWriteMethods.ToString(),
@@ -146,9 +151,25 @@ public static class SectionSnapshotAnalyzer
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Appends rows to a history file, writing the header first when the file is new or empty.
+    /// A file whose first line is not this version's header is refused rather than appended to:
+    /// rows wider or narrower than the header would mislabel every later column, and the
+    /// mismatch would not show until something charted it.
+    /// </summary>
     public static void AppendCsv(IReadOnlyList<SectionSnapshotRow> rows, string path)
     {
         bool writeHeader = !File.Exists(path) || new FileInfo(path).Length == 0;
+        if (!writeHeader)
+        {
+            var expected = string.Join(",", CsvHeader);
+            using var reader = new StreamReader(path);
+            var first = (reader.ReadLine() ?? "").TrimEnd('\r');
+            if (!string.Equals(first, expected, StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    $"{path}: header does not match this version's {CsvHeader.Length} columns " +
+                    $"(file has {first.Split(',').Length}); start a new file for this schema rather than mixing row widths.");
+        }
         File.AppendAllText(path, ToCsv(rows, writeHeader));
     }
 }

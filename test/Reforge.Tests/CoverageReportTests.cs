@@ -206,6 +206,38 @@ public class CoverageReportTests
     }
 
     [Fact]
+    public async Task Markdown_OmitsCoverage_WhenTheReportMatchedNothingInScope()
+    {
+        var report = await ScoreAsync();
+        var path = WriteTemp(Cobertura);
+        try
+        {
+            report.AttachCoverage(CoverageReportReader.Read(path, report.SectionByAssembly));
+            // Web is not in the report: --group Web is unmeasured, not 0%.
+            var scoped = Capture(() => SurfaceScoreCommand.WriteMarkdown(report, "Web", 5, 5, null));
+            Assert.DoesNotContain("**Coverage**", scoped);
+            var whole = Capture(() => SurfaceScoreCommand.WriteMarkdown(report, null, 5, 5, null));
+            Assert.Contains("**Coverage**: coverage: 40%", whole);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task SectionSnapshot_AppendRefusesAFileWithAnotherHeader()
+    {
+        var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None);
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, "commit_date,commit,solution,section,loc_prod\n2026-01-01,abc,x.slnx,Camp,1\n");
+            var ex = Assert.Throws<InvalidDataException>(() => SectionSnapshotAnalyzer.AppendCsv(rows, path));
+            Assert.Contains("header does not match", ex.Message);
+            Assert.Equal(2, File.ReadAllLines(path).Length);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public async Task WithoutAReport_NothingMentionsCoverage()
     {
         var report = await ScoreAsync();
