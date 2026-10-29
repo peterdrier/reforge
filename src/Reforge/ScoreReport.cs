@@ -74,6 +74,12 @@ public sealed class GroupScore
     /// <see cref="Metrics"/>: the test corpus is not scored at all.
     /// </summary>
     public TestMass Tests { get; set; } = TestMass.Empty;
+
+    /// <summary>
+    /// What the section exports, counted — see <see cref="SurfaceCensus"/>. Informational, like
+    /// <see cref="Metrics"/>.
+    /// </summary>
+    public SurfaceCensus Surface { get; set; } = SurfaceCensus.Empty;
 }
 
 public sealed class ScoreReport
@@ -98,6 +104,12 @@ public sealed class ScoreReport
     /// no <see cref="GroupScore"/>. Keyed by section name.
     /// </summary>
     public Dictionary<string, SectionMetrics> MetricsBySection { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Solution-level surface census — see <see cref="SurfaceCensus"/>. Informational.</summary>
+    public SurfaceCensus Surface { get; set; } = SurfaceCensus.Empty;
+    /// <summary>Surface census for every section in the corpus, scored or not. Keyed by section name.</summary>
+    public Dictionary<string, SurfaceCensus> SurfaceBySection { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Cross-section reference edges counted in the census walk — see <see cref="SectionEdge"/>.</summary>
+    public List<SectionEdge> Edges { get; } = new();
     /// <summary>
     /// Solution-level test-corpus rollup, including the mass of test projects no section claimed.
     /// </summary>

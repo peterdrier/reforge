@@ -37,6 +37,7 @@ Every reference is found via the compiler's semantic model — including referen
 | `reforge injected <type>` | Who injects this type via constructor |
 | `reforge usages <type>` | Where a type is used, categorized by kind |
 | `reforge parameters --name X --type Y` | Find parameters matching patterns |
+| `reforge snapshot [--by-assembly] [--append file.csv]` | Macro health record for time-series charting; `--by-assembly` emits one row per section with size, complexity, surface census and test mass |
 | `reforge audit-surface <type>` | Per-method inbound view: caller counts (prod/test) + body shape for classes (passthrough-repo/-service/-self, linq-over-repo/-service, write, composite, complex) |
 | `reforge audit-downstream <class>` | Per-method outbound view: dependency calls, DbSet reads/writes traced one hop through repository implementations with `via` attribution, untraced repo-to-repo hops, and external IO |
 
@@ -135,6 +136,27 @@ section — including sections that scored nothing — so sections can be ranked
 pulling a full report.
 
 Metrics are informational: nothing here feeds the score, so totals are unaffected by their presence.
+
+**Every section reports what it exports, counted.** A `surface` block per group (plus a solution
+rollup) splits the corpus two ways: by visibility outside the declaring assembly (exported = public
+all the way up) and by behaviour (write = the body commits persistent state or the method is
+command-shaped; read otherwise, decided per method by the same detection the score uses):
+
+```json
+"surface": {
+  "exported": { "types": 56, "read": 46, "write": 26,
+                "typesUnusedExternally": 37, "methodsUnusedExternally": 64, "writeUnusedExternally": 25 },
+  "internal": { "types": 0, "read": 2, "write": 3 }
+}
+```
+
+`exported.write` is the headline: a method another assembly can call that changes state is the most
+expensive surface there is, and a healthy section has very few. `*UnusedExternally` counts exported
+symbols no other production project names anywhere in source. Test projects are not consulted, so a
+type exported only for its tests counts as unused (`InternalsVisibleTo` is the cheaper fix), and
+reflection, convention-based DI and serialization are invisible, as they are to every static
+analysis. The same walk records `edges`: one `{from, to, count}` per pair of sections, the number
+of times source in one names a symbol declared in the other. Informational, like `metrics`.
 
 **Test mass is reported per section, and scored nowhere.** Test projects are outside the scoring
 corpus by construction — everything in one is public, so every surface rule would fire on code no

@@ -2,6 +2,19 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Every section counts what it exports
+
+- **`surface` block per section and solution-wide**: types and methods split exported/internal by
+  effective accessibility and read/write by the behavioural mutation detection the score already
+  uses, plus `typesUnusedExternally` / `methodsUnusedExternally` / `writeUnusedExternally` for
+  exported symbols no other production project names. The number to watch is `exported.write`.
+  Reforge's own solution reads 120 exported types, 120 unused externally: a single-assembly tool
+  that should be mostly internal, which the score never said.
+- **`edges`**: `{from, to, count}` per pair of sections, counted in the same walk, so a history run
+  can chart coupling without a second query.
+- **`snapshot --by-assembly`**: one CSV (or JSON) row per section plus a `(solution)` rollup, with
+  size, complexity, the surface census and test mass. `--append` adds the rows to a history file.
+
 ## Unreleased - The score prices what an assembly exports, not a layering convention
 
 - **Retired: `missingReadSurface`, `missingWriteSurface`, `missingPrimaryInfoDto`,

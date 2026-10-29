@@ -271,6 +271,7 @@ public static class SurfaceScoreCommand
         Console.WriteLine($"surface-score: surface={report.SurfaceTotal} implementationShape={report.ImplementationShapeTotal} combined={report.Total} (informational) types={report.TypesAnalyzed} groups={report.Groups.Count} config={(report.ConfigPath ?? "(defaults)")}");
         Console.WriteLine($"corpus{(groupFilter is null ? "" : $" ({groupFilter})")}: " +
                           $"{MetricsLine(ScopedMetrics(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
+        Console.WriteLine($"surface: {SurfaceLine(ScopedSurface(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
         var solutionTests = TestsLine(ScopedTests(report, FilterAndOrderGroups(report, groupFilter), groupFilter));
         if (solutionTests.Length > 0) Console.WriteLine(solutionTests);
 
@@ -339,6 +340,7 @@ public static class SurfaceScoreCommand
                 ? $"{g.Name} ({g.Total}; surface {g.MainSurfaceTotal} main + {g.ContractsSurfaceTotal} contracts)"
                 : $"{g.Name} ({g.Total})");
             Console.WriteLine($"  {MetricsLine(g.Metrics)}");
+            Console.WriteLine($"  {SurfaceLine(g.Surface)}");
             if (g.Tests.Files != 0) Console.WriteLine($"  {TestsLine(g.Tests)}");
 
             foreach (var kv in g.ByRule.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
@@ -392,6 +394,7 @@ public static class SurfaceScoreCommand
         sb.AppendLine($"- **Types analyzed**: {report.TypesAnalyzed}");
         sb.AppendLine($"- **Corpus**{(groupFilter is null ? "" : $" (`{groupFilter}`)")}: " +
                       $"{MetricsLine(ScopedMetrics(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
+        sb.AppendLine($"- **Surface**: {SurfaceLine(ScopedSurface(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
         sb.AppendLine($"- **Groups**: {report.Groups.Count}");
         sb.AppendLine($"- **Config**: {(report.ConfigPath ?? "(defaults, no reforge.surface-score.json found)")}");
         sb.AppendLine();
@@ -486,6 +489,8 @@ public static class SurfaceScoreCommand
             sb.AppendLine($"## {g.Name} — surface {g.SurfaceTotal}, shape {g.ImplementationShapeTotal} (combined {g.Total})");
             sb.AppendLine();
             sb.AppendLine($"`{MetricsLine(g.Metrics)}`");
+            sb.AppendLine();
+            sb.AppendLine($"`{SurfaceLine(g.Surface)}`");
             sb.AppendLine();
             if (g.Tests.Files != 0)
             {
@@ -608,6 +613,7 @@ public static class SurfaceScoreCommand
                 implementationShapeTotal = g.ImplementationShapeTotal,
                 total = g.Total,
                 metrics = MetricsJson(g.Metrics),
+                surface = SurfaceJson(g.Surface),
                 tests = TestsJson(g.Tests),
                 byRule = g.ByRule
                     .OrderByDescending(kv => kv.Value)
@@ -689,6 +695,12 @@ public static class SurfaceScoreCommand
             // Scoped like byRule below: with --group set, the solution-wide corpus would read as
             // the section's. `scope` says which one this is.
             metrics = MetricsJson(ScopedMetrics(report, filteredGroups, groupFilter)),
+            surface = SurfaceJson(ScopedSurface(report, filteredGroups, groupFilter)),
+            edges = report.Edges
+                .Where(e => groupFilter is null
+                    || string.Equals(e.From, groupFilter, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(e.To, groupFilter, StringComparison.OrdinalIgnoreCase))
+                .Select(e => new { from = e.From, to = e.To, count = e.Count }),
             tests = TestsJson(ScopedTests(report, filteredGroups, groupFilter)),
             unattributedTestProjects = report.UnattributedTestProjects,
             publicWriteSurface = PublicWriteSurfaceJson(report, groupFilter),
@@ -870,6 +882,43 @@ public static class SurfaceScoreCommand
         (string.IsNullOrEmpty(m.Cognitive.MaxMethod) ? "" : $" ({m.Cognitive.MaxMethod})") +
         $" maxClassLoc={m.MaxClassLoc}" +
         (string.IsNullOrEmpty(m.MaxClassLocName) ? "" : $" ({m.MaxClassLocName})");
+
+    private static SurfaceCensus ScopedSurface(ScoreReport report, List<GroupScore> filteredGroups, string? groupFilter)
+    {
+        if (groupFilter is null) return report.Surface;
+        if (report.SurfaceBySection.TryGetValue(groupFilter, out var s)) return s;
+        return filteredGroups.Count > 0 ? filteredGroups[0].Surface : SurfaceCensus.Empty;
+    }
+
+    /// <summary>
+    /// Exported/internal x read/write census of a scope, for the JSON report. Informational like
+    /// <see cref="MetricsJson"/>. <c>exported.write</c> is the number the reader should look at first.
+    /// </summary>
+    private static object SurfaceJson(SurfaceCensus s) => new
+    {
+        exported = new
+        {
+            types = s.ExportedTypes,
+            read = s.ExportedReadMethods,
+            write = s.ExportedWriteMethods,
+            typesUnusedExternally = s.ExportedTypesUnusedExternally,
+            methodsUnusedExternally = s.ExportedMethodsUnusedExternally,
+            writeUnusedExternally = s.ExportedWriteMethodsUnusedExternally
+        },
+        @internal = new
+        {
+            types = s.InternalTypes,
+            read = s.InternalReadMethods,
+            write = s.InternalWriteMethods
+        }
+    };
+
+    /// <summary>One-line census for the compact and markdown reports.</summary>
+    private static string SurfaceLine(SurfaceCensus s) =>
+        $"exported: types={s.ExportedTypes} read={s.ExportedReadMethods} write={s.ExportedWriteMethods}" +
+        $" unused-externally types={s.ExportedTypesUnusedExternally} methods={s.ExportedMethodsUnusedExternally}" +
+        $" write={s.ExportedWriteMethodsUnusedExternally}" +
+        $" | internal: types={s.InternalTypes} read={s.InternalReadMethods} write={s.InternalWriteMethods}";
 
     /// <summary>
     /// Test-corpus size of a scope, for the JSON report. Emitted for every group and once for the
