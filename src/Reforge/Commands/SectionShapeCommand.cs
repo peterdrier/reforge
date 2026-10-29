@@ -140,9 +140,7 @@ public static class SectionShapeCommand
                 settingsInfoDto = Dto(s.SettingsInfoDto),
                 cacheDto = Dto(s.CacheDto),
                 cacheDtoProvenance = s.CacheDtoProvenance,
-                readSurfaceCallers = s.ReadSurfaceCallers.Select(Use).ToArray(),
                 writeSurfaceCallers = s.WriteSurfaceCallers.Select(Use).ToArray(),
-                missing = s.Missing.Select(m => new { rule = m.Rule, detail = m.Detail }).ToArray(),
                 chargedReadMethods = s.ChargedReadMethods.Select(c => new { @interface = c.Interface, method = c.Method, kind = c.Kind.ToString(), returns = c.Returns}).ToArray(),
                 advisory = new
                 {
@@ -187,7 +185,6 @@ public static class SectionShapeCommand
             if (s.SettingsInfoDto is not null) sb.AppendLine($"  settingsInfoDto: {Short(s.SettingsInfoDto.Display)}");
             if (s.CacheDto is not null) sb.AppendLine($"  cacheDto: {Short(s.CacheDto.Display)} [{s.CacheDtoProvenance}]");
 
-            foreach (var m in s.Missing) sb.AppendLine($"  MISSING {m.Rule}: {m.Detail}");
             foreach (var c in s.WriteSurfaceCallers) sb.AppendLine($"  writeSurfaceReadOnlyUse: {c.Caller} <- {c.Dependency} (use {c.SuggestedReadInterface})");
             foreach (var c in s.ChargedReadMethods) sb.AppendLine($"  chargedRead: {c.Interface}.{c.Method} ({c.Kind})");
 

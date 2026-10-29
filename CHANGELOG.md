@@ -2,6 +2,24 @@
 
 What changed and why. Newest first.
 
+## Unreleased - The score prices what an assembly exports, not a layering convention
+
+- **Retired: `missingReadSurface`, `missingWriteSurface`, `missingPrimaryInfoDto`,
+  `readSurfaceProjectionMethod`, `canonicalReadDtoReturn`, `dashboardAdminPageName`,
+  `diRegistration`.** Together they encoded one codebase's convention (every repo-backed section
+  publishes a `<Section>Info` DTO, an `I*ServiceRead` and an `I*Service`, with `Dashboard`-free
+  method names) and counted DI registrations as if a registration were a shape. On Humans at
+  `b35ab2e39` they were 5,040 of 13,702 surface points, 37 percent, and said nothing about any other
+  solution. The section-shape analyzer still derives the anchors for `section-shape` and the
+  conservation gate; it no longer lists missing surfaces. A config weight for a retired rule is
+  reported as `unknown-config-weight`.
+- **`contractsAssemblyMultiplier` defaults to 1.** Doubling the satellite assembly made the hub
+  section the worst-scoring one on Humans (Users, 222 points per kLOC, 2,227 of 2,609 surface points
+  in `Users.Contracts`) for having the shape a hub should have. Set it to 2 to price reach.
+- **The `actionDispatcher` application-service surcharge reads the `applicationService` tag only**,
+  not a hard-coded `IApplicationService` interface name; `section-shape` drops the
+  `readSurfaceCallers` field, which was declared and never populated.
+
 ## Unreleased - Populations named: exported interfaces, published write surface
 
 - **The second axis is `implementationShape`, not `internalComplexity`** (#19). The old name read as

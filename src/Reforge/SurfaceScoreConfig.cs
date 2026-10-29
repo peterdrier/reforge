@@ -67,18 +67,16 @@ public sealed class SurfaceScoreConfig
 
     /// <summary>
     /// Multiplies every surface charge on a declaration in a satellite
-    /// <c>&lt;Section&gt;.Contracts</c> assembly. Default 2. Set to 1 to price both contracts
-    /// shapes the same.
+    /// <c>&lt;Section&gt;.Contracts</c> assembly. Default 1: a satellite contracts assembly is
+    /// the right shape for a section everything depends on, and doubling its surface made the hub
+    /// of a solution its worst-scoring section for doing the right thing. Set to 2 to price
+    /// reach — a satellite can be referenced without its implementation — on top of surface.
     /// </summary>
     /// <remarks>
-    /// The same type under a <c>Contracts/</c> folder inside the section's own assembly is charged
-    /// once. The difference is reach: reaching the folder means referencing the whole assembly,
-    /// while a satellite assembly can be referenced on its own, by anyone, without taking a
-    /// dependency on the implementation. That is the point of the shape and also what makes it the
-    /// most expensive surface to withdraw. Credits and the implementation-shape axis are never
-    /// scaled — see <c>SurfaceScoreEngine.ApplyContractsMultiplier</c>.
+    /// Credits and the implementation-shape axis are never scaled — see
+    /// <c>SurfaceScoreEngine.ApplyContractsMultiplier</c>.
     /// </remarks>
-    public int ContractsAssemblyMultiplier { get; set; } = 2;
+    public int ContractsAssemblyMultiplier { get; set; } = 1;
 
     /// <summary>
     /// Glob patterns matched against a dispatcher parameter's <i>type</i> name. These act
@@ -236,11 +234,9 @@ public sealed class SurfaceScoreConfig
                 ["repositoryImplementationMethod"] = 10,
                 ["newRepositoryInterface"] = 15,
                 ["newRepositoryImplementation"] = 15,
-                ["diRegistration"] = 3,
                 ["controllerAction"] = 8,
                 ["backgroundJob"] = 12,
                 ["duplicateDbSetOwner"] = 20,
-                ["canonicalReadDtoReturn"] = -3,
 
                 // Boundary-input surface — a parameter-object refactor can dodge
                 // methodParameterOverflow by moving a long argument list into an input/command
@@ -257,18 +253,11 @@ public sealed class SurfaceScoreConfig
                 ["crossSectionRepository"] = 25,
                 ["writeCapableInterfaceUsedReadOnly"] = 12,
 
-                // Section architecture (surface axis)
-                ["missingReadSurface"] = 10,
-                ["missingWriteSurface"] = 10,
-                ["missingPrimaryInfoDto"] = 10,
-                ["readSurfaceProjectionMethod"] = 4,
-
                 // Signature shape (surface axis — method/return shape smells)
                 ["methodParameterOverflow"] = 1, // per param after 2
                 ["booleanParameter"] = 3,
                 ["tupleReturn"] = 4,
                 ["optionsBag"] = 8,
-                ["dashboardAdminPageName"] = 6,
                 ["oneImplementationInterface"] = 8,
 
                 // Implementation-shape axis — implementation cost hiding behind the surface.

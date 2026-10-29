@@ -84,15 +84,15 @@ public static class SkillCommand
         of *exported* data types it declares on its contracts surface: in its `<Section>.Contracts`
         assembly, or under a `Contracts/` folder in its own assembly. A `Contracts` namespace or
         folder is not evidence on its own — an `internal` type declared there is not surface and is
-        not included. A section with neither shape publishes no read API, and its score says so.
+        not included. The anchors feed `section-shape` and the baseline conservation gate; no rule
+        charges a section for lacking one, or for lacking a read or write interface.
 
-        **A satellite contracts assembly costs double.** Every surface charge on a declaration in a
-        `<Section>.Contracts` assembly is multiplied by `contractsAssemblyMultiplier` (default 2).
-        The same type under a `Contracts/` folder inside the section's own assembly is charged once.
-        The difference is reach: the folder is only reachable by referencing the whole assembly,
-        while a satellite assembly can be referenced on its own — which is the point of the shape
-        and also what makes it the hardest surface to withdraw. Credits and the
-        implementation-shape axis are never scaled. Each entry carries `origin` (`main` /
+        **A satellite contracts assembly can be priced for reach.** Every surface charge on a
+        declaration in a `<Section>.Contracts` assembly is multiplied by
+        `contractsAssemblyMultiplier` (default 1, so no scaling). A satellite assembly can be
+        referenced on its own, without the implementation, which is also the right shape for the
+        section everything depends on — so reach is priced only when the config asks. The
+        implementation-shape axis is never scaled. Each entry carries `origin` (`main` /
         `contracts`) and `multiplied`, and each group reports `mainSurfaceTotal` and
         `contractsSurfaceTotal` beside `surfaceTotal`.
 
@@ -121,14 +121,13 @@ public static class SkillCommand
         ```jsonc
         {
           // Surface charges on declarations in a satellite <Section>.Contracts assembly are
-          // multiplied by this. Default 2; set to 1 to price both contracts shapes the same.
+          // multiplied by this. Default 1 (no scaling); 2 prices reach on top of surface.
           // Values <= 1 are treated as 1 — a typo weakens the rule, it never erases the surface.
-          "contractsAssemblyMultiplier": 2,
+          "contractsAssemblyMultiplier": 1,
 
-          // There is no `sections` block. Sections are the solution's assemblies, their
-          // canonical read DTOs are derived from what each exports from its contracts surface,
-          // and their surface expectations from whether the assembly declares a repository or a
-          // DbContext. A config still carrying the key is reported as `removed-config-field`.
+          // There is no `sections` block. Sections are the solution's assemblies and their
+          // canonical read DTOs are derived from what each exports from its contracts surface.
+          // A config still carrying the key is reported as `removed-config-field`.
 
           // Classifications tag types. A type may receive multiple tags; precedence handled by
           // the engine (e.g. on interfaces, repository/read-service tags override fullService).
@@ -174,9 +173,8 @@ public static class SkillCommand
           //   publicDtoType (5), applicationServiceMethod (5), readServiceInterfaceMethod (6),
           //   fullServiceInterfaceMethod (8), repositoryInterfaceMethod (10),
           //   repositoryImplementationMethod (10), newRepositoryInterface (15),
-          //   newRepositoryImplementation (15), diRegistration (3), controllerAction (8),
-          //   backgroundJob (12), duplicateDbSetOwner (20),
-          //   canonicalReadDtoReturn (-3, credit when a method returns a section's derived canonical read DTO)
+          //   newRepositoryImplementation (15), controllerAction (8),
+          //   backgroundJob (12), duplicateDbSetOwner (20)
           //
           // Dependency use (constructor injection across sections):
           //   sameSectionReadService (0), crossSectionReadInterface (2),
@@ -187,8 +185,7 @@ public static class SkillCommand
           //
           // Signature shape (per method):
           //   methodParameterOverflow (1, per param beyond 2), booleanParameter (3),
-          //   tupleReturn (4), optionsBag (8), dashboardAdminPageName (6),
-          //   oneImplementationInterface (8)
+          //   tupleReturn (4), optionsBag (8), oneImplementationInterface (8)
           "weights": {
             "crossSectionRepository": 25,
             "duplicateDbSetOwner": 20,

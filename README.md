@@ -67,16 +67,17 @@ path, a class carrying too much, a parameter that switches a method between two 
 
 Rules that charge for a *use* rather than a declaration — `crossSectionRepository`,
 `crossSectionFullService`, `crossSectionReadInterface`, `writeCapableInterfaceUsedReadOnly`,
-`duplicateDbSetOwner`, `diRegistration` — are **not** gated this way:
+`duplicateDbSetOwner` — are **not** gated this way:
 an internal class injecting another section's repository still forces the assembly reference and
 still calls across the boundary, so marking it internal can't make the coupling free.
 
 **A section's read API is what it exports from its contracts surface.** Canonical read DTOs are
 derived, never listed: the exported data types a section declares in its `<Section>.Contracts`
 assembly, or under a `Contracts/` folder in its own assembly. A `Contracts` folder or namespace is
-a location, not evidence — an `internal` type declared there is still not surface. A section with
-neither shape has not declared a read API, and the score says so rather than letting config paper
-over a boundary that was never drawn.
+a location, not evidence — an `internal` type declared there is still not surface. They anchor the
+`section-shape` report and the baseline conservation gate; no rule charges a section for lacking
+one, for lacking a read or write interface, or for what its read methods return. The score prices
+what an assembly exports, not what a layering convention says it should export.
 
 `reforge.surface-score.json` (searched upward from the solution) is optional and carries **policy
 only**:
@@ -88,10 +89,12 @@ only**:
 }
 ```
 
-There is no `sections` block. Sections are the solution's assemblies, a section's canonical read
-DTOs come from what it exports, and its surface expectations from whether it declares a repository
-or a DbContext — so nothing about a section is config's to state. A file still carrying the key
-loads, and every key this version does not read is named as `removed-config-field`.
+There is no `sections` block. Sections are the solution's assemblies and a section's canonical read
+DTOs come from what it exports — so nothing about a section is config's to state. A file still
+carrying the key loads, and every key this version does not read is named as `removed-config-field`.
+`contractsAssemblyMultiplier` (default 1) can scale surface charges declared in a satellite
+`<Section>.Contracts` assembly; a weight the file sets for a retired rule is reported as
+`unknown-config-weight`.
 
 **A degraded build is refused, not scored.** If the solution doesn't compile cleanly, both
 `surface-score` and `section-shape` print nothing and exit **2** (distinct from 1, so a broken tree
@@ -154,7 +157,7 @@ solution rollup and in no column. Nothing about the test corpus is scored: there
 no weight reads any of these numbers.
 
 `reforge section-shape` renders the same sections as a report (interfaces, DTO anchors,
-cross-section use, missing surfaces, visible debt, advisories).
+cross-section use, charged read methods, advisories).
 
 ## Install
 

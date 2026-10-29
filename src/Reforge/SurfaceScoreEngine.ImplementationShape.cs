@@ -137,7 +137,7 @@ public sealed partial class SurfaceScoreEngine
                     // it measured zero on a 2,800-type corpus. They are surcharges now, so a
                     // dispatcher is priced by how many of them it has rather than gated on all.
                     bool typedSelector = modeParams.Count > 0;
-                    bool appSvc = c.Tags.Contains("applicationService") || IsApplicationServiceType(c.Type);
+                    bool appSvc = c.Tags.Contains("applicationService");
                     int basePts = 20 + 5 * (d.ArmCount - 2)
                         + (typedSelector ? 8 : 0)   // an action/mode enum: the fold is in the signature
                         + (genericVerb ? 8 : 0)     // Apply/Handle/Process/…: the name hides which operation
@@ -180,10 +180,6 @@ public sealed partial class SurfaceScoreEngine
 
     private static string EnumParamNames(IReadOnlyList<IParameterSymbol> ps)
         => string.Join("/", ps.Select(p => p.Type.Name).Distinct());
-
-    private static bool IsApplicationServiceType(INamedTypeSymbol type)
-        => type.Name == "IApplicationService"
-        || type.AllInterfaces.Any(i => i.Name == "IApplicationService");
 
     /// <summary>
     /// When a dispatcher/mode smell fires on an implementation method, also attribute it to the

@@ -1,11 +1,9 @@
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Reforge;
 
 // Cross-cutting rules that key off the solution rather than a single type: duplicate DbSet
-// owners, DI registrations, and interfaces with exactly one implementation.
+// owners and interfaces with exactly one implementation.
 public sealed partial class SurfaceScoreEngine
 {
     /// <summary>
@@ -87,73 +85,6 @@ public sealed partial class SurfaceScoreEngine
 
         foreach (var name in contested) owners.Remove(name);
         return owners;
-    }
-
-    private async Task ScoreDiRegistrationsAsync(
-        Solution solution,
-        Dictionary<string, ClassifiedType> classifiedByDisplay,
-        ScoreReport report,
-        CancellationToken ct)
-    {
-        var weight = _config.Weight("diRegistration");
-        if (weight == 0) return;
-
-        // Heuristic: a DI registration is a call to AddSingleton/AddScoped/AddTransient.
-        // We attribute each registration to the group of the *registered service* (the
-        // first type argument) so that "Tickets registers TicketsService" credits Tickets.
-        var registrationMethods = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "AddSingleton", "AddScoped", "AddTransient", "TryAddSingleton", "TryAddScoped", "TryAddTransient"
-        };
-
-        foreach (var project in solution.Projects)
-        {
-            if (project.Name.Contains("Test", StringComparison.OrdinalIgnoreCase)) continue;
-            var compilation = await project.GetCompilationAsync(ct);
-            if (compilation is null) continue;
-
-            foreach (var tree in compilation.SyntaxTrees)
-            {
-                var root = await tree.GetRootAsync(ct);
-                var model = compilation.GetSemanticModel(tree);
-
-                foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
-                {
-                    string? methodName = invocation.Expression switch
-                    {
-                        MemberAccessExpressionSyntax ma => ma.Name is GenericNameSyntax g ? g.Identifier.Text : ma.Name.Identifier.Text,
-                        GenericNameSyntax g => g.Identifier.Text,
-                        _ => null
-                    };
-                    if (methodName is null || !registrationMethods.Contains(methodName)) continue;
-
-                    var genericName = invocation.Expression switch
-                    {
-                        MemberAccessExpressionSyntax ma2 => ma2.Name as GenericNameSyntax,
-                        GenericNameSyntax g2 => g2,
-                        _ => null
-                    };
-                    if (genericName is null || genericName.TypeArgumentList.Arguments.Count == 0) continue;
-
-                    var typeArg = genericName.TypeArgumentList.Arguments[0];
-                    var typeInfo = model.GetSymbolInfo(typeArg).Symbol as INamedTypeSymbol;
-                    if (typeInfo is null) continue;
-
-                    // Keyed by SolutionClassifier.TypeKey ("{assembly}|{fully qualified name}"), not
-                    // by the display string alone. This lookup used the bare display string, which
-                    // never matches, so the rule scored nothing on any solution — 452 registrations
-                    // in Humans, 0 points. Every other consumer of this dictionary already built the
-                    // key correctly; this was the one that did not.
-                    if (!classifiedByDisplay.TryGetValue(SolutionClassifier.TypeKey(typeInfo), out var c)) continue;
-
-                    var loc = invocation.GetLocation();
-                    var ls = loc.GetLineSpan();
-                    var file = LocationHelper.NormalizePath(ls.Path, _solutionDirectory);
-                    AddEntry(report, c.Group, "diRegistration", weight, typeInfo, file, ls.StartLinePosition.Line + 1,
-                        $"{methodName}<{typeInfo.Name}>");
-                }
-            }
-        }
     }
 
     private void ScoreOneImplementationInterfaces(List<ClassifiedType> classified, ScoreReport report)

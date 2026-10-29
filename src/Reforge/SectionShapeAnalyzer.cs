@@ -33,7 +33,6 @@ public sealed record CrossSectionUse(
     public int Line { get; init; }
 }
 
-public sealed record MissingSurface(string Section, string Rule, string Detail);
 
 /// <summary>
 /// A read-service-interface method whose return shape is charged (projection/predicate/scalar/UI),
@@ -54,8 +53,8 @@ public sealed record CacheFactCandidate(string Method, string Fact, string Cache
 
 /// <summary>
 /// The resolved structural shape of one section: owned repositories, read/full
-/// interfaces, primary/settings/cache DTOs (convention or inference), cross-section uses, missing
-/// surfaces, charged read methods, and advisory candidates.
+/// interfaces, primary/settings/cache DTOs (convention or inference), cross-section uses,
+/// charged read methods, and advisory candidates.
 /// Lists default to empty; later analysis passes fill cross-section/advisory/cache-inference.
 /// </summary>
 public sealed record SectionShape
@@ -70,10 +69,8 @@ public sealed record SectionShape
     public DtoAnchor? SettingsInfoDto { get; init; }
     public DtoAnchor? CacheDto { get; init; }
     public string CacheDtoProvenance { get; init; } = "none";
-    public IReadOnlyList<CrossSectionUse> ReadSurfaceCallers { get; init; } = Array.Empty<CrossSectionUse>();
     public IReadOnlyList<CrossSectionUse> WriteSurfaceCallers { get; init; } = Array.Empty<CrossSectionUse>();
     public IReadOnlyList<CrossSectionUse> WriteSurfaceUnverified { get; init; } = Array.Empty<CrossSectionUse>();
-    public IReadOnlyList<MissingSurface> Missing { get; init; } = Array.Empty<MissingSurface>();
     public IReadOnlyList<ChargedReadMethod> ChargedReadMethods { get; init; } = Array.Empty<ChargedReadMethod>();
     public IReadOnlyList<DerivableReadMethod> DerivableReadMethods { get; init; } = Array.Empty<DerivableReadMethod>();
     public IReadOnlyList<MissingInfoFact> MissingInfoFacts { get; init; } = Array.Empty<MissingInfoFact>();
@@ -148,8 +145,7 @@ public static class SectionShapeAnalyzer
 
             // Resolve primary / settings DTO: <Section>Info convention -> derived canonical read
             // DTO fallback. The fallback matters for sections whose names are plural ("Camps") but
-            // whose DTOs are singular ("CampInfo") — the convention would miss and spuriously fire
-            // missingPrimaryInfoDto.
+            // whose DTOs are singular ("CampInfo") — the convention alone would miss.
             var (primaryName, primarySym) = ResolvePrimary(name, classified, canonicalReadDtos);
             var (settingsName, settingsSym) = ResolveSettings(name, classified, canonicalReadDtos);
 
@@ -197,15 +193,6 @@ public static class SectionShapeAnalyzer
                 }
             }
 
-            // Missing surfaces (gated to repo-backed expectations via SectionFacts).
-            var missing = new List<MissingSurface>();
-            if (facts.RequiresReadSurface && readIfaceTypes.Count == 0)
-                missing.Add(new MissingSurface(name, "missingReadSurface", $"{name}: no read-only service interface"));
-            if (facts.RequiresWriteSurface && fullIfaceTypes.Count == 0)
-                missing.Add(new MissingSurface(name, "missingWriteSurface", $"{name}: no write/full service interface"));
-            if (facts.RequiresPrimaryInfoDto && primarySym is null)
-                missing.Add(new MissingSurface(name, "missingPrimaryInfoDto", $"{name}: no DTO named {primaryName}"));
-
             // Advisory candidates (section-shape view): each charged read method is a derivability
             // candidate against its target DTO; facts not present on the target inventory are flagged;
             // and each charged read is a candidate to answer from the cache DTO.
@@ -247,7 +234,6 @@ public static class SectionShapeAnalyzer
                 CacheDtoProvenance = cacheProvenance,
                 WriteSurfaceCallers = writeCallers,
                 WriteSurfaceUnverified = writeUnverified,
-                Missing = missing,
                 ChargedReadMethods = charged,
                 DerivableReadMethods = derivable,
                 MissingInfoFacts = missingFacts,

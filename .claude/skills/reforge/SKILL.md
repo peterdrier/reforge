@@ -11,8 +11,9 @@ reforge skill
 
 Follow the output as your reference for which command to use and how to interpret results.
 
-If `reforge` is not installed as a global tool, run it from the repo:
+If `reforge` is not installed as a global tool, install it from the repo checkout:
 
 ```bash
-dotnet run --project H:/source/reforge/src/Reforge -- skill
+dotnet pack <repo>/src/Reforge -o <repo>/src/Reforge/nupkg
+dotnet tool install --global --add-source <repo>/src/Reforge/nupkg Reforge
 ```

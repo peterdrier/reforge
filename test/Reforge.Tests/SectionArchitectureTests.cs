@@ -3,10 +3,10 @@ using Microsoft.CodeAnalysis;
 namespace Reforge.Tests;
 
 /// <summary>
-/// Plan B - section-architecture scored rules (missing*, readSurfaceProjectionMethod)
-/// + conservationAnchors, exercised end-to-end through
-/// SurfaceScoreEngine against the sample solution. Sections are the sample's assemblies
-/// (Camp + Camp.Contracts, Lodge, Dorm, Tent, Reporting) - no config maps types into them.
+/// Section architecture through SurfaceScoreEngine against the sample solution: the
+/// write-capable-use rule, the escape advisory, conservationAnchors, and the conservation gate.
+/// Sections are the sample's assemblies (Camp + Camp.Contracts, Lodge, Dorm, Tent, Reporting) -
+/// no config maps types into them.
 /// </summary>
 [Collection("SampleSolution")]
 public class SectionArchitectureTests
@@ -22,74 +22,7 @@ public class SectionArchitectureTests
         return await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
     }
 
-    // ---------------- Task 1: weights + glossary + axis ----------------
-
-    [Fact]
-    public void Default_HasSectionArchitectureWeights()
-    {
-        var cfg = SurfaceScoreConfig.Default();
-        Assert.Equal(10, cfg.Weight("missingReadSurface"));
-        Assert.Equal(10, cfg.Weight("missingWriteSurface"));
-        Assert.Equal(10, cfg.Weight("missingPrimaryInfoDto"));
-        Assert.Equal(4, cfg.Weight("readSurfaceProjectionMethod"));
-    }
-
-    [Fact]
-    public void Glossary_HasFactualLinesForNewRules_OnSurfaceAxis()
-    {
-        foreach (var rule in new[]
-        {
-            "missingReadSurface", "missingWriteSurface",
-            "missingPrimaryInfoDto", "readSurfaceProjectionMethod"
-        })
-        {
-            Assert.True(SurfaceScoreRuleGlossary.Descriptions.ContainsKey(rule), $"missing glossary: {rule}");
-            Assert.False(SurfaceScoreRuleGroups.IsImplementationShape(rule), $"should be surface axis: {rule}");
-        }
-    }
-
-    // ---------------- Task 3: readSurfaceProjectionMethod surcharge ----------------
-
-    [Fact]
-    public async Task ReadSurfaceProjectionMethod_ChargesProjectionAndPredicateReads()
-    {
-        var report = await Score();
-
-        Assert.True(report.ByRule.TryGetValue("readSurfaceProjectionMethod", out var pts) && pts > 0);
-        var camp = report.Groups["Camp"];
-        // Two charged methods (predicate + projection) x weight 4 = 8, doubled to 16 because
-        // ICampServiceRead is declared in the satellite SampleSolution.Camp.Contracts assembly.
-        // The surcharge is for the shape a read interface publishes, so where it publishes from
-        // is exactly what the contracts multiplier prices.
-        Assert.Equal(16, camp.ByRule["readSurfaceProjectionMethod"]);
-        // surcharge is on the surface axis, not implementation shape
-        Assert.False(SurfaceScoreRuleGroups.IsImplementationShape("readSurfaceProjectionMethod"));
-    }
-
-    // ---------------- Task 4: missing* rules (repo-backed gated) ----------------
-
-    [Fact]
-    public async Task MissingSurfaceRules_FireOnlyForRepoBackedSections()
-    {
-        // Each fixture section is its own assembly; repo-backing is read off what it declares.
-        var report = await Score();
-
-        Assert.True(report.Groups["Lodge"].ByRule.ContainsKey("missingReadSurface"));
-        Assert.True(report.Groups["Dorm"].ByRule.ContainsKey("missingWriteSurface"));
-        Assert.True(report.Groups["Tent"].ByRule.ContainsKey("missingPrimaryInfoDto"));
-
-        // Reporting owns no repository and no DbContext: none of the missing* rules
-        var reporting = report.Groups["Reporting"];
-        Assert.False(reporting.ByRule.ContainsKey("missingReadSurface"));
-        Assert.False(reporting.ByRule.ContainsKey("missingWriteSurface"));
-        Assert.False(reporting.ByRule.ContainsKey("missingPrimaryInfoDto"));
-
-        // Lodge has LodgeInfo + write but no read; must NOT be charged missingPrimaryInfoDto or missingWriteSurface
-        Assert.False(report.Groups["Lodge"].ByRule.ContainsKey("missingPrimaryInfoDto"));
-        Assert.False(report.Groups["Lodge"].ByRule.ContainsKey("missingWriteSurface"));
-    }
-
-    // ---------------- Task 5: cross-section read-only use of a write-capable interface ----------------
+    // ---------------- Cross-section read-only use of a write-capable interface ----------------
 
     [Fact]
     public async Task WriteCapableUsedReadOnly_ChargesTheCrossSectionReadOnlyConsumer()
@@ -115,7 +48,7 @@ public class SectionArchitectureTests
         Assert.Contains(report.Diagnostics, d => d.Code == "writeSurfaceUseUnverified" && d.Message.Contains("CampDelegator"));
     }
 
-    // ---------------- Task 6: conservationAnchors emission ----------------
+    // ---------------- conservationAnchors emission ----------------
 
     [Fact]
     public async Task ConservationAnchors_EmittedFqKeyedWithRecursivePaths()
@@ -128,7 +61,7 @@ public class SectionArchitectureTests
         // interface anchor carries {name, returns}
         var read = report.ConservationAnchors.Single(a => a.Key.EndsWith("ICampServiceRead") && a.Role == "readServiceInterface");
         Assert.Contains(read.Methods, m => m.Name == "GetByIdAsync");
-        // per-anchor byRule points exist for the read interface (readServiceInterfaceMethod + readSurfaceProjectionMethod)
+        // per-anchor byRule points exist for the read interface
         Assert.True(read.ByRule.ContainsKey("readServiceInterfaceMethod"));
     }
 

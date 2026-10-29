@@ -108,7 +108,7 @@ public static class SurfaceScoreBaseline
             comparison.BuildStateMismatch = true;
             comparison.BuildStateMismatchMessage =
                 $"baseline was captured on {Describe(baseBuildState)} but the current run {DescribeVerb(nowBuildState)}; " +
-                "the comparison may be off by several percent, concentrated in crossSection*/diRegistration/methodReturnsEntity rules.";
+                "the comparison may be off by several percent, concentrated in crossSection*/methodReturnsEntity rules.";
         }
 
         var nowSolution = new BaselineScope(now.SurfaceTotal, now.ImplementationShapeTotal, now.ByRule);
