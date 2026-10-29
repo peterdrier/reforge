@@ -226,3 +226,40 @@ public class FlagUpdateService
         return Task.CompletedTask;
     }
 }
+
+public enum CamperCardField { Name, Cabin, Age }
+
+/// <summary>
+/// A read dispatching on a plain enum whose arms share real work: every arm loads the same record
+/// and formats it the same way, and only the projected field differs. Expected: actionDispatcher
+/// does NOT fire, and neither does List, whose arms differ only by LINQ calls. A read whose arms
+/// route to members of their own does (see the exportedReadMethod Gate 1 pair).
+/// </summary>
+public class CamperCardService
+{
+    private readonly Dictionary<int, (string Name, string Cabin, int Age)> _campers = new();
+
+    public string Describe(int camperId, CamperCardField field)
+    {
+        switch (field)
+        {
+            case CamperCardField.Name:
+                return Format(Load(camperId).Name);
+            case CamperCardField.Cabin:
+                return Format(Load(camperId).Cabin);
+            default:
+                return Format(Load(camperId).Age.ToString());
+        }
+    }
+
+    public List<string> List(CamperCardField sortBy) => (sortBy switch
+    {
+        CamperCardField.Name => _campers.Values.OrderBy(c => c.Name),
+        CamperCardField.Age => _campers.Values.OrderByDescending(c => c.Age),
+        _ => _campers.Values.AsEnumerable(),
+    }).Select(c => c.Name).ToList();
+
+    private (string Name, string Cabin, int Age) Load(int camperId) => _campers[camperId];
+
+    private static string Format(string value) => value.Trim();
+}

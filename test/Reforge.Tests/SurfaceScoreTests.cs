@@ -583,6 +583,16 @@ public class SurfaceScoreTests
     }
 
     [Fact]
+    public async Task ActionDispatcher_DoesNotFireOnAReadWhoseArmsShareWork()
+    {
+        // CamperCardService.Describe is a read on a plain enum (no read-shape name to exempt it).
+        // Every arm of Describe calls Load and Format, so the arms share their work; the arms of
+        // List differ only by LINQ calls, which are not separate operations of this solution.
+        var report = await ScoreDefaultAsync();
+        Assert.DoesNotContain(AllEntries(report), e => e.Rule == "actionDispatcher" && e.Symbol is "Describe" or "List");
+    }
+
+    [Fact]
     public async Task GodMethod_FiresCognitiveComplexity()
     {
         var report = await ScoreDefaultAsync();

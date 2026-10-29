@@ -405,8 +405,17 @@ public static class ImplementationComplexity
     /// Include/Where/projection — so one member is called by ≥ half the arms and the
     /// rule does not fire. The method name is never consulted (no Apply/Handle/Create
     /// heuristic), which removes the Create-verb contradiction.
+    /// <para>
+    /// A read is measured differently when <paramref name="corpusMethodNames"/> is given. Only calls
+    /// to methods the solution declares count, so arms that differ by a LINQ or BCL call (a sort
+    /// selector, an enum-to-string map) are not separate operations. And the shared-member check
+    /// gives way to a per-arm one: the read fires when two or more arms each call a member no other
+    /// arm calls, priced on those arms. Under the shared check, wrapping every arm in one shared
+    /// helper would exempt three getters behind a selector; under this one it changes nothing.
+    /// </para>
     /// </summary>
-    public static DispatcherAnalysis AnalyzeDispatcher(IMethodSymbol method, BaseMethodDeclarationSyntax syntax)
+    public static DispatcherAnalysis AnalyzeDispatcher(IMethodSymbol method, BaseMethodDeclarationSyntax syntax,
+        IReadOnlySet<string>? corpusMethodNames = null)
     {
         SyntaxNode? body = (SyntaxNode?)syntax.Body ?? syntax.ExpressionBody?.Expression;
         if (body is null) return default;
@@ -423,14 +432,14 @@ public static class ImplementationComplexity
         {
             if (!ReferencesParam(sw.Expression, paramNames)) continue;
             var arms = sw.Sections.Select(s => InvokedMembers(s)).ToList();
-            best = Better(best, Evaluate(arms));
+            best = Better(best, Evaluate(arms, corpusMethodNames));
         }
 
         foreach (var swe in body.DescendantNodesAndSelf().OfType<SwitchExpressionSyntax>())
         {
             if (!ReferencesParam(swe.GoverningExpression, paramNames)) continue;
             var arms = swe.Arms.Select(a => InvokedMembers(a.Expression)).ToList();
-            best = Better(best, Evaluate(arms));
+            best = Better(best, Evaluate(arms, corpusMethodNames));
         }
 
         foreach (var ifs in body.DescendantNodesAndSelf().OfType<IfStatementSyntax>())
@@ -454,7 +463,7 @@ public static class ImplementationComplexity
                     cur = null;
                 }
             }
-            best = Better(best, Evaluate(arms));
+            best = Better(best, Evaluate(arms, corpusMethodNames));
         }
 
         return best;
@@ -463,9 +472,10 @@ public static class ImplementationComplexity
     private static DispatcherAnalysis Better(DispatcherAnalysis a, DispatcherAnalysis b)
         => b.ArmCount > a.ArmCount ? b : a;
 
-    private static DispatcherAnalysis Evaluate(List<HashSet<string>> arms)
+    private static DispatcherAnalysis Evaluate(List<HashSet<string>> arms, IReadOnlySet<string>? corpusMethodNames)
     {
         if (arms.Count < 2) return default;
+        if (corpusMethodNames is not null) return EvaluateRead(arms, corpusMethodNames);
 
         var union = new HashSet<string>(StringComparer.Ordinal);
         foreach (var a in arms) union.UnionWith(a);
@@ -482,6 +492,18 @@ public static class ImplementationComplexity
         if ((double)maxShared / arms.Count >= 0.5) return default;
 
         return new DispatcherAnalysis(true, arms.Count);
+    }
+
+    private static DispatcherAnalysis EvaluateRead(List<HashSet<string>> arms, IReadOnlySet<string> corpusMethodNames)
+    {
+        var callers = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var arm in arms)
+            foreach (var m in arm.Where(corpusMethodNames.Contains))
+                callers[m] = callers.GetValueOrDefault(m) + 1;
+
+        // An arm is a hidden operation when it calls a solution member that no other arm calls.
+        int distinctArms = arms.Count(a => a.Any(m => callers.GetValueOrDefault(m) == 1));
+        return distinctArms >= 2 ? new DispatcherAnalysis(true, distinctArms) : default;
     }
 
     private static HashSet<string> InvokedMembers(SyntaxNode arm)
