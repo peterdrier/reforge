@@ -37,7 +37,7 @@ Every reference is found via the compiler's semantic model — including referen
 | `reforge injected <type>` | Who injects this type via constructor |
 | `reforge usages <type>` | Where a type is used, categorized by kind |
 | `reforge parameters --name X --type Y` | Find parameters matching patterns |
-| `reforge snapshot [--by-assembly] [--append file.csv]` | Macro health record for time-series charting; `--by-assembly` emits one row per section with size, complexity, surface census and test mass |
+| `reforge snapshot [--by-assembly] [--coverage report.xml] [--append file.csv]` | Macro health record for time-series charting; `--by-assembly` emits one row per section with size, complexity, surface census, test mass and coverage |
 | `reforge audit-surface <type>` | Per-method inbound view: caller counts (prod/test) + body shape for classes (passthrough-repo/-service/-self, linq-over-repo/-service, write, composite, complex) |
 | `reforge audit-downstream <class>` | Per-method outbound view: dependency calls, DbSet reads/writes traced one hop through repository implementations with `via` attribution, untraced repo-to-repo hops, and external IO |
 
@@ -177,6 +177,25 @@ reaching past the section under test) the project name breaks the tie; where not
 project is listed in `unattributedTestProjects` with an `info` diagnostic, and its mass is in the
 solution rollup and in no column. Nothing about the test corpus is scored: there is no test axis and
 no weight reads any of these numbers.
+
+**Coverage is attributed per section when you hand over a report.** Reforge does not run tests;
+`--coverage <file>` on `surface-score` and `snapshot --by-assembly` reads what the test run wrote and
+joins it onto the section map by assembly name, so a coverage figure sits beside the size and
+surface of exactly the code it describes:
+
+```bash
+dotnet test --collect:"XPlat Code Coverage"            # Coverlet -> TestResults/**/coverage.cobertura.xml
+dotnet dotcover test --dcReportType=DetailedXML --dcOutput=coverage.xml   # JetBrains dotCover
+reforge surface-score --coverage path/to/coverage.cobertura.xml
+```
+
+Both Cobertura XML (Coverlet, ReportGenerator) and dotCover DetailedXML are read, and the format is
+echoed as `coverageFormat`. Each group gets `coverage: { covered, total, percent }`; the key is absent when
+the report says nothing about the section, so unmeasured and 0% stay distinguishable. A section's
+`.Contracts` satellite folds in as it does everywhere else. Assemblies in the report that are not in
+the solution (test projects) are listed in an `info` diagnostic and left out of every column, and so
+are sections the report never mentions. Line counts agree with Coverlet's own `lines-covered` /
+`lines-valid`. Informational: nothing here feeds a score.
 
 `reforge section-shape` renders the same sections as a report (interfaces, DTO anchors,
 cross-section use, charged read methods, advisories).

@@ -114,6 +114,13 @@ public static class SkillCommand
         `{from, to, count}` per pair of sections. `snapshot --by-assembly` flattens metrics,
         surface and tests into one CSV row per section for history runs.
 
+        **Coverage is attributed per section from a report you supply.** `--coverage <file>` on
+        `surface-score` and `snapshot --by-assembly` reads a Cobertura XML (Coverlet:
+        `dotnet test --collect:"XPlat Code Coverage"`) or dotCover DetailedXML report and joins it
+        onto the sections by assembly name. Each group gets `coverage: { covered, total, percent }`
+        or no key when unmeasured; `coverageFormat` says which reader ran. Test assemblies in the
+        report are listed in a diagnostic and left out. Informational; never scored.
+
         **Test mass is reported per section, and scored nowhere.** A `tests` block per group (plus a
         solution rollup) carries `loc`, `files`, `projects`, and `locVsProdPercent` — test LOC as a
         percentage of the section's production LOC, which is the figure that compares two sections

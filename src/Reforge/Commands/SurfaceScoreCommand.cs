@@ -64,6 +64,11 @@ public static class SurfaceScoreCommand
             Description = "Score even when the solution did not compile cleanly. Without this, a degraded build prints no score and exits 2, because a partial score reads as authoritative and has been quoted from broken trees before. With it, the score is printed, the result is marked degraded, and the exit code is 0."
         };
 
+        var coverageOption = new Option<string?>("--coverage")
+        {
+            Description = "Coverage report to attribute to sections by assembly: Cobertura XML (Coverlet, ReportGenerator) or dotCover DetailedXML. Reported beside each section's size; never scored."
+        };
+
         var command = new Command("surface-score",
             "Score a solution's durable surface, dependency use, and implementation shape (config-driven). Supports Compact, Markdown, and JSON output.")
         {
@@ -75,7 +80,8 @@ public static class SurfaceScoreCommand
             listGroupsOption,
             baselineOption,
             maxBuildDiagnosticsOption,
-            allowDegradedOption
+            allowDegradedOption,
+            coverageOption
         };
 
         command.SetAction(async (parseResult, ct) =>
@@ -91,6 +97,7 @@ public static class SurfaceScoreCommand
             var baselinePath = parseResult.GetValue(baselineOption);
             var maxBuildDiagnostics = parseResult.GetValue(maxBuildDiagnosticsOption);
             var allowDegraded = parseResult.GetValue(allowDegradedOption);
+            var coveragePath = parseResult.GetValue(coverageOption);
             var format = parseResult.GetValue(formatOption);
 
             // --all is an alias for --top 0 (no cap). int.MaxValue is the sentinel for "show
@@ -106,6 +113,14 @@ public static class SurfaceScoreCommand
                 var engine = new SurfaceScoreEngine(config, solutionDir);
                 var report = await engine.ScoreAsync(solution, ct, maxBuildDiagnostics);
                 report.ConfigPath = loadedFrom;
+
+                if (coveragePath is not null)
+                {
+                    if (File.Exists(coveragePath))
+                        report.AttachCoverage(CoverageReportReader.Read(coveragePath, report.SectionByAssembly));
+                    else
+                        report.Diagnostics.Add(new ScoreDiagnostic("warning", "coverage-not-found", $"Coverage report not found: {coveragePath}"));
+                }
 
                 // Build-health: when the analyzed solution did not compile cleanly the score is
                 // partial, so by default nothing is printed and the command exits 2. The
@@ -274,6 +289,8 @@ public static class SurfaceScoreCommand
         Console.WriteLine($"surface: {SurfaceLine(ScopedSurface(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
         var solutionTests = TestsLine(ScopedTests(report, FilterAndOrderGroups(report, groupFilter), groupFilter));
         if (solutionTests.Length > 0) Console.WriteLine(solutionTests);
+        var solutionCoverage = ScopedCoverage(report, FilterAndOrderGroups(report, groupFilter), groupFilter);
+        if (solutionCoverage.HasData) Console.WriteLine($"{CoverageLine(solutionCoverage)} ({report.CoverageFormat})");
 
         foreach (var d in report.Diagnostics)
             Console.WriteLine($"! {d.Level}: {d.Message}");
@@ -342,6 +359,7 @@ public static class SurfaceScoreCommand
             Console.WriteLine($"  {MetricsLine(g.Metrics)}");
             Console.WriteLine($"  {SurfaceLine(g.Surface)}");
             if (g.Tests.Files != 0) Console.WriteLine($"  {TestsLine(g.Tests)}");
+            if (g.Coverage.HasData) Console.WriteLine($"  {CoverageLine(g.Coverage)}");
 
             foreach (var kv in g.ByRule.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
                 Console.WriteLine($"  {kv.Key,-40} {kv.Value,5}");
@@ -395,6 +413,11 @@ public static class SurfaceScoreCommand
         sb.AppendLine($"- **Corpus**{(groupFilter is null ? "" : $" (`{groupFilter}`)")}: " +
                       $"{MetricsLine(ScopedMetrics(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
         sb.AppendLine($"- **Surface**: {SurfaceLine(ScopedSurface(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
+        // Gated on the scoped value, not on whether a report was given: a report that matched
+        // nothing in this scope leaves it unmeasured, which must not print as a measured 0%.
+        var markdownCoverage = ScopedCoverage(report, FilterAndOrderGroups(report, groupFilter), groupFilter);
+        if (markdownCoverage.HasData)
+            sb.AppendLine($"- **Coverage**: {CoverageLine(markdownCoverage)} ({report.CoverageFormat})");
         sb.AppendLine($"- **Groups**: {report.Groups.Count}");
         sb.AppendLine($"- **Config**: {(report.ConfigPath ?? "(defaults, no reforge.surface-score.json found)")}");
         sb.AppendLine();
@@ -442,13 +465,14 @@ public static class SurfaceScoreCommand
 
         sb.AppendLine("## Totals by group");
         sb.AppendLine();
-        sb.AppendLine("| Group | Score | LOC | Files | Classes | Interfaces | Cognitive p95 | Cognitive max | Max class LOC | Test LOC | Tests % of LOC |");
-        sb.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+        sb.AppendLine("| Group | Score | LOC | Files | Classes | Interfaces | Cognitive p95 | Cognitive max | Max class LOC | Exported write | Test LOC | Tests % of LOC | Coverage |");
+        sb.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
         foreach (var g in orderedGroups)
         {
             var m = g.Metrics;
             sb.AppendLine($"| {g.Name} | {g.Total} | {m.LocProd} | {m.Files} | {m.Classes} | {m.Interfaces} | " +
-                          $"{m.Cognitive.P95} | {m.Cognitive.Max} | {m.MaxClassLoc} | {g.Tests.Loc} | {g.Tests.LocVsProdPercent}% |");
+                          $"{m.Cognitive.P95} | {m.Cognitive.Max} | {m.MaxClassLoc} | {g.Surface.ExportedWriteMethods} | " +
+                          $"{g.Tests.Loc} | {g.Tests.LocVsProdPercent}% | {(g.Coverage.HasData ? $"{g.Coverage.Percent}%" : "")} |");
         }
         sb.AppendLine();
         // The solution rollup, because the test columns above only cover scored groups: a test
@@ -491,6 +515,11 @@ public static class SurfaceScoreCommand
             sb.AppendLine($"`{MetricsLine(g.Metrics)}`");
             sb.AppendLine();
             sb.AppendLine($"`{SurfaceLine(g.Surface)}`");
+            if (g.Coverage.HasData)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"`{CoverageLine(g.Coverage)}`");
+            }
             sb.AppendLine();
             if (g.Tests.Files != 0)
             {
@@ -614,6 +643,7 @@ public static class SurfaceScoreCommand
                 total = g.Total,
                 metrics = MetricsJson(g.Metrics),
                 surface = SurfaceJson(g.Surface),
+                coverage = CoverageJson(g.Coverage),
                 tests = TestsJson(g.Tests),
                 byRule = g.ByRule
                     .OrderByDescending(kv => kv.Value)
@@ -702,6 +732,8 @@ public static class SurfaceScoreCommand
                     || string.Equals(e.To, groupFilter, StringComparison.OrdinalIgnoreCase))
                 .Select(e => new { from = e.From, to = e.To, count = e.Count }),
             tests = TestsJson(ScopedTests(report, filteredGroups, groupFilter)),
+            coverage = CoverageJson(ScopedCoverage(report, filteredGroups, groupFilter)),
+            coverageFormat = report.CoverageFormat,
             unattributedTestProjects = report.UnattributedTestProjects,
             publicWriteSurface = PublicWriteSurfaceJson(report, groupFilter),
             build = new
@@ -919,6 +951,24 @@ public static class SurfaceScoreCommand
         $" unused-externally types={s.ExportedTypesUnusedExternally} methods={s.ExportedMethodsUnusedExternally}" +
         $" write={s.ExportedWriteMethodsUnusedExternally}" +
         $" | internal: types={s.InternalTypes} read={s.InternalReadMethods} write={s.InternalWriteMethods}";
+
+    private static SectionCoverage ScopedCoverage(ScoreReport report, List<GroupScore> filteredGroups, string? groupFilter)
+    {
+        if (groupFilter is null) return report.Coverage;
+        if (report.CoverageBySection.TryGetValue(groupFilter, out var c)) return c;
+        return filteredGroups.Count > 0 ? filteredGroups[0].Coverage : SectionCoverage.Empty;
+    }
+
+    /// <summary>
+    /// Statement coverage of a scope, for the JSON report; null (and so absent from the output) when no
+    /// <c>--coverage</c> report covered it, so a consumer can tell "unmeasured" from "0%".
+    /// </summary>
+    private static object? CoverageJson(SectionCoverage c) => c.HasData
+        ? new { covered = c.Covered, total = c.Total, percent = c.Percent }
+        : null;
+
+    private static string CoverageLine(SectionCoverage c) =>
+        $"coverage: {c.Percent}% ({c.Covered}/{c.Total} statements)";
 
     /// <summary>
     /// Test-corpus size of a scope, for the JSON report. Emitted for every group and once for the

@@ -80,6 +80,13 @@ public sealed class GroupScore
     /// <see cref="Metrics"/>.
     /// </summary>
     public SurfaceCensus Surface { get; set; } = SurfaceCensus.Empty;
+
+    /// <summary>
+    /// Statement coverage of the section, read from a <c>--coverage</c> report — see
+    /// <see cref="SectionCoverage"/>. <see cref="SectionCoverage.Empty"/> when no report was given
+    /// or the report had nothing for this section.
+    /// </summary>
+    public SectionCoverage Coverage { get; set; } = SectionCoverage.Empty;
 }
 
 public sealed class ScoreReport
@@ -110,6 +117,36 @@ public sealed class ScoreReport
     public Dictionary<string, SurfaceCensus> SurfaceBySection { get; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Cross-section reference edges counted in the census walk — see <see cref="SectionEdge"/>.</summary>
     public List<SectionEdge> Edges { get; } = new();
+    /// <summary>Analyzed assembly name -> section name, the mapping every per-section block uses.</summary>
+    public Dictionary<string, string> SectionByAssembly { get; } = new(StringComparer.Ordinal);
+    /// <summary>Coverage rollup over the assemblies a <c>--coverage</c> report matched; Empty without one.</summary>
+    public SectionCoverage Coverage { get; set; } = SectionCoverage.Empty;
+    /// <summary>Coverage per section with data in the report. Keyed by section name.</summary>
+    public Dictionary<string, SectionCoverage> CoverageBySection { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary><c>cobertura</c> or <c>dotcover</c>; null when no report was given.</summary>
+    public string? CoverageFormat { get; set; }
+
+    /// <summary>
+    /// Attaches a coverage report to the sections. Diagnostics name the report's assemblies that
+    /// are not in the solution and the sections the report says nothing about.
+    /// </summary>
+    public void AttachCoverage(CoverageIngest ingest)
+    {
+        CoverageFormat = ingest.Format;
+        Coverage = ingest.Solution;
+        foreach (var (section, coverage) in ingest.BySection)
+        {
+            CoverageBySection[section] = coverage;
+            if (Groups.TryGetValue(section, out var group)) group.Coverage = coverage;
+        }
+        if (ingest.UnmatchedAssemblies.Count > 0)
+            Diagnostics.Add(new ScoreDiagnostic("info", "coverage-unmatched-assembly",
+                $"Coverage report assemblies not in the analyzed solution, left out of every column: {string.Join(", ", ingest.UnmatchedAssemblies)}"));
+        var uncovered = ConfiguredSections.Where(s => !ingest.BySection.ContainsKey(s)).ToList();
+        if (uncovered.Count > 0)
+            Diagnostics.Add(new ScoreDiagnostic("info", "coverage-missing-section",
+                $"Sections the coverage report says nothing about: {string.Join(", ", uncovered)}"));
+    }
     /// <summary>
     /// Solution-level test-corpus rollup, including the mass of test projects no section claimed.
     /// </summary>
