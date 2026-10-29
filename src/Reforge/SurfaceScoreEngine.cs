@@ -131,7 +131,7 @@ public sealed partial class SurfaceScoreEngine
         // Pass 5 — implementation shape (separate scalar). Call-path cognitive complexity, class
         // size, and structural action-dispatcher detection — the counterweight to surface. The
         // fold is resolved first because it is solution-wide: a method's complexity depends on the
-        // private helpers only it calls, which the per-type walk below cannot see.
+        // single-caller helpers it calls, which the per-type walk below cannot see.
         var fold = await CallPathComplexity.BuildAsync(solution, analyzedAssemblies, ct);
         ScoreImplementationComplexity(classified, report, ct, analyzedAssemblies, fold);
 

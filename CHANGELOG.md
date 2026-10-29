@@ -2,6 +2,13 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Widening a helper no longer lowers its caller's complexity
+
+- **`cognitiveComplexity` folds a single-caller helper whatever its accessibility** (#73), within
+  its top-level type, so making a private helper internal or protected no longer splits a charged
+  call path into two uncharged methods. Overrides and interface implementations still do not fold;
+  a helper only handed onward as a delegate is now charged on its own instead of nowhere.
+
 ## Unreleased - Exported methods are priced by what they do
 
 - **`exportedReadMethod` (4), `exportedWriteMethod` (12), `exportedUnusedExternally` (2) replace
