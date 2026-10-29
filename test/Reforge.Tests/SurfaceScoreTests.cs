@@ -593,6 +593,31 @@ public class SurfaceScoreTests
     }
 
     [Fact]
+    public async Task ActionDispatcher_ChargesAReadWhateverItsSelectorIsCalled()
+    {
+        // CamperFactReader.GetFactByQuery is GetFact with its enum renamed to read like a query.
+        // GetGreetingsAsync's read-shape selector only picks a LINQ projection, so it is not charged.
+        var report = await ScoreDefaultAsync();
+        var dispatch = AllEntries(report).Where(e => e.Rule == "actionDispatcher").ToList();
+        var original = Assert.Single(dispatch, e => e.Symbol == "GetFact" && e.Detail!.Contains("3-arm"));
+        var renamed = Assert.Single(dispatch, e => e.Symbol == "GetFactByQuery");
+        Assert.Equal(original.Points, renamed.Points);
+        Assert.DoesNotContain(dispatch, e => e.Symbol == "GetGreetingsAsync");
+    }
+
+    [Fact]
+    public async Task ActionDispatcher_TellsSameNamedLookupsOnDifferentTypesApart()
+    {
+        // CamperStoreReader.GetFact calls names.Get in one arm and ages.Get in the other: two
+        // methods that share a name. Its OrderBy/OrderByDescending must not make
+        // CamperCardService.List's LINQ calls look like solution work.
+        var report = await ScoreDefaultAsync();
+        var dispatch = AllEntries(report).Where(e => e.Rule == "actionDispatcher").ToList();
+        Assert.Single(dispatch, e => e.Symbol == "GetFact" && e.Detail!.Contains("2-arm read dispatch"));
+        Assert.DoesNotContain(dispatch, e => e.Symbol == "List");
+    }
+
+    [Fact]
     public async Task GodMethod_FiresCognitiveComplexity()
     {
         var report = await ScoreDefaultAsync();

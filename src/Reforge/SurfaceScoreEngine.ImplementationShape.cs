@@ -24,8 +24,8 @@ public sealed partial class SurfaceScoreEngine
     /// complexity is very nearly a subset of what length charged, minus the declarative bulk.
     /// </para>
     /// </summary>
-    private void ScoreImplementationComplexity(List<ClassifiedType> classified, ScoreReport report,
-        CancellationToken ct, HashSet<string> analyzedAssemblies, CallPathFold fold)
+    private async Task ScoreImplementationComplexityAsync(List<ClassifiedType> classified, ScoreReport report,
+        Solution solution, CancellationToken ct, HashSet<string> analyzedAssemblies, CallPathFold fold)
     {
         var largeW = _config.Weight("largeClass");
         var cogW = _config.Weight("cognitiveComplexity");
@@ -38,15 +38,6 @@ public sealed partial class SurfaceScoreEngine
         var groupByType = new Dictionary<string, (string Group, string File)>(StringComparer.Ordinal);
         foreach (var ct2 in classified)
             groupByType[ct2.Type.ToDisplayString()] = (ct2.Group, ct2.File);
-
-        // What a read's dispatch arms count as routing to: methods the solution declares. An
-        // override is excluded so ToString/Equals on some corpus type do not make every BCL call
-        // to them look like one.
-        var corpusMethodNames = classified
-            .SelectMany(c => c.Type.GetMembers().OfType<IMethodSymbol>())
-            .Where(m => m.MethodKind == MethodKind.Ordinary && !m.IsOverride && !m.IsImplicitlyDeclared)
-            .Select(m => m.Name)
-            .ToHashSet(StringComparer.Ordinal);
 
         foreach (var c in classified)
         {
@@ -133,7 +124,13 @@ public sealed partial class SurfaceScoreEngine
                 // unpriced, collapsing them would be free. See AnalyzeDispatcher for how a read's
                 // arms are measured.
                 bool mutation = ImplementationComplexity.IsMutation(m, syntax);
-                var d = ImplementationComplexity.AnalyzeDispatcher(m, syntax, mutation ? null : corpusMethodNames);
+                SemanticModel? readModel = null;
+                if (!mutation)
+                {
+                    if (solution.GetDocument(syntax.SyntaxTree) is not { } doc) continue;
+                    readModel = await doc.GetSemanticModelAsync(ct);
+                }
+                var d = ImplementationComplexity.AnalyzeDispatcher(m, syntax, readModel);
                 if (!mutation && !d.Fires) continue;
                 var dispatchEnumParams = ImplementationComplexity.DispatchEnumParams(m);
                 bool genericVerb = ImplementationComplexity.IsGenericVerb(m.Name);

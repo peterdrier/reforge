@@ -263,3 +263,53 @@ public class CamperCardService
 
     private static string Format(string value) => value.Trim();
 }
+
+public enum CamperFactField { Name, Age, Cabin }
+
+public enum CamperFactQuery { Name, Age, Cabin }
+
+/// <summary>
+/// The collapsed getter of the exportedReadMethod Gate 1 pair, on a plain enum and on one named
+/// like a query. Expected: actionDispatcher charges both the same; the selector's name does not
+/// change what the arms do.
+/// </summary>
+public class CamperFactReader
+{
+    public object GetFact(int camperId, CamperFactField field) => field switch
+    {
+        CamperFactField.Name => Name(camperId),
+        CamperFactField.Age => Age(camperId),
+        _ => Cabin(camperId),
+    };
+
+    public object GetFactByQuery(int camperId, CamperFactQuery query) => query switch
+    {
+        CamperFactQuery.Name => Name(camperId),
+        CamperFactQuery.Age => Age(camperId),
+        _ => Cabin(camperId),
+    };
+
+    private string Name(int camperId) => camperId.ToString();
+    private int Age(int camperId) => camperId;
+    private string Cabin(int camperId) => "A";
+}
+
+public interface ICamperNameStore { string Get(int camperId); }
+
+public interface ICamperAgeStore { string Get(int camperId); }
+
+/// <summary>
+/// Expected: actionDispatcher fires on GetFact, whose arms call two different Get methods. The
+/// OrderBy methods exist so CamperCardService.List's LINQ calls of that name are not taken for them.
+/// </summary>
+public class CamperStoreReader(ICamperNameStore names, ICamperAgeStore ages)
+{
+    public string GetFact(int camperId, CamperFactField field) => field switch
+    {
+        CamperFactField.Name => names.Get(camperId),
+        _ => ages.Get(camperId),
+    };
+
+    internal static int OrderBy(int value) => value;
+    internal static int OrderByDescending(int value) => -value;
+}

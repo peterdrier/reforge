@@ -133,7 +133,7 @@ public sealed partial class SurfaceScoreEngine
         // fold is resolved first because it is solution-wide: a method's complexity depends on the
         // single-caller helpers it calls, which the per-type walk below cannot see.
         var fold = await CallPathComplexity.BuildAsync(solution, analyzedAssemblies, ct);
-        ScoreImplementationComplexity(classified, report, ct, analyzedAssemblies, fold);
+        await ScoreImplementationComplexityAsync(classified, report, solution, ct, analyzedAssemblies, fold);
 
         // Pass 6 — boundary-input surface. Charges for parameter/command objects that hide a
         // long argument list (so a parameter-object refactor can't game methodParameterOverflow).
