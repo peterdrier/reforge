@@ -298,6 +298,116 @@ public class CrossTypeHelperFoldTests
         Assert.InRange(dispatcher, 1, Threshold);
     }
 
+    /// <summary>
+    /// Two single-caller methods in different types that call each other. The cycle's extent counts
+    /// each member once, so the pair is charged exactly what it would be as one type, whichever
+    /// member the walk reaches first.
+    /// </summary>
+    [Fact]
+    public async Task ACrossTypeCycle_CountsEachMemberOnce()
+    {
+        static string Cycle(string extra) => $$"""
+            namespace SampleSolution.Gate.Rules;
+
+            public static class GatePing
+            {
+                public static int Ping(List<string> log, int n)
+                {
+                    {{extra}}
+                    if (n <= 0) return 0;
+                    if (n % 2 == 0)
+                    {
+                        for (int i = 0; i < n; i++)
+                            if (i % 3 == 0) log.Add("ping");
+                    }
+                    return GatePong.Pong(log, n - 1);
+                }
+            }
+
+            public static class GatePong
+            {
+                public static int Pong(List<string> log, int n)
+                {
+                    {{extra}}
+                    if (n <= 0) return 1;
+                    if (n % 3 == 0)
+                    {
+                        for (int i = 0; i < n; i++)
+                            if (i % 5 == 0) log.Add("pong");
+                    }
+                    return GatePing.Ping(log, n - 1);
+                }
+            }
+            """;
+
+        // CC 7 + 7 = 14 sits under the threshold; CC 9 + 9 = 18 is three over it.
+        var scores = await ScoreAllAsync("cross-type-cycle", new()
+        {
+            ("under", Cycle("")),
+            ("over", Cycle("if (n > 100) n = 100; if (log.Count > 50) log.Clear();")),
+        });
+        Assert.Equal(0, Cog(scores[0].Report));
+        Assert.Equal(18 - Threshold, Cog(scores[1].Report));
+    }
+
+    /// <summary>
+    /// An explicit implementation is still an implementation: a call through the interface may
+    /// dispatch to it, so the implicit one beside it is not the member's only target and must not
+    /// fold into the caller.
+    /// </summary>
+    [Fact]
+    public async Task AnExplicitImplementation_KeepsTheImplicitOneFromFolding()
+    {
+        const string source = """
+            namespace SampleSolution.Gate.Rules;
+
+            public interface IGateRanker
+            {
+                int Rank(List<string> log, int id);
+            }
+
+            public sealed class GateRanker : IGateRanker
+            {
+                public int Rank(List<string> log, int id)
+                {
+                    if (id % 2 == 0)
+                    {
+                        if (id % 3 == 0)
+                        {
+                            for (int i = 0; i < id; i++)
+                                if (i % 5 == 0) log.Add("six");
+                        }
+                    }
+                    return id;
+                }
+
+                public int Run(IGateRanker other, List<string> log, IReadOnlyList<int> ids)
+                {
+                    int total = 0;
+                    foreach (var id in ids)
+                    {
+                        if (id < 0) continue;
+                        if (id > 1000)
+                        {
+                            if (id % 9 == 0) log.Add("nine");
+                        }
+                        total += other.Rank(log, id);
+                    }
+                    return total;
+                }
+            }
+
+            public sealed class GateExplicitRanker : IGateRanker
+            {
+                int IGateRanker.Rank(List<string> log, int id) => -id;
+            }
+            """;
+
+        // Rank (CC 10) and Run (CC 8) each read under the threshold; folded together they would not.
+        var (_, report) = (await ScoreAllAsync("explicit-impl", new() { ("explicit", source) }))[0];
+        Assert.Equal(0, Cog(report));
+    }
+
     private static int Cog(ScoreReport r) => r.ByRule.GetValueOrDefault("cognitiveComplexity");
 
     private static async Task<List<(string Name, ScoreReport Report)>> ScoreAllAsync(

@@ -79,7 +79,7 @@ public static class CallPathComplexity
         public Dictionary<string, MethodInfo> Methods { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, HashSet<string>> Callers { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, HashSet<string>> Callees { get; } = new(StringComparer.Ordinal);
-        /// <summary>Interface member → the methods that implicitly implement it.</summary>
+        /// <summary>Interface member → the methods that implement it, implicitly or explicitly.</summary>
         public Dictionary<string, HashSet<string>> Implementations { get; } = new(StringComparer.Ordinal);
 
         public void Add(Dictionary<string, HashSet<string>> edges, string from, string to)
@@ -182,12 +182,16 @@ public static class CallPathComplexity
         Dictionary<string, string> soleCaller, Dictionary<string, CallPathScore> scores)
     {
         const int t = SurfaceScoreEngine.CognitiveThreshold;
-        var children = crossCaller
-            .GroupBy(kv => GroupRoot(kv.Value, soleCaller), kv => kv.Key, StringComparer.Ordinal)
+        var parent = crossCaller.ToDictionary(kv => kv.Key, kv => GroupRoot(kv.Value, soleCaller),
+            StringComparer.Ordinal);
+        // Groups that are each other's cross-type sole caller keep one member as the cycle's root,
+        // so each member's path is counted once whichever the walk reaches first.
+        BreakCycles(parent);
+        var children = parent
+            .GroupBy(kv => kv.Value, kv => kv.Key, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
 
         var extent = new Dictionary<string, int>(StringComparer.Ordinal);
-        var path = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (root, callees) in children)
         {
             int own = scores[root].Score, below = 0, best = -1;
@@ -204,17 +208,13 @@ public static class CallPathComplexity
 
         static int Hinge(int cc) => Math.Max(0, cc - t);
 
-        // A cross-type cycle counts each member's path once.
         int Extent(string key)
         {
             if (extent.TryGetValue(key, out var cached)) return cached;
             int sum = scores[key].Score;
-            if (!path.Add(key)) return sum;
             if (children.TryGetValue(key, out var cs))
                 foreach (var c in cs) sum += Extent(c);
-            path.Remove(key);
-            extent[key] = sum;
-            return sum;
+            return extent[key] = sum;
         }
     }
 
@@ -297,11 +297,15 @@ public static class CallPathComplexity
         return type;
     }
 
-    /// <summary>The keys of the interface members <paramref name="m"/> implicitly implements.</summary>
+    /// <summary>
+    /// The keys of the interface members <paramref name="m"/> implements. Explicit implementations
+    /// are included: they never fold, but a call through the interface may dispatch to them.
+    /// </summary>
     private static List<string> InterfaceMembersImplementedBy(IMethodSymbol m,
         Dictionary<INamedTypeSymbol, ILookup<ISymbol, ISymbol>> implementing)
     {
-        if (m.DeclaredAccessibility != Accessibility.Public) return [];
+        if (m.DeclaredAccessibility != Accessibility.Public
+            && m.MethodKind != MethodKind.ExplicitInterfaceImplementation) return [];
         var type = m.ContainingType;
         if (!implementing.TryGetValue(type, out var lookup))
         {
