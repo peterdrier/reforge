@@ -41,8 +41,6 @@ public class SectionShapeAnalyzerTests
         Assert.Contains(camp.ChargedReadMethods, m => m.Method == "GetCampSummariesForYearAsync" && m.Kind == ReadMethodKind.ProjectionSummary);
         Assert.DoesNotContain(camp.ChargedReadMethods, m => m.Method == "GetByIdAsync");
         Assert.DoesNotContain(camp.ChargedReadMethods, m => m.Method == "GetSettingsAsync");
-        // no missing surfaces: Camp has read+write+CampInfo
-        Assert.Empty(camp.Missing);
     }
 
     [Fact]
@@ -98,7 +96,6 @@ public class SectionShapeAnalyzerTests
         var lodge = arch.Sections.Single(s => s.Name == "Lodge");
 
         Assert.Equal("LodgeStayInfo", lodge.PrimaryInfoDto!.Display.Split('.').Last());
-        Assert.DoesNotContain(lodge.Missing, m => m.Rule == "missingPrimaryInfoDto");
     }
 
     [Fact]
@@ -110,6 +107,5 @@ public class SectionShapeAnalyzerTests
         var tent = arch.Sections.Single(s => s.Name == "Tent");
 
         Assert.Null(tent.PrimaryInfoDto);
-        Assert.Contains(tent.Missing, m => m.Rule == "missingPrimaryInfoDto");
     }
 }

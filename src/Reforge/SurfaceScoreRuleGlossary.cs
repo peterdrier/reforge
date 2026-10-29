@@ -28,11 +28,9 @@ public static class SurfaceScoreRuleGlossary
         ["repositoryImplementationMethod"] = "A public method on a repository implementation class.",
         ["newRepositoryInterface"] = "A repository interface type — each is durable infrastructure surface.",
         ["newRepositoryImplementation"] = "A repository implementation class.",
-        ["diRegistration"] = "A dependency-injection registration (AddSingleton/AddScoped/AddTransient/TryAdd*) of a classified type.",
         ["controllerAction"] = "A public action method on a controller.",
         ["backgroundJob"] = "A background job, hosted service, or worker class.",
         ["duplicateDbSetOwner"] = "A class reads or writes a DbSet that is owned (per config) by a different section.",
-        ["canonicalReadDtoReturn"] = "A method's return type is a section's canonical read DTO (credit; encourages adoption of the project-blessed read API).",
         ["publicInputWithHiddenState"] = "A public boundary input/command/request type used as a public method parameter exposes most of its carried state through non-public accessors, so callers and decorators cannot inspect the data crossing the boundary.",
         ["parameterBagInput"] = "An input/command/request type with four or more data members, a direct-assignment constructor, and no behavior, used as the sole or near-sole parameter of a public method — a long method signature folded into an object without adding invariants or domain semantics.",
         ["inlineParameterObjectConstruction"] = "A public method call constructs an input/request/options object inline from a long argument list, moving the argument bundle from the method signature to the construction site.",
@@ -44,18 +42,11 @@ public static class SurfaceScoreRuleGlossary
         ["crossSectionRepository"] = "A constructor dependency on a repository interface or implementation owned by a different section.",
         ["writeCapableInterfaceUsedReadOnly"] = "A class injects a full-service interface that is paired (by inheritance or by a same-namespace 'Read'-suffixed sibling) with a read-only interface, and every observed invocation on the injected dependency targets a method that also exists on the read interface.",
 
-        // Section architecture (surface axis)
-        ["missingReadSurface"] = "A repo-backed section has no read-only service interface.",
-        ["missingWriteSurface"] = "A repo-backed section has no write/full service interface.",
-        ["missingPrimaryInfoDto"] = "A repo-backed section has no DTO matching its primary Info DTO name.",
-        ["readSurfaceProjectionMethod"] = "A read-service-interface method returns a projection, predicate, scalar fact, or composed view rather than the section's primary Info DTO.",
-
         // Signature shape
         ["methodParameterOverflow"] = "A public method has more than two parameters; points scale per parameter beyond two.",
         ["booleanParameter"] = "A public method has a boolean parameter (often a control flag that splits the method into hidden branches).",
         ["tupleReturn"] = "A public method's return type is a value tuple.",
         ["optionsBag"] = "A public method takes a single parameter whose type aggregates many public properties (heuristic: name ends in 'Options' with 4+ props, or any type with 6+ public props).",
-        ["dashboardAdminPageName"] = "A public method's name contains 'Dashboard', 'ForAdmin', 'ForPage', or 'AdminPage' — caller-shaped naming that often signals a leaked UI concern.",
         ["oneImplementationInterface"] = "A classified interface has exactly one classified class implementing it.",
 
         // Implementation-shape axis

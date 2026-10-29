@@ -88,21 +88,20 @@ public sealed partial class SurfaceScoreEngine
                 $"with this report lists the names that exist."));
 
         // A key this version dropped would otherwise change meaning in silence: `sections` decided
-        // DTO anchors and suppressed penalties, `canonicalReadDtos` inside it decided which returns
-        // earned the canonicalReadDtoReturn credit.
+        // DTO anchors and suppressed penalties for whole sections.
         var removedField = _config.UnreadConfigKeysWarning();
         if (removedField is not null)
             report.Diagnostics.Add(new ScoreDiagnostic("warning", "removed-config-field", removedField));
 
-        // Single canonical index — built once, used by both dependency-use and DI-registration
-        // passes. Keyed by SolutionClassifier.TypeKey (declaring assembly + fully qualified name):
+        // Single canonical index — built once, shared by every pass that resolves a dependency.
+        // Keyed by SolutionClassifier.TypeKey (declaring assembly + fully qualified name):
         // the name alone is not unique across a solution, and collapsing two assemblies' identically
         // named types would resolve a consumer into the wrong section.
         var typesByDisplay = classified.ToDictionary(
             c => SolutionClassifier.TypeKey(c.Type), c => c, StringComparer.Ordinal);
 
-        // Section architecture (Plan B): resolve each configured section's shape once. Used to
-        // score the section rules and to emit conservation anchors.
+        // Section architecture: resolve each section's shape once. Feeds the conservation anchors
+        // and the escape-analysis advisory; no rule scores a section for its shape.
         var architecture = await SectionShapeAnalyzer.AnalyzeAsync(solution, classified, _config, _solutionDirectory, ct);
 
         // Pass 1 — durable surface
@@ -114,33 +113,28 @@ public sealed partial class SurfaceScoreEngine
         // Pass 3 — signature shape (surface axis)
         await ScoreSignatureShape(classified, report, ct);
 
-        // Pass 4 — canonical read-DTO credit.
-        ScoreReturnTypeRules(classified, report);
-
-        // Pass 5 — write-capable interface used read-only. Needs the semantic model and
+        // Pass 4 — write-capable interface used read-only. Needs the semantic model and
         // is the most expensive pass, so it runs last.
         await ScoreWriteCapableUsedReadOnlyAsync(classified, typesByDisplay, solution, report, ct);
 
-        // Cross-cutting: duplicate DbSet owners (resource ownership), DI registrations,
-        // one-implementation interfaces.
+        // Cross-cutting: duplicate DbSet owners (resource ownership), one-implementation interfaces.
         ScoreDuplicateDbSetOwners(classified, solution, report, ct);
-        await ScoreDiRegistrationsAsync(solution, typesByDisplay, report, ct);
         ScoreOneImplementationInterfaces(classified, report);
 
-        // Pass 6 — implementation shape (separate scalar). Call-path cognitive complexity, class
+        // Pass 5 — implementation shape (separate scalar). Call-path cognitive complexity, class
         // size, and structural action-dispatcher detection — the counterweight to surface. The
         // fold is resolved first because it is solution-wide: a method's complexity depends on the
         // private helpers only it calls, which the per-type walk below cannot see.
         var fold = await CallPathComplexity.BuildAsync(solution, analyzedAssemblies, ct);
         ScoreImplementationComplexity(classified, report, ct, analyzedAssemblies, fold);
 
-        // Pass 7 — boundary-input surface. Charges for parameter/command objects that hide a
+        // Pass 6 — boundary-input surface. Charges for parameter/command objects that hide a
         // long argument list (so a parameter-object refactor can't game methodParameterOverflow).
         ScoreBoundaryInputs(classified, typesByDisplay, report, ct);
         await ScoreInlineParameterObjectConstructionAsync(typesByDisplay, solution, report, ct);
 
-        // Section-architecture scored rules (surface axis) + conservation anchors.
-        ScoreSectionArchitecture(architecture, report);
+        // Section-architecture advisories + conservation anchors.
+        EmitSectionAdvisories(architecture, report);
         report.ConservationAnchors = BuildConservationAnchors(architecture, report);
         report.HelperCandidates = BuildHelperCandidates(classified);
 

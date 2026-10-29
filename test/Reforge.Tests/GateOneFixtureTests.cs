@@ -53,13 +53,6 @@ public class GateOneFixtureTests
     private static readonly IReadOnlyDictionary<string, string> Exempt =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            // Negative weight: the rule pays code for adopting the section's published read API.
-            // "The cheapest fix must not improve the score" is meaningless for a credit — there is
-            // nothing to fix. Gaming a credit means claiming it without earning it, which is a
-            // different test (CanonicalReadDtoDerivationTests) against a different question.
-            ["canonicalReadDtoReturn"] =
-                "credit, not a penalty — a cheapest-fix pair does not typecheck as a concept",
-
             // Cost, not doubt: the threshold is 750 nonblank LOC, so a Before/CheapestFix pair is
             // ~1,600 lines of synthetic class to demonstrate one 10-point charge. The rule's Gate 1
             // reasoning is measured in 2026-08-20-internal-axis-second-corpus.md instead — the
@@ -77,11 +70,9 @@ public class GateOneFixtureTests
     /// <para>Everything on this list is also a rule nobody has asked to fire.
     /// <see cref="EveryDeclaredRule_ActuallyFiresInItsBeforeFixture"/> only checks rules a pair
     /// declares, so a rule that is broken outright looks exactly like a rule that is merely
-    /// unfixtured. <c>diRegistration</c> was the first one caught that way: it had been dead since
-    /// it shipped — the classification lookup used a bare display string against a dictionary keyed
-    /// on assembly-qualified names — and scored zero against 452 registrations in Humans without
-    /// anything going red. Each entry below is a rule whose behaviour is currently unverified in
-    /// both directions, not just ungated.</para>
+    /// unfixtured — a rule has shipped dead and scored zero on a real corpus without anything going
+    /// red. Each entry below is a rule whose behaviour is currently unverified in both directions,
+    /// not just ungated.</para>
     /// </summary>
     private static readonly IReadOnlySet<string> NotYetCovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -100,14 +91,6 @@ public class GateOneFixtureTests
         "writeCapableInterfaceUsedReadOnly",
         "oneImplementationInterface",
 
-        // Section-shape rules. These were exempt while the harness scored one shared solution: they
-        // charge a section for its shape, and a filtered slice of a shared report either could not
-        // see them (recorded with no file) or attributed them to whichever fixture they landed on.
-        // Isolation removed that blocker — a variant compiled alone IS a section — so they now
-        // measure correctly and are merely unwritten. Writing them needs a fixture that establishes
-        // a section shape, which is more than a type per file.
-        "readSurfaceProjectionMethod",
-
         // Cross-section rules: they only fire when the consumer and the dependency are in
         // different sections, and sections come from assembly names. A one-project variant has one
         // section by construction, so these were unfixturable in a way that no amount of fixture
@@ -119,10 +102,10 @@ public class GateOneFixtureTests
         // not:
         //
         // crossSectionRepository needs a *Repository in the satellite, and inside the FULL sample
-        // solution every satellite file compiles into SampleSolution.Gate — which would make Gate
-        // repo-backed and switch the missing* rules on for every other Gate 1 fixture's
-        // neighbourhood. That is why the harness's own probe uses a service. Fixturing it needs the
-        // satellite to be excluded from the full-solution build first, which is a harness change.
+        // solution every satellite file compiles into SampleSolution.Gate, which would make Gate
+        // repo-backed for every other Gate 1 fixture's neighbourhood. That is why the harness's own
+        // probe uses a service. Fixturing it needs the satellite to be excluded from the
+        // full-solution build first, which is a harness change.
     };
 
     // ---------------- The gate ----------------

@@ -1,28 +1,16 @@
 namespace Reforge;
 
 /// <summary>
-/// Resolved per-section architectural expectations, all derived from structure: a section is
-/// RepoBacked when its assembly declares a repository or a DbContext, and that alone decides which
-/// surfaces it is expected to publish.
+/// Structural facts about a section: it is RepoBacked when its assembly declares a repository or
+/// a DbContext. Descriptive only — no rule expects a repo-backed section to publish any
+/// particular interface or DTO.
 /// </summary>
-public sealed record SectionFacts(
-    string Name,
-    bool RepoBacked,
-    bool RequiresReadSurface,
-    bool RequiresWriteSurface,
-    bool RequiresPrimaryInfoDto)
+public sealed record SectionFacts(string Name, bool RepoBacked)
 {
-    /// <summary>
-    /// Resolves the architectural expectations for a single section.
-    /// </summary>
     /// <param name="repoBackedSections">
-    /// Names of sections that own persistence. Per the spec, a section is repo-backed if it
-    /// declares EITHER a repositoryInterface, a repositoryImplementation, OR a DbContext — so the
-    /// caller building this set must include all three, not just the interface-tagged groups.
+    /// Names of sections that own persistence: a repositoryInterface, a repositoryImplementation,
+    /// or a DbContext — the caller building this set must include all three.
     /// </param>
     public static SectionFacts For(string name, IReadOnlySet<string> repoBackedSections)
-    {
-        bool repoBacked = repoBackedSections.Contains(name);
-        return new SectionFacts(name, repoBacked, repoBacked, repoBacked, repoBacked);
-    }
+        => new(name, repoBackedSections.Contains(name));
 }

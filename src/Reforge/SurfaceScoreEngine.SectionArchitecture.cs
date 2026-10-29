@@ -2,51 +2,23 @@ using Microsoft.CodeAnalysis;
 
 namespace Reforge;
 
-// Section-architecture rules (surface axis) plus the conservation anchors and helper
-// candidates the baseline gate diffs against to catch score-driven consolidation.
+// Section-architecture advisories plus the conservation anchors and helper candidates the
+// baseline gate diffs against to catch score-driven consolidation. Nothing here scores: a
+// section's shape (which interfaces it publishes, what its read methods return) is reported by
+// section-shape, and the surface axis prices what the assembly exports rather than what a
+// convention says it should export.
 public sealed partial class SurfaceScoreEngine
 {
     /// <summary>
-    /// Scores the section shapes onto the surface axis: the <c>readSurfaceProjectionMethod</c>
-    /// surcharge for charged read methods and the repo-backed <c>missing*</c> rules. Every
-    /// assembly-derived section is shaped, so these rules fire with or without a config file.
+    /// Escape-analysis advisory: a cross-section read-only use that could not be confirmed because
+    /// the dependency escapes the consumer. Diagnostic only, no penalty.
     /// </summary>
-    private void ScoreSectionArchitecture(SectionArchitecture arch, ScoreReport report)
+    private static void EmitSectionAdvisories(SectionArchitecture arch, ScoreReport report)
     {
-        var projW = _config.Weight("readSurfaceProjectionMethod");
         foreach (var section in arch.Sections)
-        {
-            // Projection surcharge: only when the section has a resolved primary Info DTO — without
-            // that anchor a primitive read can't be distinguished from a projection.
-            if (projW != 0 && section.PrimaryInfoDto is not null)
-            {
-                foreach (var rm in section.ChargedReadMethods)
-                {
-                    // The surcharge is for the shape a read interface publishes. An internal read
-                    // interface publishes nothing; the shape stays in the section-shape view as an
-                    // advisory, it just doesn't score.
-                    if (rm.Symbol is not null && !SurfaceVisibility.IsExported(rm.Symbol)) continue;
-                    var detail = $"{rm.Interface}.{rm.Method} ({rm.Kind})";
-                    if (rm.Symbol is not null)
-                        AddEntry(report, section.Name, "readSurfaceProjectionMethod", projW, rm.Symbol, rm.File, rm.Line, detail);
-                    else
-                        AddEntryByName(report, section.Name, "readSurfaceProjectionMethod", projW, rm.Method, rm.File, rm.Line, detail);
-                }
-            }
-
-            // Missing surfaces — already gated to repo-backed expectations by the analyzer.
-            foreach (var miss in section.Missing)
-            {
-                var w = _config.Weight(miss.Rule);
-                if (w == 0) continue;
-                AddEntryByName(report, section.Name, miss.Rule, w, section.Name, "", 0, miss.Detail);
-            }
-
-            // Escape-analysis advisory: read-only use unconfirmed (the dependency escapes). No penalty.
             foreach (var use in section.WriteSurfaceUnverified)
                 report.Diagnostics.Add(new ScoreDiagnostic("info", "writeSurfaceUseUnverified",
                     $"{use.Caller} <- {use.Dependency}: read-only use unconfirmed (dependency escapes analysis); advisory only."));
-        }
     }
 
     /// <summary>

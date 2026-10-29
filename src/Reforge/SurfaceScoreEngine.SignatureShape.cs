@@ -2,8 +2,8 @@ using Microsoft.CodeAnalysis;
 
 namespace Reforge;
 
-// Pass 3 — signature shape: parameter overflow, boolean parameters, tuple returns, options
-// bags, and dashboard/admin naming. The shape of a published signature, not its body.
+// Pass 3 — signature shape: parameter overflow, boolean parameters, tuple returns and options
+// bags. The shape of a published signature, not its body.
 public sealed partial class SurfaceScoreEngine
 {
     private async Task ScoreSignatureShape(List<ClassifiedType> classified, ScoreReport report, CancellationToken ct)
@@ -12,7 +12,6 @@ public sealed partial class SurfaceScoreEngine
         var boolWeight = _config.Weight("booleanParameter");
         var tupleWeight = _config.Weight("tupleReturn");
         var optionsBagWeight = _config.Weight("optionsBag");
-        var nameWeight = _config.Weight("dashboardAdminPageName");
 
         foreach (var c in classified)
         {
@@ -55,10 +54,6 @@ public sealed partial class SurfaceScoreEngine
                 // Options-bag: single param whose type carries many unrelated public properties.
                 if (optionsBagWeight > 0 && m.Parameters.Length == 1 && IsOptionsBag(m.Parameters[0].Type))
                     AddEntry(report, c.Group, "optionsBag", optionsBagWeight, m, file, line, m.Name);
-
-                // Naming smell: ForDashboard / ForAdmin / ForPage / Dashboard / Admin in the method name.
-                if (nameWeight > 0 && HasDashboardAdminPageName(m.Name))
-                    AddEntry(report, c.Group, "dashboardAdminPageName", nameWeight, m, file, line, m.Name);
             }
         }
 
@@ -94,13 +89,5 @@ public sealed partial class SurfaceScoreEngine
             .Count(p => p.DeclaredAccessibility == Accessibility.Public);
         return publicProps >= 4 && n.Name.EndsWith("Options", StringComparison.Ordinal)
             || publicProps >= 6;
-    }
-
-    private static bool HasDashboardAdminPageName(string name)
-    {
-        return name.Contains("Dashboard", StringComparison.Ordinal)
-            || name.Contains("ForAdmin", StringComparison.Ordinal)
-            || name.Contains("ForPage", StringComparison.Ordinal)
-            || name.Contains("AdminPage", StringComparison.Ordinal);
     }
 }

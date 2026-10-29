@@ -546,18 +546,7 @@ public class SolutionClassifierTests
     [Fact]
     public void SectionFacts_RepoBacked_FromDeclaredRepository()
     {
-        var facts = SectionFacts.For("Camp", RepoSections("Camp"));
-        Assert.True(facts.RepoBacked);
-        Assert.True(facts.RequiresReadSurface);
-        Assert.True(facts.RequiresWriteSurface);
-        Assert.True(facts.RequiresPrimaryInfoDto);
-    }
-
-    [Fact]
-    public void SectionFacts_OrchestratorOnly_NotRequired()
-    {
-        var facts = SectionFacts.For("Reporting", RepoSections());
-        Assert.False(facts.RepoBacked);
-        Assert.False(facts.RequiresReadSurface);
+        Assert.True(SectionFacts.For("Camp", RepoSections("Camp")).RepoBacked);
+        Assert.False(SectionFacts.For("Reporting", RepoSections()).RepoBacked);
     }
 }
