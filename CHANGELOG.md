@@ -2,6 +2,19 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Reused code skips the flat charge; depth and sharing are measured
+
+- **A declaration with two or more callers skips `methodCount`**, since merging reused code away
+  means a copy per caller. A manufactured second caller still buys that charge back, recorded as
+  the `methodCountReuse` gameable pair.
+- **The census walks a solution-wide call graph** (interface and virtual calls reach every
+  implementation; top-level statements are an entry point) and the JSON `contents` block adds
+  direct-caller, transitive-reach and depth bands.
+- **`complexityDepthPercent` and `complexitySharingPercent` factor `methodComplexity` by depth from
+  an entry point and by log of transitive reach, both off by default:** on Reforge 459 of 536
+  declarations sit four or more calls deep and 479 are reached from 6-20 members, so both mostly
+  measure layering.
+
 ## Unreleased - Contents are priced as a census
 
 - **`methodComplexity` and `methodCount` replace `cognitiveComplexity`.** Every declaration that

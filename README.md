@@ -74,7 +74,11 @@ cognitive complexity `cc` as `methodComplexity`, whatever its accessibility: `cc
 flat charge moves, so tiny pieces get merged; above it the tax outgrows the flat charge, so huge
 methods get split. Fifty points of complexity score 135 as one method, 80 as five methods at 10 and
 155 as 25 one-liners. All five numbers are proposals: `surface-score --format json` carries a
-`contents` block (declarations by accessibility, complexity bands) to tune them against.
+`contents` block (declarations by accessibility, complexity bands, callers, reach and depth) to
+tune them against. A declaration with two or more callers skips the flat charge: merging reused
+code away means a copy per caller. `complexityDepthPercent` and `complexitySharingPercent` scale a
+declaration's complexity by its call depth from an entry point and by how many members reach it;
+both are off by default, because on a layered codebase they mostly measure the layering.
 
 **Exported methods are priced by what they do, not by what their type is called.** Every public
 method on an exported class or interface (outside the DTO, repository, controller and background-job

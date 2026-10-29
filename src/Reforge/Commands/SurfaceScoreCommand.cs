@@ -951,7 +951,8 @@ public static class SurfaceScoreCommand
 
     /// <summary>
     /// The contents census of a scope, for the JSON report: what <c>methodCount</c> and
-    /// <c>methodComplexity</c> priced, by accessibility and by own-complexity band. Informational,
+    /// <c>methodComplexity</c> priced, by accessibility, own-complexity band, direct callers, transitive
+    /// reach and depth from an entry point. Informational,
     /// and JSON only — it is calibration data for those weights, not something to act on.
     /// </summary>
     private static object ContentsJson(ContentsCensus c) => new
@@ -966,10 +967,14 @@ public static class SurfaceScoreCommand
             localFunctions = c.LocalFunctions
         },
         cognitive = c.Cognitive,
-        complexityBands = ContentsCensus.BandLabels
-            .Select((label, i) => (label, i))
-            .ToDictionary(x => x.label, x => c.Bands[x.i])
+        complexityBands = Bands(ContentsCensus.BandUpperBounds, c.Bands),
+        callerBands = Bands(ContentsCensus.CallerUpperBounds, c.CallerBands),
+        reachBands = Bands(ContentsCensus.CallerUpperBounds, c.ReachBands),
+        depthBands = Bands(ContentsCensus.DepthUpperBounds, c.DepthBands)
     };
+
+    private static Dictionary<string, int> Bands(int[] upperBounds, int[] counts)
+        => ContentsCensus.Labels(upperBounds).Select((label, i) => (label, i)).ToDictionary(x => x.label, x => counts[x.i]);
 
     /// <summary>One-line census for the compact and markdown reports.</summary>
     private static string SurfaceLine(SurfaceCensus s) =>
