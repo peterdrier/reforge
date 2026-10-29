@@ -1,7 +1,7 @@
-// gate1: applicationServiceMethod
+// gate1: exportedWriteMethod
 //
 // The laziest way to make a per-method charge smaller: keep every operation and publish one door
-// into all of them. applicationServiceMethod drops from three charges to one, which is the number
+// into all of them. exportedWriteMethod drops from three charges to one, which is the number
 // the agent was watching.
 //
 // This is the case the whole gate was built around, and the one it has to get right. Nothing was
@@ -12,7 +12,7 @@
 // being able to tell.
 //
 // actionDispatcher and mutationModeParameter exist to charge for precisely that trade, so the total
-// rises. If they ever stop firing here, applicationServiceMethod becomes a rule that pays an agent
+// rises. If they ever stop firing here, exportedWriteMethod becomes a rule that pays an agent
 // to hide a service behind a switch statement.
 
 namespace SampleSolution.Gate.Rules;

@@ -59,7 +59,8 @@ public static class SectionSnapshotAnalyzer
         var classified = await SolutionClassifier.ClassifyAsync(solution, config, dir, ct);
 
         var (metricsBySection, solutionMetrics) = SectionMetricsAnalyzer.Analyze(classified, ct);
-        var census = await SurfaceCensusAnalyzer.AnalyzeAsync(solution, classified, ct);
+        var behaviour = await MethodBehaviourAnalyzer.AnalyzeAsync(solution, classified, ct);
+        var census = SurfaceCensusAnalyzer.Analyze(classified, behaviour);
         var (testsBySection, solutionTests, _) = await TestMassAnalyzer.AnalyzeAsync(solution, classified, metricsBySection, ct);
 
         var coverageBySection = new Dictionary<string, SectionCoverage>(StringComparer.OrdinalIgnoreCase);

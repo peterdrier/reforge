@@ -59,6 +59,10 @@ public class GateOneFixtureTests
             // partial-split escape is closed by summing partial declarations (see
             // GeneratedPartialScoringTests), and the remaining one costs a constructor partition.
             ["largeClass"] = "a 750-LOC threshold makes a fixture pair ~1,600 lines of synthetic class",
+            // The only edit that stops it firing is the fix it exists to prompt: make the method
+            // internal, which withdraws the surface and lowers the total. A pair would either
+            // record that honest improvement as gameable or fail the no-drop assertion.
+            ["exportedUnusedExternally"] = "its only fix withdraws surface, so the total must fall; the pair would be a false gameable finding",
         };
 
     /// <summary>
@@ -76,8 +80,6 @@ public class GateOneFixtureTests
     /// </summary>
     private static readonly IReadOnlySet<string> NotYetCovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "readServiceInterfaceMethod",
-        "fullServiceInterfaceMethod",
         "repositoryInterfaceMethod",
         "repositoryImplementationMethod",
         "newRepositoryInterface",

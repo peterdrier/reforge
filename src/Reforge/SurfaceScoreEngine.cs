@@ -107,8 +107,12 @@ public sealed partial class SurfaceScoreEngine
         // and the escape-analysis advisory; no rule scores a section for its shape.
         var architecture = await SectionShapeAnalyzer.AnalyzeAsync(solution, classified, _config, _solutionDirectory, ct);
 
+        // Read/write per method and external use per symbol, resolved once. Pass 1 charges off
+        // it and the census reports off it, so the two never disagree — see MethodBehaviourMap.
+        var behaviour = await MethodBehaviourAnalyzer.AnalyzeAsync(solution, classified, ct);
+
         // Pass 1 — durable surface
-        ScoreDurableSurface(classified, report, analyzedAssemblies);
+        ScoreDurableSurface(classified, report, analyzedAssemblies, behaviour);
 
         // Pass 2 — dependency use
         ScoreDependencyUse(classified, typesByDisplay, report);
@@ -155,7 +159,7 @@ public sealed partial class SurfaceScoreEngine
 
         // Exported/internal x read/write census per section, and which exported symbols any other
         // assembly names. Informational, over the same corpus — see SurfaceCensusAnalyzer.
-        var census = await SurfaceCensusAnalyzer.AnalyzeAsync(solution, classified, ct);
+        var census = SurfaceCensusAnalyzer.Analyze(classified, behaviour);
         report.Surface = census.Solution;
         report.Edges.AddRange(census.Edges);
         foreach (var (section, surface) in census.BySection)

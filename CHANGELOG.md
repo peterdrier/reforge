@@ -2,6 +2,22 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Exported methods are priced by what they do
+
+- **`exportedReadMethod` (4), `exportedWriteMethod` (12), `exportedUnusedExternally` (2) replace
+  `applicationServiceMethod`, `readServiceInterfaceMethod` and `fullServiceInterfaceMethod`.** Every
+  public method on an exported class or interface without a role rule of its own is charged by its
+  behaviour, not its type's name: a write is one whose body or any corpus method it calls commits
+  persistent state, or that is command-shaped; an interface method takes its implementations'
+  verdict. The surcharge for a method no other production assembly names points at the cheapest
+  fix there is: make it internal.
+- **The write verdict follows calls**, so returning a `bool` from `UpdateAsync` does not turn it into
+  a read while it still reaches `SaveChanges` through the repository it calls. Only definitive commits
+  propagate; the command-shape heuristic never travels.
+- **Known hole, recorded as a `gate1-gameable` fixture:** three reads collapse into one
+  enum-dispatched getter for free, because `actionDispatcher` exempts read methods. Pricing a read
+  dispatcher whose arms share nothing is the next anti-gaming change.
+
 ## Unreleased - Coverage per section, from the report the test run already wrote
 
 - **`--coverage <file>` on `surface-score` and `snapshot --by-assembly`** reads Cobertura XML

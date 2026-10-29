@@ -59,7 +59,7 @@ public class EffectiveAccessibilityTests
     {
         var reporting = (await Score()).Groups["Reporting"];
 
-        // applicationServiceMethod / methodParameterOverflow / booleanParameter all charge for the
+        // exportedReadMethod / methodParameterOverflow / booleanParameter all charge for the
         // shape of a signature nobody outside the assembly can call. (crossSectionFullService on
         // the same class is a use, not a declaration — asserted separately below.)
         Assert.DoesNotContain(reporting.Entries,

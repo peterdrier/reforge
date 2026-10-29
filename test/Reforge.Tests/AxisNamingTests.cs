@@ -39,7 +39,7 @@ public class AxisNamingTests
             SurfaceScoreRuleGroups.ImplementationShape.OrderBy(r => r, StringComparer.Ordinal).ToArray());
 
         Assert.True(SurfaceScoreRuleGroups.IsImplementationShape("cognitiveComplexity"));
-        Assert.False(SurfaceScoreRuleGroups.IsImplementationShape("fullServiceInterfaceMethod"));
+        Assert.False(SurfaceScoreRuleGroups.IsImplementationShape("exportedWriteMethod"));
     }
 
     private static string Capture(Action action)

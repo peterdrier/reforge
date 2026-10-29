@@ -227,9 +227,13 @@ public sealed class SurfaceScoreConfig
                 ["dtoCollectionProperty"] = 2,
                 ["dtoNestedProperty"] = 3,
                 ["publicDtoType"] = 5,
-                ["applicationServiceMethod"] = 5,
-                ["readServiceInterfaceMethod"] = 6,
-                ["fullServiceInterfaceMethod"] = 8,
+                // Every public method an exported type publishes, priced by behaviour. A write a
+                // consumer in another assembly can call is the dearest surface there is; a read
+                // is a commitment too, at a third of the price. The unused surcharge is small
+                // because its fix (make it internal) also clears the method's own charge.
+                ["exportedReadMethod"] = 4,
+                ["exportedWriteMethod"] = 12,
+                ["exportedUnusedExternally"] = 2,
                 ["repositoryInterfaceMethod"] = 10,
                 ["repositoryImplementationMethod"] = 10,
                 ["newRepositoryInterface"] = 15,
