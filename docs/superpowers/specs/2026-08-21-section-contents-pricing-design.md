@@ -151,12 +151,14 @@ most important method in the corpus to keep simple.
 ### The fold cannot be the scoring basis
 
 Current `cognitiveComplexity` scores on the fold: a method's call-path score is its own cognitive
-complexity plus that of every private helper whose sole caller it is, transitively, and the
-threshold of 15 applies to that sum. This document proposes moving the fold to a reporting view and
-scoring per declaration instead.
+complexity plus that of every helper of any accessibility, other than overrides and interface
+implementations, whose sole caller it is within the same top-level type, transitively, and the
+threshold of 15 applies to that sum. A group that calls single-caller methods in other types is
+also charged what the type boundary kept under the threshold, at most one threshold (#76). This
+document proposes moving the fold to a reporting view and scoring per declaration instead.
 
 The fold exists to defend the threshold. Charge every method from zero and splitting is already
-total-neutral without it. As a scoring basis under a census it fails four ways:
+total-neutral without it. As a scoring basis under a census it fails three ways:
 
 - **It kills the split incentive.** Fold the helpers back in and decomposition buys no complexity
   relief, so it only adds `m` per helper. The measure prefers one 400-point method over 40 named
@@ -166,14 +168,11 @@ total-neutral without it. As a scoring basis under a census it fails four ways:
   decomposition is 37% worse. At `(1 + d)` it is 2.3 times worse. The rate is not the problem.
 - **It cannot make sharing a win.** Folding stops at the second caller, so whether shared code is
   charged once or per caller is decided by a count of one, not by how widely it is used.
-- **It prices visibility on the contents axis.** Only private helpers fold, so making a folded
-  helper `internal` takes it out of its caller's sum and charges it alone against the threshold,
-  at no surface cost because internal methods are not exported. On current main that is a working
-  escape: the caller can drop under 15 by changing one keyword.
 
 The fold survives as an **attribution and reporting** view ("what does it cost to read this entry
 point") and stays out of the scored total. That also removes the sole-caller rule, and with it the
-manufactured-second-caller escape fixtured on `cognitiveComplexity`.
+manufactured-second-caller escape fixtured on `cognitiveComplexity`, and the cross-type charge with
+its one-threshold cap: a declaration costs the same in whichever type it sits.
 
 ### Dividing by caller count
 

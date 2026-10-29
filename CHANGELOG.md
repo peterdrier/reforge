@@ -22,11 +22,25 @@ What changed and why. Newest first.
   quadratically past it, whatever its accessibility, instead of only call paths over 15 being
   charged. Huge methods are cheapest split near the threshold and tiny unreused ones merged, so
   neither a monolith nor a shatter into one-liners is rewarded. All weights are proposals to tune.
-- **Moving code between kinds of declaration is not an escape.** Computed properties, delegate-valued
-  fields, local functions and lambdas held in locals all count, so turning a helper into one of them
-  changes nothing; the call-path fold survives only as the entry's detail.
+- **Moving code to another type or kind of declaration is not an escape.** Computed properties,
+  delegate-valued fields, local functions and lambdas held in locals all count, and a declaration
+  costs the same in any type, so the cross-type charge (#76) goes with the fold, which survives only
+  as the entry's detail.
 - **`surface-score --format json` reports a `contents` census** per section: declarations by
   accessibility and own-complexity bands, the measurement those weights are tuned against.
+
+## Unreleased - Moving a helper to another type no longer lowers its caller's complexity
+
+- **`cognitiveComplexity` charges what a type boundary hides** (#76). A single-caller method in
+  another type still scores on its own, and its caller's group is charged what the split kept under
+  the threshold, at most one threshold per group. One move, or a chain of them, now charges exactly
+  what the same code charged in one type; a dispatcher calling thirty single-use methods pays at most
+  15. Dogfood implementation shape goes from 2732 to 2903.
+- **An interface implementation folds when it is the only implementation** of every member it
+  implements, and calls through the interface resolve to it, so hiding a helper behind a new
+  one-member interface no longer escapes the charge.
+- **Still open:** a group that calls two or more single-caller methods in other types escapes
+  whatever they hide beyond one threshold.
 
 ## Unreleased - Widening a helper no longer lowers its caller's complexity
 
