@@ -5,10 +5,10 @@ What changed and why. Newest first.
 ## Unreleased - Contents are priced as a census
 
 - **`methodComplexity` and `methodCount` replace `cognitiveComplexity`.** Every declaration that
-  carries code is charged its own cognitive complexity through `cc·(1 + ln cc)` and a flat 10,
-  whatever its accessibility, instead of only call paths over 15 being charged. The flat charge is
-  what stops the convex curve rewarding a shatter into one-line helpers; the curve is what stops
-  merging helpers to duck the count. Both weights are proposals to tune.
+  carries code pays a flat 5 and its own cognitive complexity, linearly up to 10 and taxed
+  quadratically past it, whatever its accessibility, instead of only call paths over 15 being
+  charged. Huge methods are cheapest split near the threshold and tiny unreused ones merged, so
+  neither a monolith nor a shatter into one-liners is rewarded. All weights are proposals to tune.
 - **Moving code between kinds of declaration is not an escape.** Computed properties, delegate-valued
   fields, local functions and lambdas held in locals all count, so turning a helper into one of them
   changes nothing; the call-path fold survives only as the entry's detail.

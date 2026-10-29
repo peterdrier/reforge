@@ -38,7 +38,8 @@ public sealed partial class SurfaceScoreEngine
                 {
                     int own = u.Cognitive.Score;
                     if (own == 0) continue;
-                    int pts = (int)Math.Round(ContentsPricing.Curve(own) * complexityW, MidpointRounding.AwayFromZero);
+                    int pts = (int)Math.Round(ContentsPricing.Curve(own, _config.ComplexityThreshold,
+                        _config.ComplexityTaxPercent, _config.ComplexityTaxExponent) * complexityW, MidpointRounding.AwayFromZero);
                     var (file, line) = LocateMember(u.Location, c);
                     if (u.Cognitive.NestedDominates) line = u.Cognitive.NestedLine;
                     AddEntry(report, c.Group, "methodComplexity", pts, u.Symbol, file, line, ComplexityDetail(u, fold));

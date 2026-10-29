@@ -18,17 +18,20 @@ internal sealed record ContentsUnit(ISymbol Symbol, Location Location, Cognitive
 
 /// <summary>
 /// Prices a section's contents as a census: every declaration that carries code pays a flat
-/// <c>methodCount</c> charge, and its own cognitive complexity through the convex curve
-/// <see cref="Curve"/>. See <c>docs/superpowers/specs/2026-08-21-section-contents-pricing-design.md</c>.
+/// <c>methodCount</c> charge, and its own cognitive complexity through <see cref="Curve"/>, which is
+/// linear up to a threshold and taxed above it. See
+/// <c>docs/superpowers/specs/2026-08-21-section-contents-pricing-design.md</c>.
 /// </summary>
 /// <remarks>
 /// <para>Every declaration is charged from its own root, whatever its accessibility, so widening a
 /// helper or moving it to another type changes nothing here; visibility is priced on the surface
 /// axis only.</para>
-/// <para>The flat charge is what stops the curve rewarding fragmentation: with charge <c>m</c> and
-/// convex <c>f</c>, splitting <c>N</c> points into <c>k</c> equal methods costs
-/// <c>k·m + k·f(N/k)</c>, which is least at a method size of exactly <c>m</c>. Below that, every
-/// further split costs more than it saves.</para>
+/// <para>Below the threshold complexity costs the same wherever it sits, so the total logic is priced
+/// independent of how it is arranged, and only the flat charge moves: splitting a small method costs
+/// <c>m</c> per piece and saves nothing, and merging small unreused pieces saves <c>m</c>. Above
+/// the threshold the tax grows faster than the complexity, so a large method is cheapest split into
+/// pieces near the threshold. The two pressures meet there: huge methods get split, tiny ones get
+/// merged.</para>
 /// <para>Code moved into another kind of declaration is still a declaration. A computed property, a
 /// delegate-valued field, a local function and a lambda held in a local each count, so turning a
 /// helper into one of them is not a way out of the count; a local helper's complexity stays with
@@ -37,10 +40,12 @@ internal sealed record ContentsUnit(ISymbol Symbol, Location Location, Cognitive
 internal static class ContentsPricing
 {
     /// <summary>
-    /// <c>f(n) = n·(1 + ln n)</c>, and 0 for 0. Convex, and never below <c>n</c>: <c>n·ln n</c>
-    /// alone would charge a complexity-2 method less than its content.
+    /// <c>f(n) = n + tax·max(0, n − threshold)^exponent</c>: linear up to the threshold, convex past
+    /// it, never below <c>n</c>.
     /// </summary>
-    public static double Curve(int complexity) => complexity <= 0 ? 0 : complexity * (1 + Math.Log(complexity));
+    public static double Curve(int complexity, int threshold, int taxPercent, int exponent)
+        => complexity <= 0 ? 0
+            : complexity + taxPercent / 100.0 * Math.Pow(Math.Max(0, complexity - threshold), exponent);
 
     /// <summary>The handwritten declarations in <paramref name="type"/> that carry code.</summary>
     public static List<ContentsUnit> Units(INamedTypeSymbol type, CancellationToken ct)

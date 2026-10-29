@@ -8,21 +8,41 @@ namespace Reforge.Tests;
 /// </summary>
 public class ContentsPricingTests
 {
+    private static readonly SurfaceScoreConfig Defaults = SurfaceScoreConfig.Default();
+
+    private static double F(int n) => ContentsPricing.Curve(n,
+        Defaults.ComplexityThreshold, Defaults.ComplexityTaxPercent, Defaults.ComplexityTaxExponent);
+
     [Fact]
-    public void Curve_IsZeroForStraightLineCode_AndNeverBelowItsInput()
+    public void Curve_IsLinearUpToTheThreshold_AndNeverBelowItsInput()
     {
-        Assert.Equal(0, ContentsPricing.Curve(0));
-        Assert.Equal(1, ContentsPricing.Curve(1));
-        for (int n = 1; n < 200; n++)
-            Assert.True(ContentsPricing.Curve(n) >= n, $"f({n}) below {n}");
+        for (int n = 0; n <= Defaults.ComplexityThreshold; n++)
+            Assert.Equal(n, F(n));
+        for (int n = 0; n < 200; n++)
+            Assert.True(F(n) >= n, $"f({n}) below {n}");
     }
 
     [Fact]
-    public void Curve_IsConvex_SoOneLargeMethodCostsMoreThanItsParts()
+    public void Curve_NeverChargesTheSameLogicLessInOnePiece()
     {
-        for (int a = 1; a < 50; a++)
-            for (int b = 1; b < 50; b++)
-                Assert.True(ContentsPricing.Curve(a + b) > ContentsPricing.Curve(a) + ContentsPricing.Curve(b));
+        for (int a = 0; a < 60; a++)
+            for (int b = 0; b < 60; b++)
+                Assert.True(F(a + b) >= F(a) + F(b), $"f({a + b}) below f({a}) + f({b})");
+    }
+
+    /// <summary>
+    /// The arithmetic behind the methodSize Gate 1 trio: 50 points of complexity cost least as five
+    /// pieces at the threshold, more as one monolith, and most as 25 slivers.
+    /// </summary>
+    [Fact]
+    public void FiftyPoints_CostLeastNearTheThreshold()
+    {
+        int m = Defaults.Weight("methodCount");
+        double Arrangement(int pieces, int each) => pieces * (F(each) + m);
+
+        double monolith = Arrangement(1, 50), middle = Arrangement(5, 10), slivers = Arrangement(25, 2);
+        Assert.True(middle < monolith, $"5x10 {middle} not below 1x50 {monolith}");
+        Assert.True(monolith <= slivers, $"25x2 {slivers} below 1x50 {monolith}");
     }
 
     [Fact]

@@ -79,6 +79,22 @@ public sealed class SurfaceScoreConfig
     public int ContractsAssemblyMultiplier { get; set; } = 1;
 
     /// <summary>
+    /// The method complexity <c>methodComplexity</c> charges linearly up to. Past it each declaration
+    /// also pays <see cref="ComplexityTaxPercent"/>% of the excess raised to
+    /// <see cref="ComplexityTaxExponent"/>, so a method far past it is cheapest split into pieces near
+    /// it. With the flat <c>methodCount</c> charge this sets the method size the score prefers: a
+    /// method is worth splitting once the tax on its excess exceeds the flat charge of another piece.
+    /// Proposals, to tune against a measured corpus.
+    /// </summary>
+    public int ComplexityThreshold { get; set; } = 10;
+
+    /// <inheritdoc cref="ComplexityThreshold"/>
+    public int ComplexityTaxPercent { get; set; } = 5;
+
+    /// <inheritdoc cref="ComplexityThreshold"/>
+    public int ComplexityTaxExponent { get; set; } = 2;
+
+    /// <summary>
     /// Glob patterns matched against a dispatcher parameter's <i>type</i> name. These act
     /// only as a tie-breaker — the read/write decision is made behaviorally (does the
     /// method mutate?), so a shape type cannot be used to evade a penalty on a mutation by
@@ -269,13 +285,12 @@ public sealed class SurfaceScoreConfig
                 // surface score; 0 disables a rule.
                 //
                 // The contents census charges every declaration that carries code, whatever its
-                // accessibility. methodComplexity multiplies f(cc) = cc·(1 + ln cc) of each
-                // declaration's own cognitive complexity; methodCount is the flat points per
-                // declaration, and is also the method complexity the pair treats as the right
-                // bite size: splitting below it costs more than it saves. Both are proposals to
-                // tune against a measured corpus (the report's `contents` block), not settled.
+                // accessibility. methodComplexity multiplies each declaration's own cognitive
+                // complexity through the curve set by ComplexityThreshold/TaxPercent/TaxExponent;
+                // methodCount is the flat points per declaration. Proposals to tune against a
+                // measured corpus (the report's `contents` block), not settled.
                 ["methodComplexity"] = 1,
-                ["methodCount"] = 10,
+                ["methodCount"] = 5,
                 // The rest are MULTIPLIERS over base points computed from syntax (LOC tiers,
                 // dispatcher arm count); default 1 applies the base points as-is.
                 ["largeClass"] = 1,
