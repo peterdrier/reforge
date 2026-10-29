@@ -132,7 +132,7 @@ public class SurfaceCensusTests
     public async Task SectionSnapshot_OneRowPerSectionPlusRollup_MatchingTheReport()
     {
         var report = await ScoreAsync();
-        var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, CancellationToken.None);
+        var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None);
 
         Assert.Equal(report.MetricsBySection.Count + 1, rows.Count);
         Assert.Equal(SectionSnapshotAnalyzer.SolutionRow, rows[^1].Section);
@@ -146,7 +146,7 @@ public class SurfaceCensusTests
     [Fact]
     public async Task SectionSnapshot_CsvHasOneCellPerHeader_AndAppendWritesHeaderOnce()
     {
-        var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, CancellationToken.None);
+        var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None);
 
         var csv = SectionSnapshotAnalyzer.ToCsv(rows, header: true).Split('\n', StringSplitOptions.RemoveEmptyEntries);
         Assert.Equal(rows.Count + 1, csv.Length);

@@ -2,6 +2,19 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Coverage per section, from the report the test run already wrote
+
+- **`--coverage <file>` on `surface-score` and `snapshot --by-assembly`** reads Cobertura XML
+  (Coverlet, ReportGenerator) or dotCover DetailedXML and attributes statement coverage to sections
+  by assembly name, `.Contracts` folded in. Each group carries `coverage: { covered, total, percent }`
+  or no key when the report says nothing about it; the snapshot rows gain `coverage_covered`,
+  `coverage_total`, `coverage_pct`. Reforge runs no tests: the join is the whole feature.
+- **Report assemblies outside the solution and sections the report never mentions are named in
+  `info` diagnostics** rather than silently zeroed, so a 0% is always a measured 0%.
+- **`Reforge.Tests` references `coverlet.collector`**, so `dotnet test --collect:"XPlat Code Coverage"`
+  works on this repo out of the box. Against Reforge.slnx the reader reproduces Coverlet's own
+  `lines-covered`/`lines-valid` exactly.
+
 ## Unreleased - Every section counts what it exports
 
 - **`surface` block per section and solution-wide**: types and methods split exported/internal by

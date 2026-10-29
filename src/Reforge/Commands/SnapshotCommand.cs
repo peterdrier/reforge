@@ -20,10 +20,16 @@ public static class SnapshotCommand
                           "exported/internal x read/write surface counts and test mass. CSV unless --format json."
         };
 
+        var coverageOption = new Option<string?>("--coverage")
+        {
+            Description = "With --by-assembly: a Cobertura or dotCover DetailedXML report whose statement coverage is attributed to each section by assembly."
+        };
+
         var command = new Command("snapshot", "One-row macro-scale code health record for time-series charting")
         {
             appendOption,
-            byAssemblyOption
+            byAssemblyOption,
+            coverageOption
         };
 
         command.SetAction(async (parseResult, cancellationToken) =>
@@ -32,6 +38,7 @@ public static class SnapshotCommand
             var format = parseResult.GetValue(formatOption);
             var appendPath = parseResult.GetValue(appendOption);
             var byAssembly = parseResult.GetValue(byAssemblyOption);
+            var coveragePath = parseResult.GetValue(coverageOption);
             var sw = Stopwatch.StartNew();
 
             var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
@@ -39,7 +46,7 @@ public static class SnapshotCommand
             {
                 if (byAssembly)
                 {
-                    var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(solution, cancellationToken);
+                    var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(solution, coveragePath, cancellationToken);
                     if (appendPath is not null)
                     {
                         SectionSnapshotAnalyzer.AppendCsv(rows, appendPath);

@@ -45,6 +45,9 @@ public sealed partial class SurfaceScoreEngine
             StringComparer.Ordinal);
         report.ConfiguredSections.AddRange(classified
             .Select(c => c.Group).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.Ordinal));
+        foreach (var c in classified)
+            if (c.Type.ContainingAssembly?.Name is { } assemblyName)
+                report.SectionByAssembly[assemblyName] = c.Group;
 
         // A classification the config file declares but that ends up on no type switches its rules
         // off in silence, and the silence is worse than it looks: the merge is TryAdd, so declaring

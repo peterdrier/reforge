@@ -41,13 +41,17 @@ public sealed record SectionSnapshotRow(
     int ExportedMethodsUnusedExternally,
     int ExportedWriteMethodsUnusedExternally,
     int TestLoc,
-    int TestFiles);
+    int TestFiles,
+    /// <summary>Null when no coverage report was given or it said nothing about the section.</summary>
+    int? CoverageCovered,
+    int? CoverageTotal,
+    int? CoveragePercent);
 
 public static class SectionSnapshotAnalyzer
 {
     public const string SolutionRow = "(solution)";
 
-    public static async Task<List<SectionSnapshotRow>> AnalyzeAsync(Solution solution, CancellationToken ct)
+    public static async Task<List<SectionSnapshotRow>> AnalyzeAsync(Solution solution, string? coveragePath, CancellationToken ct)
     {
         var dir = LocationHelper.GetSolutionDirectory(solution);
         var config = SurfaceScoreConfig.LoadOrDefault(null, dir, out _);
@@ -56,6 +60,20 @@ public static class SectionSnapshotAnalyzer
         var (metricsBySection, solutionMetrics) = SectionMetricsAnalyzer.Analyze(classified, ct);
         var census = await SurfaceCensusAnalyzer.AnalyzeAsync(solution, classified, ct);
         var (testsBySection, solutionTests, _) = await TestMassAnalyzer.AnalyzeAsync(solution, classified, metricsBySection, ct);
+
+        var coverageBySection = new Dictionary<string, SectionCoverage>(StringComparer.OrdinalIgnoreCase);
+        var solutionCoverage = SectionCoverage.Empty;
+        if (coveragePath is not null)
+        {
+            var sectionByAssembly = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var c in classified)
+                if (c.Type.ContainingAssembly?.Name is { } assembly) sectionByAssembly[assembly] = c.Group;
+            var ingest = CoverageReportReader.Read(coveragePath, sectionByAssembly);
+            coverageBySection = ingest.BySection;
+            solutionCoverage = ingest.Solution;
+            if (ingest.UnmatchedAssemblies.Count > 0)
+                Console.Error.WriteLine($"coverage: assemblies not in the solution, left out: {string.Join(", ", ingest.UnmatchedAssemblies)}");
+        }
 
         var commitDate = SnapshotAnalyzer.TryGetGitCommitDate(solution);
         var commit = SnapshotAnalyzer.TryGetGitCommit(solution);
@@ -67,15 +85,16 @@ public static class SectionSnapshotAnalyzer
             rows.Add(Row(commitDate, commit, solutionName, section,
                 metricsBySection[section],
                 census.BySection.TryGetValue(section, out var c) ? c : SurfaceCensus.Empty,
-                testsBySection.TryGetValue(section, out var t) ? t : TestMass.Empty));
+                testsBySection.TryGetValue(section, out var t) ? t : TestMass.Empty,
+                coverageBySection.TryGetValue(section, out var cov) ? cov : SectionCoverage.Empty));
         }
-        rows.Add(Row(commitDate, commit, solutionName, SolutionRow, solutionMetrics, census.Solution, solutionTests));
+        rows.Add(Row(commitDate, commit, solutionName, SolutionRow, solutionMetrics, census.Solution, solutionTests, solutionCoverage));
         return rows;
     }
 
     private static SectionSnapshotRow Row(
         string commitDate, string commit, string solution, string section,
-        SectionMetrics m, SurfaceCensus s, TestMass t) => new(
+        SectionMetrics m, SurfaceCensus s, TestMass t, SectionCoverage cov) => new(
         commitDate, commit, solution, section,
         m.LocProd, m.Files, m.Classes, m.Interfaces, m.Methods,
         m.Cognitive.Avg, m.Cognitive.P95, m.Cognitive.Max,
@@ -84,7 +103,8 @@ public static class SectionSnapshotAnalyzer
         s.ExportedTypes, s.InternalTypes,
         s.ExportedReadMethods, s.ExportedWriteMethods, s.InternalReadMethods, s.InternalWriteMethods,
         s.ExportedTypesUnusedExternally, s.ExportedMethodsUnusedExternally, s.ExportedWriteMethodsUnusedExternally,
-        t.Loc, t.Files);
+        t.Loc, t.Files,
+        cov.HasData ? cov.Covered : null, cov.HasData ? cov.Total : null, cov.HasData ? cov.Percent : null);
 
     public static readonly string[] CsvHeader =
     [
@@ -96,7 +116,8 @@ public static class SectionSnapshotAnalyzer
         "exported_types", "internal_types",
         "exported_read_methods", "exported_write_methods", "internal_read_methods", "internal_write_methods",
         "exported_types_unused_externally", "exported_methods_unused_externally", "exported_write_methods_unused_externally",
-        "test_loc", "test_files"
+        "test_loc", "test_files",
+        "coverage_covered", "coverage_total", "coverage_pct"
     ];
 
     public static string ToCsv(IReadOnlyList<SectionSnapshotRow> rows, bool header)
@@ -117,7 +138,8 @@ public static class SectionSnapshotAnalyzer
                 r.InternalReadMethods.ToString(), r.InternalWriteMethods.ToString(),
                 r.ExportedTypesUnusedExternally.ToString(), r.ExportedMethodsUnusedExternally.ToString(),
                 r.ExportedWriteMethodsUnusedExternally.ToString(),
-                r.TestLoc.ToString(), r.TestFiles.ToString()
+                r.TestLoc.ToString(), r.TestFiles.ToString(),
+                r.CoverageCovered?.ToString() ?? "", r.CoverageTotal?.ToString() ?? "", r.CoveragePercent?.ToString() ?? ""
             }));
         }
         return sb.ToString();
