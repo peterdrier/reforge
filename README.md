@@ -61,10 +61,19 @@ it, so nothing outside can break when it changes. (`protected` doesn't count as 
 shape its implementation actually has.
 
 The axis is named for what it measures, not for an accessibility level. `implementationShape` has no
-`internal` gate: it is a fixed set of rules — `cognitiveComplexity`, `largeClass`,
+`internal` gate: it is a fixed set of rules — `methodComplexity`, `methodCount`, `largeClass`,
 `actionDispatcher`, `mutationModeParameter`, `flagsControlFlow` — and public code scores on it too.
-Its rules charge for shapes an edit can genuinely improve: complexity over a method's whole call
-path, a class carrying too much, a parameter that switches a method between two behaviours.
+Its rules charge for shapes an edit can genuinely improve: a class carrying too much, a parameter
+that switches a method between two behaviours.
+
+**Contents are a census.** Every declaration that carries code — method, constructor, computed
+property, delegate-valued field, local function — pays `methodCount` (10) flat, and its own
+cognitive complexity `cc` through `cc·(1 + ln cc)` as `methodComplexity` (×1), whatever its
+accessibility. The curve is convex, so one large method costs more than the same branching spread
+over several; the flat charge makes splitting below about complexity 10 cost more than it saves, so
+shattering a method into one-line helpers, or merging helpers back to duck the count, both lose.
+Both weights are proposals: `surface-score --format json` carries a `contents` block (declarations
+by accessibility, complexity bands) to tune them against.
 
 **Exported methods are priced by what they do, not by what their type is called.** Every public
 method on an exported class or interface (outside the DTO, repository, controller and background-job

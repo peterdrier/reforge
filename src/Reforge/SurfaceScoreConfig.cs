@@ -265,14 +265,20 @@ public sealed class SurfaceScoreConfig
                 ["oneImplementationInterface"] = 8,
 
                 // Implementation-shape axis — implementation cost hiding behind the surface.
-                // These weights are MULTIPLIERS over base points computed from syntax
-                // (cognitive complexity, LOC tiers, dispatcher arm count); default 1 applies
-                // the base points as-is, 0 disables the rule. They are tracked on a separate
-                // scalar (implementationShapeTotal) and are never added into the surface score.
-                // No longMethod key: length is not charged separately from the call-path
-                // complexity it almost entirely duplicated.
+                // Tracked on a separate scalar (implementationShapeTotal), never added into the
+                // surface score; 0 disables a rule.
+                //
+                // The contents census charges every declaration that carries code, whatever its
+                // accessibility. methodComplexity multiplies f(cc) = cc·(1 + ln cc) of each
+                // declaration's own cognitive complexity; methodCount is the flat points per
+                // declaration, and is also the method complexity the pair treats as the right
+                // bite size: splitting below it costs more than it saves. Both are proposals to
+                // tune against a measured corpus (the report's `contents` block), not settled.
+                ["methodComplexity"] = 1,
+                ["methodCount"] = 10,
+                // The rest are MULTIPLIERS over base points computed from syntax (LOC tiers,
+                // dispatcher arm count); default 1 applies the base points as-is.
                 ["largeClass"] = 1,
-                ["cognitiveComplexity"] = 1,
                 ["actionDispatcher"] = 1,
                 // No genericActionDispatcher key: it was folded into actionDispatcher as three
                 // surcharges rather than kept as a rule gated on all of them at once.

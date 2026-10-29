@@ -28,17 +28,17 @@ public class AxisNamingTests
     /// Pareto gate can be satisfied by moving a charge across the boundary.
     /// </summary>
     [Fact]
-    public void ImplementationShape_IsTheFiveShapeRules()
+    public void ImplementationShape_IsTheShapeRules()
     {
         Assert.Equal(
             new[]
             {
-                "actionDispatcher", "cognitiveComplexity", "flagsControlFlow", "largeClass",
-                "mutationModeParameter"
+                "actionDispatcher", "flagsControlFlow", "largeClass", "methodComplexity",
+                "methodCount", "mutationModeParameter"
             },
             SurfaceScoreRuleGroups.ImplementationShape.OrderBy(r => r, StringComparer.Ordinal).ToArray());
 
-        Assert.True(SurfaceScoreRuleGroups.IsImplementationShape("cognitiveComplexity"));
+        Assert.True(SurfaceScoreRuleGroups.IsImplementationShape("methodComplexity"));
         Assert.False(SurfaceScoreRuleGroups.IsImplementationShape("exportedWriteMethod"));
     }
 

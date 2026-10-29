@@ -137,7 +137,7 @@ public class GreetingQueryService
 
 /// <summary>
 /// BAD god method: deeply nested branching well over the cognitive-complexity threshold.
-/// Expected: cognitiveComplexity fires.
+/// Expected: methodComplexity fires.
 /// </summary>
 public class ReportBuilder
 {

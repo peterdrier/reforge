@@ -19,23 +19,10 @@ public readonly record struct CallPathScore(
     int Score, int Own, int FoldedMethods, int FoldedLines, string? TopContributor);
 
 /// <summary>
-/// Resolves each method's call-path complexity for a solution.
-/// <para>
-/// A method with exactly one caller is not a method — it is part of its caller, and
-/// measuring it separately is what let a long method be split into single-caller parts for a lower
-/// score while the code got worse. Folding removes the reward for splitting by volume: move a block
-/// into a helper at the same nesting depth and the number does not move.
-/// </para>
-/// <para>
-/// It does not make every split free of effect, because cognitive complexity charges
-/// <c>1 + nestingDepth</c> per control structure and a helper's body is charged from its own root.
-/// An extraction that takes a block <i>out of a nest</i> still pays, in proportion to the depth it
-/// removes — which is the one split that genuinely reduces reading difficulty, and the one Sonar's
-/// nesting penalty exists to reward. This file is its own worked example: as one four-deep loop nest
-/// it read CC 104 for 89 points; the same logic as four methods at depth 2 reads CC 65 for 50. The
-/// helpers fold straight back into it, so none of that came from the split — all 39 points came from
-/// the two levels of nesting the split removed.
-/// </para>
+/// Resolves each method's call-path complexity for a solution: what it costs to read an entry
+/// point, helpers included. A reporting view only; the contents census charges every declaration
+/// once from its own root, and names this figure in its detail so a reader is sent to the helper
+/// carrying the weight rather than to a six-line entry point.
 /// <para>
 /// Four details are load-bearing:
 /// <list type="bullet">
@@ -45,10 +32,8 @@ public readonly record struct CallPathScore(
 /// <item>Follow <b>invocations</b>, not method groups. A method handed to something else as a
 /// delegate is a separate entry point — folding registered callbacks read a Roslyn analyzer's
 /// six-line <c>Initialize</c> as a 129-line body.</item>
-/// <item>Fold <b>regardless of accessibility</b>. Widening a helper must never lower a score; if
-/// only private helpers folded, making one internal would take its complexity out of its caller's
-/// reading for free. Complexity is therefore independent of visibility and surface pricing alone
-/// orders it. Excluded is what the sole-caller premise does not hold for: overrides and interface
+/// <item>Fold <b>regardless of accessibility</b>, so widening a helper does not change what its
+/// caller is reported to read. Excluded is what the sole-caller premise does not hold for: overrides and interface
 /// implementations, whose callers bind to the base or interface member and so are not seen here.
 /// A virtual method is still folded, since a call through its declaring type binds to it, or
 /// <c>protected virtual</c> would be the escape.</item>
@@ -133,7 +118,7 @@ public static class CallPathComplexity
         BreakCycles(soleCaller);
 
         var foldable = soleCaller.Keys.ToHashSet(StringComparer.Ordinal);
-        return new CallPathFold(Fold(graph, foldable), foldable);
+        return new CallPathFold(Fold(graph, foldable));
     }
 
     /// <summary>
@@ -314,15 +299,13 @@ public static class CallPathComplexity
 }
 
 /// <summary>
-/// The fold for one solution: per-method call-path complexity, and the helpers whose complexity was
-/// billed to a caller. A folded-away helper must not also be charged on its own declaration.
+/// The fold for one solution: per-method call-path complexity. A reporting view only — what it
+/// costs to read an entry point — and never a scored total; the census charges each declaration
+/// once, from its own root.
 /// </summary>
-public sealed class CallPathFold(Dictionary<string, CallPathScore> scores, HashSet<string> foldedAway)
+public sealed class CallPathFold(Dictionary<string, CallPathScore> scores)
 {
-    public static CallPathFold Empty { get; } =
-        new(new Dictionary<string, CallPathScore>(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal));
-
-    public bool WasFoldedAway(IMethodSymbol m) => foldedAway.Contains(CallPathComplexity.Key(m));
+    public static CallPathFold Empty { get; } = new(new Dictionary<string, CallPathScore>(StringComparer.Ordinal));
 
     /// <summary>
     /// The call-path reading for a method, or the <paramref name="ownScore"/> as-is when the method
