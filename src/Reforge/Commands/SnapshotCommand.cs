@@ -14,9 +14,16 @@ public static class SnapshotCommand
             Description = "Append one CSV row to this file (writes header if file doesn't exist). Forces --format csv."
         };
 
+        var byAssemblyOption = new Option<bool>("--by-assembly")
+        {
+            Description = "One row per section (assembly) plus a solution rollup, with size, complexity, " +
+                          "exported/internal x read/write surface counts and test mass. CSV unless --format json."
+        };
+
         var command = new Command("snapshot", "One-row macro-scale code health record for time-series charting")
         {
-            appendOption
+            appendOption,
+            byAssemblyOption
         };
 
         command.SetAction(async (parseResult, cancellationToken) =>
@@ -24,11 +31,37 @@ public static class SnapshotCommand
             var solutionPath = parseResult.GetValue(solutionOption);
             var format = parseResult.GetValue(formatOption);
             var appendPath = parseResult.GetValue(appendOption);
+            var byAssembly = parseResult.GetValue(byAssemblyOption);
             var sw = Stopwatch.StartNew();
 
             var (solution, handle) = await WorkspaceHelper.OpenSolutionAsync(solutionPath);
             using (handle)
             {
+                if (byAssembly)
+                {
+                    var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(solution, cancellationToken);
+                    if (appendPath is not null)
+                    {
+                        SectionSnapshotAnalyzer.AppendCsv(rows, appendPath);
+                        Console.WriteLine($"appended {rows.Count} rows to {appendPath}");
+                    }
+                    else if (format == OutputFormat.Json)
+                    {
+                        Console.WriteLine(JsonSerializer.Serialize(rows, new JsonSerializerOptions
+                        {
+                            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                            WriteIndented = true
+                        }));
+                    }
+                    else
+                    {
+                        Console.Write(SectionSnapshotAnalyzer.ToCsv(rows, header: true));
+                    }
+                    sw.Stop();
+                    Telemetry.Log("snapshot", Path.GetFileName(solution.FilePath ?? ""), rows.Count, sw.ElapsedMilliseconds);
+                    return;
+                }
+
                 var (record, _, _) = await SnapshotAnalyzer.AnalyzeAsync(solution, cancellationToken);
 
                 if (appendPath is not null)
@@ -134,7 +167,7 @@ public static class SnapshotCommand
         File.AppendAllText(path, sb.ToString());
     }
 
-    private static string CsvEscape(string value)
+    internal static string CsvEscape(string value)
     {
         if (string.IsNullOrEmpty(value)) return "";
         if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))

@@ -150,6 +150,17 @@ public sealed partial class SurfaceScoreEngine
             if (report.Groups.TryGetValue(section, out var group)) group.Metrics = metrics;
         }
 
+        // Exported/internal x read/write census per section, and which exported symbols any other
+        // assembly names. Informational, over the same corpus — see SurfaceCensusAnalyzer.
+        var census = await SurfaceCensusAnalyzer.AnalyzeAsync(solution, classified, ct);
+        report.Surface = census.Solution;
+        report.Edges.AddRange(census.Edges);
+        foreach (var (section, surface) in census.BySection)
+        {
+            report.SurfaceBySection[section] = surface;
+            if (report.Groups.TryGetValue(section, out var group)) group.Surface = surface;
+        }
+
         // Test mass per section. A separate corpus from everything above (the classifier admits
         // no test project), reported as size and scored nowhere — see TestMassAnalyzer.
         var (testsBySection, solutionTests, unattributedTests) =

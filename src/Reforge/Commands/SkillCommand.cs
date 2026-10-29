@@ -104,6 +104,16 @@ public static class SkillCommand
         apart. The corpus is the scored corpus — no test projects, no generated code, complexity
         over methods with a body. Informational only; no metric feeds a score.
 
+        **Each group reports what it exports, counted.** A `surface` block per group (plus a
+        solution rollup) splits types and methods by visibility outside the assembly (`exported` /
+        `internal`) and by behaviour (`read` / `write`, decided per method by the same mutation
+        detection the score uses). `exported.write` is the headline: public mutation another
+        assembly can call. `typesUnusedExternally`, `methodsUnusedExternally` and
+        `writeUnusedExternally` count exported symbols no other production project names in source
+        (tests are not consulted; reflection and convention DI are invisible). `edges` lists
+        `{from, to, count}` per pair of sections. `snapshot --by-assembly` flattens metrics,
+        surface and tests into one CSV row per section for history runs.
+
         **Test mass is reported per section, and scored nowhere.** A `tests` block per group (plus a
         solution rollup) carries `loc`, `files`, `projects`, and `locVsProdPercent` — test LOC as a
         percentage of the section's production LOC, which is the figure that compares two sections

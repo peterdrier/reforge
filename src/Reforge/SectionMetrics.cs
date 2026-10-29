@@ -221,7 +221,7 @@ public static class SectionMetricsAnalyzer
     /// covers both, and falls back to the first so a genuinely bodyless method still resolves (and
     /// is then filtered by the caller).
     /// </remarks>
-    private static BaseMethodDeclarationSyntax? MethodSyntax(IMethodSymbol m, CancellationToken ct)
+    internal static BaseMethodDeclarationSyntax? MethodSyntax(IMethodSymbol m, CancellationToken ct)
     {
         var target = m.PartialImplementationPart ?? m;
         BaseMethodDeclarationSyntax? first = null;
