@@ -7,7 +7,7 @@ namespace Reforge;
 public sealed partial class SurfaceScoreEngine
 {
     private void ScoreDurableSurface(List<ClassifiedType> classified, ScoreReport report,
-        HashSet<string> analyzedAssemblies)
+        HashSet<string> analyzedAssemblies, MethodBehaviourMap behaviour)
     {
         // Types that get their own ScoreDtoSurface call. A DTO deriving from another scored DTO
         // must not be charged for the base's properties as well — the base already pays for them.
@@ -27,18 +27,7 @@ public sealed partial class SurfaceScoreEngine
             if (c.Tags.Contains("dto") && LooksLikeDataCarrier(c.Type, analyzedAssemblies))
                 ScoreDtoSurface(c, report, scoredDtos, analyzedAssemblies);
 
-            if (c.Tags.Contains("readServiceInterface"))
-                ScoreInterfaceMethods(c, "readServiceInterfaceMethod", report);
-            else if (c.Tags.Contains("fullServiceInterface"))
-            {
-                // Reported, not scored — the population is exactly the one charged below.
-                if (!report.PublicWriteSurface.TryGetValue(c.Group, out var published))
-                    report.PublicWriteSurface[c.Group] = published = new List<string>();
-                published.Add(c.Type.Name);
-
-                ScoreInterfaceMethods(c, "fullServiceInterfaceMethod", report);
-            }
-            else if (c.Tags.Contains("repositoryInterface"))
+            if (c.Tags.Contains("repositoryInterface"))
             {
                 AddEntry(report, c.Group, "newRepositoryInterface",
                     _config.Weight("newRepositoryInterface"), c.Type, c.File, c.Line, null);
@@ -55,8 +44,57 @@ public sealed partial class SurfaceScoreEngine
             else if (c.Tags.Contains("backgroundJob"))
                 AddEntry(report, c.Group, "backgroundJob",
                     _config.Weight("backgroundJob"), c.Type, c.File, c.Line, null);
-            else if (c.Tags.Contains("applicationService"))
-                ScorePublicMethods(c, "applicationServiceMethod", report);
+            else if (!c.Tags.Contains("dto") || !LooksLikeDataCarrier(c.Type, analyzedAssemblies))
+                ScoreExportedMethods(c, report, behaviour);
+        }
+    }
+
+    /// <summary>
+    /// Charges every public method an exported type publishes, priced by what the method does
+    /// rather than what its type is called: <c>exportedWriteMethod</c> when it mutates state
+    /// (decided per <see cref="MethodBehaviourMap"/>, following calls), <c>exportedReadMethod</c>
+    /// otherwise, and <c>exportedUnusedExternally</c> on top when no other production assembly
+    /// names it. The last is the cheapest surface there is to withdraw: make it internal and
+    /// every charge on it goes away, which is the edit the rule exists to prompt.
+    /// </summary>
+    /// <remarks>
+    /// Applies to any exported class or interface that is not a data carrier and has no role rule
+    /// of its own (repositories, controllers and background jobs keep theirs). An interface and
+    /// the class implementing it are both charged: the interface is what consumers bind to, the
+    /// public class is callable too, and either can be made internal independently.
+    /// </remarks>
+    private void ScoreExportedMethods(ClassifiedType c, ScoreReport report, MethodBehaviourMap behaviour)
+    {
+        var readWeight = _config.Weight("exportedReadMethod");
+        var writeWeight = _config.Weight("exportedWriteMethod");
+        var unusedWeight = _config.Weight("exportedUnusedExternally");
+        bool publishesWrite = false;
+
+        foreach (var m in MethodBehaviourAnalyzer.CorpusMethods(c.Type))
+        {
+            // Interface members are implicitly public, but C# 8 allows private/internal ones —
+            // those are implementation detail of the interface, not part of what it exports.
+            if (m.DeclaredAccessibility != Accessibility.Public) continue;
+
+            var loc = m.Locations.FirstOrDefault(l => l.IsInSource);
+            var (file, line) = LocateMember(loc, c);
+
+            bool write = behaviour.IsWrite(m);
+            publishesWrite |= write;
+            AddEntry(report, c.Group, write ? "exportedWriteMethod" : "exportedReadMethod",
+                write ? writeWeight : readWeight, m, file, line, m.Name);
+
+            if (!behaviour.IsUsedExternally(m))
+                AddEntry(report, c.Group, "exportedUnusedExternally", unusedWeight, m, file, line,
+                    $"{m.Name}: no other production assembly names it");
+        }
+
+        // Reported, not scored: the interfaces through which a section publishes mutation.
+        if (publishesWrite && c.Type.TypeKind == TypeKind.Interface)
+        {
+            if (!report.PublicWriteSurface.TryGetValue(c.Group, out var published))
+                report.PublicWriteSurface[c.Group] = published = new List<string>();
+            published.Add(c.Type.Name);
         }
     }
 

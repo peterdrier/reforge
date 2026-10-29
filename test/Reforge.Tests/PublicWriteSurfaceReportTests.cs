@@ -6,7 +6,7 @@ namespace Reforge.Tests;
 /// <summary>
 /// <c>publicWriteSurface</c> is reported per section and never scored, so it must survive a section
 /// that scores nothing. A section whose published interface charges no points — no chargeable
-/// methods, or <c>fullServiceInterfaceMethod</c> weighted to zero — has no <see cref="GroupScore"/>
+/// methods, or <c>exportedWriteMethod</c> weighted to zero — has no <see cref="GroupScore"/>
 /// at all, because zero-point entries are dropped. Reporting it off the scored groups would hide it
 /// in the one case worth seeing most: write capability published for free.
 /// </summary>

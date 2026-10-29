@@ -165,3 +165,60 @@ public class SurfaceCensusTests
         finally { File.Delete(path); }
     }
 }
+
+/// <summary>
+/// The per-method read/write verdict the census and the exported*Method rules share.
+/// </summary>
+[Collection("SampleSolution")]
+public class MethodBehaviourTests
+{
+    private readonly SampleSolutionFixture _fixture;
+    public MethodBehaviourTests(SampleSolutionFixture fixture) => _fixture = fixture;
+
+    private async Task<(IReadOnlyList<ClassifiedType> Classified, MethodBehaviourMap Map)> AnalyzeAsync()
+    {
+        var dir = LocationHelper.GetSolutionDirectory(_fixture.Solution);
+        var classified = await SolutionClassifier.ClassifyAsync(_fixture.Solution, SurfaceScoreConfig.Default(), dir, CancellationToken.None);
+        var map = await MethodBehaviourAnalyzer.AnalyzeAsync(_fixture.Solution, classified, CancellationToken.None);
+        return (classified, map);
+    }
+
+    private static Microsoft.CodeAnalysis.IMethodSymbol Method(IReadOnlyList<ClassifiedType> classified, string type, string method) =>
+        classified.Single(c => c.Type.Name == type).Type.GetMembers(method).OfType<Microsoft.CodeAnalysis.IMethodSymbol>().Single();
+
+    [Fact]
+    public async Task WriteVerdict_FollowsCallsToACommit()
+    {
+        var (classified, map) = await AnalyzeAsync();
+
+        // Commits in its own body.
+        Assert.True(map.IsWrite(Method(classified, "UserService", "UpdateUserNameAsync")));
+        // Returns data, commits nothing itself, reaches SaveChangesAsync through the call above:
+        // the return type does not buy it a read verdict.
+        Assert.True(map.IsWrite(Method(classified, "UserRenameService", "TryRenameAsync")));
+        // Same type, no path to a commit, returns data: a read.
+        Assert.False(map.IsWrite(Method(classified, "UserRenameService", "CountRenames")));
+    }
+
+    [Fact]
+    public async Task InterfaceMethod_TakesItsImplementationsVerdict()
+    {
+        var (classified, map) = await AnalyzeAsync();
+
+        // ICampServiceRead is implemented by read-only classes; a Get on it is a read.
+        Assert.False(map.IsWrite(Method(classified, "ICampServiceRead", "GetByIdAsync")));
+    }
+
+    [Fact]
+    public async Task ScoredAsWrite_WhereTheCensusSaysWrite()
+    {
+        var engine = new SurfaceScoreEngine(SurfaceScoreConfig.Default(), LocationHelper.GetSolutionDirectory(_fixture.Solution));
+        var report = await engine.ScoreAsync(_fixture.Solution, CancellationToken.None);
+
+        var services = report.Groups["Services"].Entries;
+        Assert.Contains(services, e => e.Rule == "exportedWriteMethod" && e.Symbol == "TryRenameAsync");
+        Assert.Contains(services, e => e.Rule == "exportedReadMethod" && e.Symbol == "CountRenames");
+        // Nothing outside Services names UserRenameService, so both carry the surcharge.
+        Assert.Equal(2, services.Count(e => e.Rule == "exportedUnusedExternally" && e.Symbol is "TryRenameAsync" or "CountRenames"));
+    }
+}

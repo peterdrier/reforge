@@ -1,4 +1,4 @@
-// gate1: applicationServiceMethod
+// gate1: exportedWriteMethod
 //
 // Three published operations on a service. The rule charges per public method, so the number an
 // agent sees is three times the weight — and the obvious way to make three into one is not to

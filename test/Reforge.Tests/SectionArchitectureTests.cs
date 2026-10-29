@@ -62,7 +62,7 @@ public class SectionArchitectureTests
         var read = report.ConservationAnchors.Single(a => a.Key.EndsWith("ICampServiceRead") && a.Role == "readServiceInterface");
         Assert.Contains(read.Methods, m => m.Name == "GetByIdAsync");
         // per-anchor byRule points exist for the read interface
-        Assert.True(read.ByRule.ContainsKey("readServiceInterfaceMethod"));
+        Assert.True(read.ByRule.ContainsKey("exportedReadMethod"));
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public class SectionArchitectureTests
                 surfaceTotal = g.Name == section ? g.SurfaceTotal + 6 : g.SurfaceTotal,
                 implementationShapeTotal = g.ImplementationShapeTotal,
                 byRule = g.Name == section
-                    ? g.ByRule.ToDictionary(kv => kv.Key, kv => kv.Key == "readServiceInterfaceMethod" ? kv.Value + 6 : kv.Value)
+                    ? g.ByRule.ToDictionary(kv => kv.Key, kv => kv.Key == "exportedReadMethod" ? kv.Value + 6 : kv.Value)
                     : g.ByRule.ToDictionary(kv => kv.Key, kv => kv.Value)
             }).ToArray(),
             conservationAnchors = anchors,

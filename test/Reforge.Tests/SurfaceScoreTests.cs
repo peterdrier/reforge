@@ -105,7 +105,7 @@ public class SurfaceScoreTests
         // to Camp, and no "Camp.Contracts" group may exist.
         Assert.DoesNotContain(report.Groups.Keys, k => k.Contains("Contracts", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(report.Groups["Camp"].Entries,
-            e => e.Rule == "readServiceInterfaceMethod" && e.Symbol == "GetByIdAsync");
+            e => e.Rule == "exportedReadMethod" && e.Symbol == "GetByIdAsync");
     }
 
     [Fact]
@@ -333,8 +333,8 @@ public class SurfaceScoreTests
         Assert.Equal(2 * defaults.Weight("publicDtoType"), dtoType.Points);
 
         var readMethod = Assert.Single(published,
-            e => e.Rule == "readServiceInterfaceMethod" && e.Symbol == "GetByIdAsync");
-        Assert.Equal(2 * defaults.Weight("readServiceInterfaceMethod"), readMethod.Points);
+            e => e.Rule == "exportedReadMethod" && e.Symbol == "GetByIdAsync");
+        Assert.Equal(2 * defaults.Weight("exportedReadMethod"), readMethod.Points);
     }
 
     [Fact]

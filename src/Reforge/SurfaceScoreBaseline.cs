@@ -70,11 +70,13 @@ public static class SurfaceScoreBaseline
 
     private static readonly string[] MethodSurfaceRules =
     {
+        "exportedReadMethod", "exportedWriteMethod",
         "applicationServiceMethod", "readServiceInterfaceMethod", "fullServiceInterfaceMethod",
         "repositoryInterfaceMethod", "repositoryImplementationMethod", "controllerAction"
     };
     private static readonly string[] InterfaceMethodRules =
     {
+        "exportedReadMethod", "exportedWriteMethod",
         "readServiceInterfaceMethod", "fullServiceInterfaceMethod", "repositoryInterfaceMethod"
     };
     private static readonly string[] DispatcherRules = { "actionDispatcher", "flagsControlFlow" };

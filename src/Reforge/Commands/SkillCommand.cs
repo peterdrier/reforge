@@ -187,8 +187,8 @@ public static class SkillCommand
           //
           // Durable surface:
           //   dtoScalarProperty (1), dtoCollectionProperty (2), dtoNestedProperty (3),
-          //   publicDtoType (5), applicationServiceMethod (5), readServiceInterfaceMethod (6),
-          //   fullServiceInterfaceMethod (8), repositoryInterfaceMethod (10),
+          //   publicDtoType (5), exportedReadMethod (4), exportedWriteMethod (12),
+          //   exportedUnusedExternally (2), repositoryInterfaceMethod (10),
           //   repositoryImplementationMethod (10), newRepositoryInterface (15),
           //   newRepositoryImplementation (15), controllerAction (8),
           //   backgroundJob (12), duplicateDbSetOwner (20)

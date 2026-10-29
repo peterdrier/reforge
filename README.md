@@ -66,6 +66,16 @@ The axis is named for what it measures, not for an accessibility level. `impleme
 Its rules charge for shapes an edit can genuinely improve: complexity over a method's whole call
 path, a class carrying too much, a parameter that switches a method between two behaviours.
 
+**Exported methods are priced by what they do, not by what their type is called.** Every public
+method on an exported class or interface (outside the DTO, repository, controller and background-job
+rules, which keep their own pricing) is charged `exportedWriteMethod` (12) when it writes and
+`exportedReadMethod` (4) when it reads. A write is a method whose body, or any corpus method it
+calls, commits persistent state, or that is command-shaped (returns no data); an interface method
+takes its implementations' verdict. The verdict follows calls so that returning a `bool` from
+`UpdateAsync` cannot turn it into a read while it still reaches `SaveChanges` through a repository.
+`exportedUnusedExternally` (2) is added for a method no other production assembly names in source:
+its cheapest fix, making it internal, also clears the method's own charge, which is the point.
+
 Rules that charge for a *use* rather than a declaration — `crossSectionRepository`,
 `crossSectionFullService`, `crossSectionReadInterface`, `writeCapableInterfaceUsedReadOnly`,
 `duplicateDbSetOwner` — are **not** gated this way:
