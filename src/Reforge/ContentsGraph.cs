@@ -103,6 +103,7 @@ internal sealed class ContentsGraph
                     string? from = null;
                     foreach (var referenced in Referenced(node, model, filter, ct))
                     {
+                        if (IsDiscardedPureCall(node, referenced, model, ct)) continue;
                         from ??= Enclosing(node, model, ct);
                         if (from is null) break;
                         var to = Key(referenced);
@@ -213,6 +214,35 @@ internal sealed class ContentsGraph
         if (filter.Conversions && node is ExpressionSyntax expr
             && model.GetConversion(expr, ct) is { IsUserDefined: true, MethodSymbol: { } conversion })
             yield return conversion;
+    }
+
+    /// <summary>
+    /// A call whose value is thrown away (a bare statement or <c>_ = ...</c>) to a method that only
+    /// computes that value. It does nothing, so it reaches nothing: without this, one dead call buys
+    /// a helper the reuse waiver. A discarded call is kept when the method is a write, returns its
+    /// own receiver (fluent), or has a statement, assignment or increment that could act on
+    /// anything, since then it may be made for what it does rather than what it returns.
+    /// </summary>
+    private static bool IsDiscardedPureCall(SyntaxNode node, ISymbol referenced, SemanticModel model, CancellationToken ct)
+    {
+        if (referenced is not IMethodSymbol m || node is not SimpleNameSyntax) return false;
+        SyntaxNode callee = node.Parent is MemberAccessExpressionSyntax ma && ma.Name == node ? ma : node;
+        if (callee.Parent is not InvocationExpressionSyntax inv || inv.Expression != callee) return false;
+        bool discarded = inv.Parent switch
+        {
+            ExpressionStatementSyntax => true,
+            AssignmentExpressionSyntax { Left: var left } a when a.Right == inv
+                => model.GetSymbolInfo(left, ct).Symbol is IDiscardSymbol,
+            _ => false
+        };
+        if (!discarded) return false;
+        var receiver = m.IsExtensionMethod && m.Parameters.Length > 0 ? m.Parameters[0].Type : m.ContainingType;
+        if (SymbolEqualityComparer.Default.Equals(m.ReturnType.OriginalDefinition, receiver.OriginalDefinition)) return false;
+        var syntax = m.DeclaringSyntaxReferences.Select(r => r.GetSyntax(ct)).OfType<BaseMethodDeclarationSyntax>().FirstOrDefault();
+        if (syntax is null || ImplementationComplexity.IsMutation(m, syntax)) return false;
+        return !syntax.DescendantNodes().Any(n => n is ExpressionStatementSyntax or AssignmentExpressionSyntax
+            || n.IsKind(SyntaxKind.PreIncrementExpression) || n.IsKind(SyntaxKind.PreDecrementExpression)
+            || n is PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.PostIncrementExpression or (int)SyntaxKind.PostDecrementExpression });
     }
 
     private static bool IsBaseAccess(SyntaxNode node)
