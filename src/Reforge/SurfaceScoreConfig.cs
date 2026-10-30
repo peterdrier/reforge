@@ -295,6 +295,7 @@ public sealed class SurfaceScoreConfig
                 ["sameSectionReadService"] = 0,
                 ["crossSectionReadInterface"] = 2,
                 ["crossSectionFullService"] = 8,
+                ["crossSectionConcreteService"] = 12,
                 ["crossSectionRepository"] = 25,
                 ["writeCapableInterfaceUsedReadOnly"] = 12,
 

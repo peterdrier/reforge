@@ -41,7 +41,10 @@ public sealed partial class SurfaceScoreEngine
                     else if (dep.Tags.Contains("readServiceInterface"))
                         rule = sameGroup ? "sameSectionReadService" : "crossSectionReadInterface";
                     else if (dep.Tags.Contains("fullServiceInterface") || dep.Tags.Contains("applicationService"))
-                        rule = sameGroup ? null : "crossSectionFullService";
+                        // A concrete class is the widest door: every public member, no seam, and the
+                        // implementation's own section pinned. It costs more than the interface.
+                        rule = sameGroup ? null
+                            : dep.Type.TypeKind == TypeKind.Interface ? "crossSectionFullService" : "crossSectionConcreteService";
 
                     if (rule is null) continue;
                     var weight = _config.Weight(rule);

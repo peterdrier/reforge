@@ -6,7 +6,7 @@ public interface ICampBillingService
     void Charge(int campId, int amount);
 }
 
-public sealed class CampBillingService : ICampBillingService
+internal sealed class CampBillingService : ICampBillingService
 {
     private readonly Dictionary<int, int> _balances = new();
 

@@ -188,14 +188,16 @@ public static class SkillCommand
           // Durable surface:
           //   dtoScalarProperty (1), dtoCollectionProperty (2), dtoNestedProperty (3),
           //   publicDtoType (5), exportedReadMethod (4), exportedWriteMethod (12),
-          //   exportedUnusedExternally (2), repositoryInterfaceMethod (10),
+          //   exportedUnusedExternally (2), internalWiderThanUse (2), protectedWiderThanUse (1),
+          //   repositoryInterfaceMethod (10),
           //   repositoryImplementationMethod (10), newRepositoryInterface (15),
           //   newRepositoryImplementation (15), controllerAction (8),
           //   backgroundJob (12), duplicateDbSetOwner (20)
           //
           // Dependency use (constructor injection across sections):
           //   sameSectionReadService (0), crossSectionReadInterface (2),
-          //   crossSectionFullService (8), crossSectionRepository (25),
+          //   crossSectionFullService (8), crossSectionConcreteService (12),
+          //   crossSectionRepository (25),
           //   writeCapableInterfaceUsedReadOnly (12, full-service interface paired with a read
           //     interface — via inheritance or "{Full}Read" sibling — where every observed call
           //     on the injected dep also exists on the read interface)

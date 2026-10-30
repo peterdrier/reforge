@@ -126,7 +126,7 @@ public sealed partial class SurfaceScoreEngine
 
         // Cross-cutting: duplicate DbSet owners (resource ownership), one-implementation interfaces.
         ScoreDuplicateDbSetOwners(classified, solution, report, ct);
-        ScoreOneImplementationInterfaces(classified, report);
+        ScoreOneImplementationInterfaces(classified, report, behaviour);
 
         // Pass 5 — implementation shape (separate scalar), the counterweight to surface: the
         // contents census, class size, and structural action-dispatcher detection. The call-path
