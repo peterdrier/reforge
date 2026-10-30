@@ -30,6 +30,6 @@
     { "id": "ReorderMembers", "label": "lateral", "rationale": "Members reordered within the class." },
     { "id": "SplitPartialAcrossFiles", "label": "lateral", "rationale": "One class split into a partial class across two files." },
     { "id": "ExplicitInterfaceImpl", "label": "lateral", "rationale": "An internal interface implemented explicitly instead of implicitly." },
-    { "id": "SwitchToDictionaryDispatch", "label": "lateral", "rationale": "A switch whose arms compute a price becomes a dictionary of lambdas keyed by the same enum.", "gap": "nesting-arrangement" }
+    { "id": "SwitchToDictionaryDispatch", "label": "lateral", "rationale": "A switch whose arms compute a price becomes a dictionary of lambdas keyed by the same enum.", "gap": "extra-declaration" }
   ]
 }

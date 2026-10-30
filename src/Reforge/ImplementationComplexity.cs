@@ -186,6 +186,27 @@ public static class ImplementationComplexity
                     Visit(cond.WhenTrue, nesting + 1);
                     Visit(cond.WhenFalse, nesting + 1);
                     return;
+                case InitializerExpressionSyntax init when TableArms(init) is { Count: >= 2 } arms:
+                {
+                    // A table of delegates is a switch written as data: the initializer is the
+                    // branch and each delegate an arm, so each body sits one level in, as a switch
+                    // arm's statements do. Otherwise moving the arms into lambdas would shed every
+                    // nesting increment they carry.
+                    Score += 1 + nesting;
+                    bool wasInNested = _inNestedFunction;
+                    foreach (var child in init.ChildNodes())
+                    {
+                        if (child is AssignmentExpressionSyntax { Left: ImplicitElementAccessSyntax } a) Visit(a.Left, nesting);
+                        foreach (var n in TableElement(child))
+                        {
+                            if (!arms.Contains(n)) { Visit(n, nesting); continue; }
+                            _inNestedFunction = true;
+                            VisitChildren(n, nesting + 1);
+                            _inNestedFunction = wasInNested;
+                        }
+                    }
+                    return;
+                }
                 case ParenthesizedLambdaExpressionSyntax or SimpleLambdaExpressionSyntax
                      or AnonymousMethodExpressionSyntax or LocalFunctionStatementSyntax:
                 {
@@ -224,6 +245,20 @@ public static class ImplementationComplexity
             }
             VisitChildren(node, nesting);
         }
+
+        /// <summary>
+        /// The delegates in a collection, array or indexer initializer that are its elements' values:
+        /// <c>{ a, b }</c>, <c>{ { key, a } }</c> and <c>{ [key] = a }</c>.
+        /// </summary>
+        private static HashSet<SyntaxNode> TableArms(InitializerExpressionSyntax init)
+            => init.ChildNodes().SelectMany(TableElement).Where(n => n is AnonymousFunctionExpressionSyntax).ToHashSet();
+
+        private static IEnumerable<SyntaxNode> TableElement(SyntaxNode element) => element switch
+        {
+            AssignmentExpressionSyntax { Left: ImplicitElementAccessSyntax } a => new[] { a.Right },
+            InitializerExpressionSyntax { RawKind: (int)SyntaxKind.ComplexElementInitializerExpression } pair => pair.Expressions,
+            _ => new[] { element }
+        };
 
         private void VisitIf(IfStatementSyntax ifs, int nesting)
         {
