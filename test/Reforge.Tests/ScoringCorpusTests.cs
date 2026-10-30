@@ -18,7 +18,10 @@ namespace Reforge.Tests;
 /// corpus works as a ratchet in CI while the gaps stay visible as data.</para>
 ///
 /// <para>Each variant directory is one project; a subdirectory is a satellite project in its own
-/// section, referenced by the main one. Set <c>REFORGE_CORPUS_REPORT</c> to a path to write the
+/// section, referenced by the main one, except a subdirectory whose name contains <c>Test</c>: that is
+/// a test project referencing the main one. A pair with <c>tokensPerChar</c> is scored with a fake
+/// token counter (that many tokens per letter or digit), so the size rules price it; other pairs are
+/// scored without tokens and the size rules are skipped. Set <c>REFORGE_CORPUS_REPORT</c> to a path to write the
 /// results table, and <c>REFORGE_CORPUS_CONFIG</c> to score under another config (the ratchet is
 /// skipped then, since the gap markers describe the default weights).</para>
 /// </summary>
@@ -29,7 +32,21 @@ public class ScoringCorpusTests
 
     public ScoringCorpusTests(ITestOutputHelper output) => _output = output;
 
-    private sealed record Pair(string Id, string Label, string Rationale, string? Gap, string? Confidence);
+    private sealed record Pair(string Id, string Label, string Rationale, string? Gap, string? Confidence, int? TokensPerChar);
+
+    /// <summary>
+    /// Tokens = <c>scale</c> per letter or digit, plus a request overhead. The baseline "." nets to
+    /// zero, and whitespace, punctuation and a file's namespace and using lines are free, so moving
+    /// code between files changes nothing unless the moved code itself changes.
+    /// </summary>
+    private sealed class AlphanumericCounter(int scale) : ITokenCounter
+    {
+        public string Model => $"fake-{scale}";
+        public Task<int?> CountAsync(string text, CancellationToken ct) =>
+            Task.FromResult<int?>(scale * text.Split('\n')
+                .Where(line => !line.StartsWith("namespace ", StringComparison.Ordinal) && !line.StartsWith("using ", StringComparison.Ordinal))
+                .Sum(line => line.Count(char.IsLetterOrDigit)) + 3);
+    }
 
     private sealed record Result(Pair Pair, ScoreReport Before, ScoreReport After)
     {
@@ -57,8 +74,8 @@ public class ScoringCorpusTests
         {
             var dir = Path.Combine(root, "Pairs", pair.Id);
             results.Add(new Result(pair,
-                await ScoreAsync(Path.Combine(dir, "before"), root, config),
-                await ScoreAsync(Path.Combine(dir, "after"), root, config)));
+                await ScoreAsync(Path.Combine(dir, "before"), root, config, pair.TokensPerChar),
+                await ScoreAsync(Path.Combine(dir, "after"), root, config, pair.TokensPerChar)));
         }
 
         var table = Table(results) + Entries(results, Environment.GetEnvironmentVariable("REFORGE_CORPUS_ENTRIES"));
@@ -84,7 +101,8 @@ public class ScoringCorpusTests
             p.GetProperty("label").GetString()!,
             p.GetProperty("rationale").GetString()!,
             p.TryGetProperty("gap", out var g) ? g.GetString() : null,
-            p.TryGetProperty("confidence", out var c) ? c.GetString() : null)).ToList();
+            p.TryGetProperty("confidence", out var c) ? c.GetString() : null,
+            p.TryGetProperty("tokensPerChar", out var t) ? t.GetInt32() : null)).ToList();
     }
 
     private static string Table(List<Result> results)
@@ -140,17 +158,22 @@ public class ScoringCorpusTests
         global using global::System.Threading.Tasks;
         """;
 
-    private static async Task<ScoreReport> ScoreAsync(string variantDir, string solutionDir, SurfaceScoreConfig config)
+    private static async Task<ScoreReport> ScoreAsync(string variantDir, string solutionDir, SurfaceScoreConfig config, int? tokensPerChar)
     {
         Assert.True(Directory.Exists(variantDir), $"missing variant directory {variantDir}");
-        var satellites = Directory.EnumerateDirectories(variantDir).OrderBy(d => d, StringComparer.Ordinal)
+        var subdirectories = Directory.EnumerateDirectories(variantDir).OrderBy(d => d, StringComparer.Ordinal).ToList();
+        var isTest = (string d) => Path.GetFileName(d).Contains("Test", StringComparison.OrdinalIgnoreCase);
+        var satellites = subdirectories.Where(d => !isTest(d))
             .Select(d => Project("Corpus." + Path.GetFileName(d), d, Array.Empty<ProjectReference>()))
             .ToList();
         var main = Project(MainAssembly, variantDir, satellites.Select(s => new ProjectReference(s.Id)).ToList());
+        var tests = subdirectories.Where(isTest)
+            .Select(d => Project("Corpus." + Path.GetFileName(d), d, [new ProjectReference(main.Id)]))
+            .ToList();
 
         using var workspace = new AdhocWorkspace();
         var solution = workspace.AddSolution(SolutionInfo.Create(SolutionId.CreateNewId(), VersionStamp.Create(),
-            filePath: Path.Combine(solutionDir, "ScoringCorpus.slnx"), projects: satellites.Append(main).ToList()));
+            filePath: Path.Combine(solutionDir, "ScoringCorpus.slnx"), projects: satellites.Append(main).Concat(tests).ToList()));
 
         foreach (var project in solution.Projects)
         {
@@ -159,7 +182,8 @@ public class ScoringCorpusTests
             Assert.True(errors.Count == 0, $"{variantDir} does not compile: {string.Join("; ", errors.Take(3))}");
         }
 
-        return await new SurfaceScoreEngine(config, solutionDir).ScoreAsync(solution, CancellationToken.None);
+        var tokens = tokensPerChar is { } scale ? new TokenMeasurer(new AlphanumericCounter(scale), TokenCache.InMemory()) : null;
+        return await new SurfaceScoreEngine(config, solutionDir) { Tokens = tokens }.ScoreAsync(solution, CancellationToken.None);
     }
 
     private static ProjectInfo Project(string assemblyName, string directory, IReadOnlyList<ProjectReference> references)

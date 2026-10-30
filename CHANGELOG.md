@@ -13,8 +13,9 @@ What changed and why. Newest first.
 - **An interface operation is priced once**, `oneImplementationInterface` skips an interface another
   assembly binds to, and `crossSectionConcreteService` (12) makes a concrete class the dearest
   cross-section dependency, so a public interface over an internal class is the cheapest door.
-  `surface-score --count-tokens` measures, without scoring, each section's and class's exact tokens
-  with Anthropic's `count_tokens`, cached by content hash, so the price of size can be set on real counts.
+  `surface-score --count-tokens` measures exact tokens with Anthropic's `count_tokens`, cached by
+  content hash, and only then prices size: `sectionSize` (whole files, so partials and siblings don't
+  escape it), `classSize`, and `testSize` past the section's own size, about 18% of the Humans total.
 
 ## Unreleased - A labelled corpus for reviewing the weights
 

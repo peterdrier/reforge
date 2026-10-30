@@ -227,8 +227,15 @@ public sealed record TypeText(
 
 public sealed record ClassTokens(string Name, string File, int Line, int? Tokens);
 
-/// <summary>A section's tokens: the sum of its whole handwritten files, null if any file went unmeasured.</summary>
-public sealed record SectionTokens(int? Total, int Files, List<ClassTokens> Classes);
+/// <summary>
+/// A section's tokens: the sum of its whole handwritten files, null if any file went unmeasured.
+/// <see cref="Tests"/> is the same sum over the test files attributed to the section.
+/// </summary>
+public sealed record SectionTokens(int? Total, int Files, List<ClassTokens> Classes)
+{
+    public int? Tests { get; init; } = 0;
+    public int TestFiles { get; init; }
+}
 
 public sealed class TokenCensus
 {
@@ -237,8 +244,9 @@ public sealed class TokenCensus
     public Dictionary<string, SectionTokens> BySection { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Every classified type's handwritten files and, for classes and structs, its declaration
-    /// spans across all partial files, doc comments included. Generated files and migrations are
+    /// Every classified type's handwritten files and, for top-level classes and structs, its
+    /// declaration spans across all partial files, doc comments and nested types included (a nested
+    /// type is part of its container's text, so it is not a class of its own here). Generated files and migrations are
     /// skipped exactly as <see cref="SectionMetricsAnalyzer"/> skips them, so the file set is the
     /// one <c>metrics.files</c> counts.
     /// </summary>
@@ -260,7 +268,7 @@ public sealed class TokenCensus
             }
             if (files.Count == 0) continue;
             result.Add(new TypeText(c.Group, c.Type.ContainingAssembly?.Name ?? "", c.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
-                c.File, c.Line, c.Type.TypeKind is TypeKind.Class or TypeKind.Struct, files, spans));
+                c.File, c.Line, c.Type.TypeKind is TypeKind.Class or TypeKind.Struct && c.Type.ContainingType is null, files, spans));
         }
         return result;
     }
@@ -280,9 +288,11 @@ public sealed class TokenCensus
     /// <summary>
     /// Measures each distinct file once per (assembly, path), as <c>metrics.files</c> counts them,
     /// and each class as the sum of its spans. Whole files make a section's total independent of
-    /// how its code is split into types or partials.
+    /// how its code is split into types or partials. <paramref name="tests"/> holds each section's
+    /// attributed test files (see <see cref="TestMassAnalyzer.CollectFilesAsync"/>).
     /// </summary>
-    public static async Task<TokenCensus> MeasureAsync(IReadOnlyList<TypeText> types, TokenMeasurer measurer, CancellationToken ct)
+    public static async Task<TokenCensus> MeasureAsync(IReadOnlyList<TypeText> types, TokenMeasurer measurer, CancellationToken ct,
+        IReadOnlyDictionary<string, List<(string Path, string Text)>>? tests = null)
     {
         var fileText = new Dictionary<(string Assembly, string Path), string>();
         var fileSection = new Dictionary<(string Assembly, string Path), string>();
@@ -294,7 +304,9 @@ public sealed class TokenCensus
         var classes = types.Where(t => t.IsClass)
             .Select(t => (Type: t, Counts: t.Spans.Select(s => measurer.MeasureAsync(s, ct)).ToList()))
             .ToList();
-        await Task.WhenAll(fileCounts.Values.Concat(classes.SelectMany(c => c.Counts)));
+        var testCounts = (tests ?? new Dictionary<string, List<(string Path, string Text)>>())
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Select(f => measurer.MeasureAsync(f.Text, ct)).ToList(), StringComparer.OrdinalIgnoreCase);
+        await Task.WhenAll(fileCounts.Values.Concat(classes.SelectMany(c => c.Counts)).Concat(testCounts.Values.SelectMany(t => t)));
 
         var census = new TokenCensus { Total = Sum(fileCounts.Values.Select(t => t.Result)), Files = fileCounts.Count };
         foreach (var section in fileSection.GroupBy(kv => kv.Value, kv => kv.Key, StringComparer.OrdinalIgnoreCase))
@@ -305,8 +317,13 @@ public sealed class TokenCensus
                 .OrderByDescending(c => c.Tokens ?? -1)
                 .ThenBy(c => c.Name, StringComparer.Ordinal)
                 .ToList();
+            var sectionTests = testCounts.GetValueOrDefault(section.Key) ?? [];
             census.BySection[section.Key] = new SectionTokens(
-                Sum(section.Select(f => fileCounts[f].Result)), section.Count(), sectionClasses);
+                Sum(section.Select(f => fileCounts[f].Result)), section.Count(), sectionClasses)
+            {
+                Tests = Sum(sectionTests.Select(t => t.Result)),
+                TestFiles = sectionTests.Count,
+            };
         }
         return census;
     }

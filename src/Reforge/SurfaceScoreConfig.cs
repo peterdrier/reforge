@@ -116,6 +116,48 @@ public sealed class SurfaceScoreConfig
     public int ComplexitySharingPercent { get; set; } = 0;
 
     /// <summary>
+    /// Size in exact tokens, priced only when <c>surface-score --count-tokens</c> measured them; the
+    /// rules are skipped otherwise, never estimated. A section (its production and contracts files,
+    /// whole) is free up to <see cref="SectionSizeFreeTokens"/>, pays the <c>sectionSize</c> weight
+    /// per thousand tokens above it, and past <see cref="SectionSizeTaxTokens"/> also pays
+    /// <see cref="SectionSizeTaxPercent"/>% of the excess in thousands raised to
+    /// <see cref="SizeTaxExponent"/>. Summing whole files means neither partials nor sibling types
+    /// lower it. 50k fits a 200k window with room for tests and the task; past 100k the section and
+    /// the work no longer fit together.
+    /// </summary>
+    public int SectionSizeFreeTokens { get; set; } = 50_000;
+
+    /// <inheritdoc cref="SectionSizeFreeTokens"/>
+    public int SectionSizeTaxTokens { get; set; } = 100_000;
+
+    /// <inheritdoc cref="SectionSizeFreeTokens"/>
+    public int SectionSizeTaxPercent { get; set; } = 50;
+
+    /// <summary>
+    /// The same curve per class, summed over every partial declaration (nested types included):
+    /// free up to <see cref="ClassSizeFreeTokens"/>, the <c>classSize</c> weight per thousand above
+    /// it, and <see cref="ClassSizeTaxPercent"/>% of the excess past <see cref="ClassSizeTaxTokens"/>
+    /// raised to <see cref="SizeTaxExponent"/>. 8k reads comfortably with room to edit; 25k is about
+    /// where one file read stops.
+    /// </summary>
+    public int ClassSizeFreeTokens { get; set; } = 8_000;
+
+    /// <inheritdoc cref="ClassSizeFreeTokens"/>
+    public int ClassSizeTaxTokens { get; set; } = 25_000;
+
+    /// <inheritdoc cref="ClassSizeFreeTokens"/>
+    public int ClassSizeTaxPercent { get; set; } = 500;
+
+    /// <summary>Exponent of the size tax on sections and classes.</summary>
+    public double SizeTaxExponent { get; set; } = 1.5;
+
+    /// <summary>
+    /// A section's test tokens are free up to this percentage of its production and contracts
+    /// tokens; above it each thousand pays the <c>testSize</c> weight, linearly.
+    /// </summary>
+    public int TestSizeFreePercent { get; set; } = 100;
+
+    /// <summary>
     /// Glob patterns matched against a dispatcher parameter's <i>type</i> name. These act
     /// only as a tie-breaker — the read/write decision is made behaviorally (does the
     /// method mutate?), so a shape type cannot be used to evade a penalty on a mutation by
@@ -324,7 +366,13 @@ public sealed class SurfaceScoreConfig
                 // No genericActionDispatcher key: it was folded into actionDispatcher as three
                 // surcharges rather than kept as a rule gated on all of them at once.
                 ["mutationModeParameter"] = 1,
-                ["flagsControlFlow"] = 1
+                ["flagsControlFlow"] = 1,
+                // Size in exact tokens, points per thousand above the free allowance (see
+                // SectionSizeFreeTokens). Skipped without token counts. Tests pay half the
+                // section rate and no tax: they cost reading, but nothing calls into them.
+                ["sectionSize"] = 2,
+                ["classSize"] = 5,
+                ["testSize"] = 1
             }
         };
     }

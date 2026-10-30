@@ -26,7 +26,10 @@ public sealed partial class SurfaceScoreEngine
         _solutionDirectory = solutionDirectory;
     }
 
-    /// <summary>When set, the report carries exact token counts (see <see cref="TokenCensus"/>). Never scored.</summary>
+    /// <summary>
+    /// When set, the report carries exact token counts (see <see cref="TokenCensus"/>) and the size
+    /// rules price them. When null, <c>sectionSize</c>, <c>classSize</c> and <c>testSize</c> are skipped.
+    /// </summary>
     public TokenMeasurer? Tokens { get; init; }
 
     public async Task<ScoreReport> ScoreAsync(Solution solution, CancellationToken ct, int maxBuildDiagnostics = 25)
@@ -144,6 +147,15 @@ public sealed partial class SurfaceScoreEngine
         ScoreBoundaryInputs(classified, typesByDisplay, report, ct);
         await ScoreInlineParameterObjectConstructionAsync(typesByDisplay, solution, report, ct);
 
+        // Pass 7: size in exact tokens, only when a counter was supplied. Without one the size
+        // rules are skipped: they price measured tokens or nothing.
+        if (Tokens is not null)
+        {
+            var testFiles = await TestMassAnalyzer.CollectFilesAsync(solution, classified, ct);
+            report.Tokens = await TokenCensus.MeasureAsync(TokenCensus.Collect(classified, ct), Tokens, ct, testFiles);
+            ScoreSize(report.Tokens, report);
+        }
+
         // Section-architecture advisories + conservation anchors.
         EmitSectionAdvisories(architecture, report);
         report.ConservationAnchors = BuildConservationAnchors(architecture, report);
@@ -186,9 +198,6 @@ public sealed partial class SurfaceScoreEngine
         if (unattributedTests.Count > 0)
             report.Diagnostics.Add(new ScoreDiagnostic("info", "unattributedTestProject",
                 $"Test projects whose references named no single section, counted in the solution rollup only: {string.Join(", ", unattributedTests)}."));
-
-        if (Tokens is not null)
-            report.Tokens = await TokenCensus.MeasureAsync(TokenCensus.Collect(classified, ct), Tokens, ct);
 
         // Build health: detect a degraded (unbuilt/erroring) compilation so a partial
         // score is never mistaken for a complete one. Reuses the per-project compilations

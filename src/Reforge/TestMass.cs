@@ -95,6 +95,30 @@ public static class TestMassAnalyzer
     }
 
     /// <summary>
+    /// The text of every handwritten file in each section's attributed test projects, by the same
+    /// filters and attribution <see cref="AnalyzeAsync"/> measures LOC with. Unattributed projects
+    /// are left out. Feeds the exact token counts that <c>testSize</c> prices.
+    /// </summary>
+    public static async Task<Dictionary<string, List<(string Path, string Text)>>> CollectFilesAsync(
+        Solution solution, IReadOnlyList<ClassifiedType> classified, CancellationToken ct)
+    {
+        var sectionByAssembly = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in classified)
+            if (c.Type.ContainingAssembly?.Name is { } assembly) sectionByAssembly[assembly] = c.Group;
+
+        var result = new Dictionary<string, List<(string, string)>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var project in solution.Projects)
+        {
+            if (!SolutionClassifier.IsTestProject(project)) continue;
+            if (Attribute(project, solution, sectionByAssembly) is not { } section) continue;
+            if (!result.TryGetValue(section, out var files)) result[section] = files = new List<(string, string)>();
+            foreach (var document in HandwrittenDocuments(project))
+                files.Add((document.FilePath!, (await document.GetTextAsync(ct)).ToString()));
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Test LOC as a percentage of production LOC. 0 when the section has no production LOC — the
     /// ratio is undefined there, and reporting a large number for "tests against nothing" would
     /// read as the opposite of what it is.
@@ -109,15 +133,9 @@ public static class TestMassAnalyzer
     private static async Task<(int Loc, int Files)> MeasureAsync(Project project, CancellationToken ct)
     {
         int loc = 0, files = 0;
-        foreach (var document in project.Documents)
+        foreach (var document in HandwrittenDocuments(project))
         {
             if (ct.IsCancellationRequested) break;
-            if (document.FilePath is null || GeneratedCode.IsGeneratedFile(document.FilePath)) continue;
-            // Build intermediates. This pass walks a project's documents rather than its symbols,
-            // so it sees what the SDK adds under obj/ — AssemblyInfo, InternalsVisibleTo shims —
-            // which is not test code anyone wrote and would otherwise be counted per project.
-            if (IsBuildIntermediate(document.FilePath)) continue;
-
             var text = await document.GetTextAsync(ct);
             files++;
             foreach (var line in text.Lines)
@@ -125,6 +143,13 @@ public static class TestMassAnalyzer
         }
         return (loc, files);
     }
+
+    private static IEnumerable<Document> HandwrittenDocuments(Project project) =>
+        // Build intermediates too. This walks a project's documents rather than its symbols, so it
+        // sees what the SDK adds under obj/ (AssemblyInfo, InternalsVisibleTo shims), which is not
+        // test code anyone wrote and would otherwise be counted per project.
+        project.Documents.Where(d => d.FilePath is not null
+            && !GeneratedCode.IsGeneratedFile(d.FilePath) && !IsBuildIntermediate(d.FilePath));
 
     private static bool IsBuildIntermediate(string path)
     {

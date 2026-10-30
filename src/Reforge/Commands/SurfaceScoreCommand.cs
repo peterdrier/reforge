@@ -71,7 +71,7 @@ public static class SurfaceScoreCommand
 
         var countTokensOption = new Option<bool>("--count-tokens")
         {
-            Description = "Count exact tokens per section (its whole handwritten files) and per class (its declaration spans across partials) with Anthropic's count_tokens API, using ANTHROPIC_API_KEY. Counts are net of a one-character baseline request and cached by content hash. Never scored."
+            Description = "Count exact tokens per section (its whole handwritten files, and its tests') and per class (its declaration spans across partials) with Anthropic's count_tokens API, using ANTHROPIC_API_KEY, and price them with sectionSize, classSize and testSize. Counts are net of a one-character baseline request and cached by content hash. Without counts the size rules are skipped."
         };
         var tokenCacheOption = new Option<string?>("--token-cache")
         {
@@ -124,8 +124,9 @@ public static class SurfaceScoreCommand
                 var config = SurfaceScoreConfig.LoadOrDefault(configPath, solutionDir, out var loadedFrom);
 
                 var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-                if (!countTokens) Console.Error.WriteLine("tokens: not counted (pass --count-tokens)");
-                else if (string.IsNullOrWhiteSpace(apiKey)) Console.Error.WriteLine("tokens: not counted, ANTHROPIC_API_KEY is not set");
+                const string skipped = "; sectionSize, classSize and testSize skipped";
+                if (!countTokens) Console.Error.WriteLine($"tokens: not counted (pass --count-tokens){skipped}");
+                else if (string.IsNullOrWhiteSpace(apiKey)) Console.Error.WriteLine($"tokens: not counted, ANTHROPIC_API_KEY is not set{skipped}");
                 using var counter = countTokens && !string.IsNullOrWhiteSpace(apiKey) ? new AnthropicTokenCounter(apiKey) : null;
                 var tokenCache = counter is null ? null : TokenCache.Load(tokenCachePath);
                 var measurer = counter is null ? null : new TokenMeasurer(counter, tokenCache!);
@@ -140,6 +141,8 @@ public static class SurfaceScoreCommand
                         Console.Error.WriteLine($"tokens: cache not saved to {tokenCachePath}: {ex.Message}");
                     }
                     Console.Error.WriteLine($"tokens: requests={measurer.Requests} cacheHits={measurer.CacheHits} failures={measurer.Failures} model={counter!.Model} cache={tokenCachePath}");
+                    foreach (var d in report.Diagnostics.Where(d => d.Code == "size-unpriced"))
+                        Console.Error.WriteLine($"tokens: {d.Message}");
                 }
                 report.ConfigPath = loadedFrom;
 
@@ -1046,11 +1049,13 @@ public static class SurfaceScoreCommand
     {
         total = t.Total,
         files = t.Files,
+        tests = t.Tests,
+        testFiles = t.TestFiles,
         classes = t.Classes.Take(top).Select(c => new { name = c.Name, file = c.File, line = c.Line, tokens = c.Tokens }).ToArray()
     };
 
     private static string TokensLine(SectionTokens t) =>
-        $"tokens: {(t.Total?.ToString() ?? "unmeasured")} in {t.Files} files; largest " +
+        $"tokens: {(t.Total?.ToString() ?? "unmeasured")} in {t.Files} files, tests {(t.Tests?.ToString() ?? "unmeasured")} in {t.TestFiles}; largest " +
         string.Join(", ", t.Classes.Take(3).Select(c => $"{c.Name} {(c.Tokens?.ToString() ?? "?")}"));
 
     private static object TestsJson(TestMass t) => new

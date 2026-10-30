@@ -69,6 +69,11 @@ public class GateOneFixtureTests
             // Same shape: the edit that stops them is narrowing the method to private.
             ["internalWiderThanUse"] = "its only fix narrows the method to private, so the total must fall",
             ["protectedWiderThanUse"] = "its only fix narrows the method to private, so the total must fall",
+            // Gate 1 scores without a token counter, so these never fire here. The scoring corpus
+            // prices them with a fake counter (tokensPerChar pairs) and SizePricingTests pins the curves.
+            ["sectionSize"] = "priced only on exact token counts, which Gate 1 does not take",
+            ["classSize"] = "priced only on exact token counts, which Gate 1 does not take",
+            ["testSize"] = "priced only on exact token counts, which Gate 1 does not take",
         };
 
     /// <summary>

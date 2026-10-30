@@ -151,7 +151,7 @@ public sealed class ScoreReport
             Diagnostics.Add(new ScoreDiagnostic("info", "coverage-missing-section",
                 $"Sections the coverage report says nothing about: {string.Join(", ", uncovered)}"));
     }
-    /// <summary>Exact token counts, present only under <c>--count-tokens</c>. Measurement, never scored.</summary>
+    /// <summary>Exact token counts, present only under <c>--count-tokens</c>; the size rules price them.</summary>
     public TokenCensus? Tokens { get; set; }
     /// <summary>
     /// Solution-level test-corpus rollup, including the mass of test projects no section claimed.
