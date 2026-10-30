@@ -47,7 +47,7 @@ internal static class ContentsPricing
     /// <c>f(n) = n + tax·max(0, n − threshold)^exponent</c>: linear up to the threshold, convex past
     /// it, never below <c>n</c>.
     /// </summary>
-    public static double Curve(int complexity, int threshold, int taxPercent, int exponent)
+    public static double Curve(int complexity, int threshold, int taxPercent, double exponent)
         => complexity <= 0 ? 0
             : complexity + taxPercent / 100.0 * Math.Pow(Math.Max(0, complexity - threshold), exponent);
 

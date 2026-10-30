@@ -2,7 +2,7 @@
 //
 // The three arrangements of the same 50 points of cognitive complexity, scored against each other.
 // This one is the monolith: five independent tallies in one method at complexity 50, far past the
-// threshold, so the tax on the excess dominates its charge.
+// threshold, so it pays the tax on all 40 points of excess, which outweighs five extra flat charges.
 
 namespace SampleSolution.Gate.Rules;
 

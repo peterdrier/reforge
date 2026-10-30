@@ -69,12 +69,13 @@ that switches a method between two behaviours.
 **Contents are a census.** Every declaration that carries code — method, constructor, computed
 property, delegate-valued field, local function — pays `methodCount` (5) flat, and its own
 cognitive complexity `cc` as `methodComplexity`, whatever its accessibility: `cc` itself up to
-`complexityThreshold` (10), plus `complexityTaxPercent` (5%) of the excess raised to
-`complexityTaxExponent` (2). Below the threshold logic costs the same wherever it sits and only the
+`complexityThreshold` (10), plus `complexityTaxPercent` (16%) of the excess raised to
+`complexityTaxExponent` (1.5). Below the threshold logic costs the same wherever it sits and only the
 flat charge moves, so tiny pieces get merged; above it the tax outgrows the flat charge, so huge
-methods get split. Fifty points of complexity score 135 as one method, 80 as five methods at 10 and
-155 as 25 one-liners. All five numbers are proposals: `surface-score --format json` carries a
-`contents` block (declarations by accessibility, complexity bands) to tune them against.
+methods get split, a two-way split paying from complexity 20. Fifty points of complexity score 95 as
+one method, 80 as five methods at 10 and 155 as 25 one-liners; a method at 156 costs 438. All five
+numbers are proposals: `surface-score --format json` carries a `contents` block (declarations by
+accessibility, complexity bands) to tune them against.
 
 **Exported methods are priced by what they do, not by what their type is called.** Every public
 method on an exported class or interface (outside the DTO, repository, controller and background-job

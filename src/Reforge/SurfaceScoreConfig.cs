@@ -83,16 +83,18 @@ public sealed class SurfaceScoreConfig
     /// also pays <see cref="ComplexityTaxPercent"/>% of the excess raised to
     /// <see cref="ComplexityTaxExponent"/>, so a method far past it is cheapest split into pieces near
     /// it. With the flat <c>methodCount</c> charge this sets the method size the score prefers: a
-    /// method is worth splitting once the tax on its excess exceeds the flat charge of another piece.
-    /// Proposals, to tune against a measured corpus.
+    /// method is worth splitting once the tax on its excess exceeds the flat charge of another piece,
+    /// which the defaults put at complexity 20 for a two-way split. An exponent above 1 keeps that
+    /// pressure growing with size; at 1.5 rather than 2 one very large method no longer outweighs a
+    /// whole section's surface. Proposals, to tune against a measured corpus.
     /// </summary>
     public int ComplexityThreshold { get; set; } = 10;
 
     /// <inheritdoc cref="ComplexityThreshold"/>
-    public int ComplexityTaxPercent { get; set; } = 5;
+    public int ComplexityTaxPercent { get; set; } = 16;
 
     /// <inheritdoc cref="ComplexityThreshold"/>
-    public int ComplexityTaxExponent { get; set; } = 2;
+    public double ComplexityTaxExponent { get; set; } = 1.5;
 
     /// <summary>
     /// Glob patterns matched against a dispatcher parameter's <i>type</i> name. These act
