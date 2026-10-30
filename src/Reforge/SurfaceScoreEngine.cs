@@ -26,6 +26,9 @@ public sealed partial class SurfaceScoreEngine
         _solutionDirectory = solutionDirectory;
     }
 
+    /// <summary>When set, the report carries exact token counts (see <see cref="TokenCensus"/>). Never scored.</summary>
+    public TokenMeasurer? Tokens { get; init; }
+
     public async Task<ScoreReport> ScoreAsync(Solution solution, CancellationToken ct, int maxBuildDiagnostics = 25)
     {
         var report = new ScoreReport();
@@ -183,6 +186,9 @@ public sealed partial class SurfaceScoreEngine
         if (unattributedTests.Count > 0)
             report.Diagnostics.Add(new ScoreDiagnostic("info", "unattributedTestProject",
                 $"Test projects whose references named no single section, counted in the solution rollup only: {string.Join(", ", unattributedTests)}."));
+
+        if (Tokens is not null)
+            report.Tokens = await TokenCensus.MeasureAsync(TokenCensus.Collect(classified, ct), Tokens, ct);
 
         // Build health: detect a degraded (unbuilt/erroring) compilation so a partial
         // score is never mistaken for a complete one. Reuses the per-project compilations

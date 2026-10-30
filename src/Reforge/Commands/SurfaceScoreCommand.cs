@@ -69,6 +69,15 @@ public static class SurfaceScoreCommand
             Description = "Coverage report to attribute to sections by assembly: Cobertura XML (Coverlet, ReportGenerator) or dotCover DetailedXML. Reported beside each section's size; never scored."
         };
 
+        var countTokensOption = new Option<bool>("--count-tokens")
+        {
+            Description = "Count exact tokens per section (its whole handwritten files) and per class (its declaration spans across partials) with Anthropic's count_tokens API, using ANTHROPIC_API_KEY. Counts are net of a one-character baseline request and cached by content hash. Never scored."
+        };
+        var tokenCacheOption = new Option<string?>("--token-cache")
+        {
+            Description = "Token cache file (default: <LocalApplicationData>/reforge/token-cache.json)."
+        };
+
         var command = new Command("surface-score",
             "Score a solution's durable surface, dependency use, and implementation shape (config-driven). Supports Compact, Markdown, and JSON output.")
         {
@@ -81,7 +90,9 @@ public static class SurfaceScoreCommand
             baselineOption,
             maxBuildDiagnosticsOption,
             allowDegradedOption,
-            coverageOption
+            coverageOption,
+            countTokensOption,
+            tokenCacheOption
         };
 
         command.SetAction(async (parseResult, ct) =>
@@ -99,6 +110,8 @@ public static class SurfaceScoreCommand
             var allowDegraded = parseResult.GetValue(allowDegradedOption);
             var coveragePath = parseResult.GetValue(coverageOption);
             var format = parseResult.GetValue(formatOption);
+            var countTokens = parseResult.GetValue(countTokensOption);
+            var tokenCachePath = parseResult.GetValue(tokenCacheOption) ?? TokenCache.DefaultPath;
 
             // --all is an alias for --top 0 (no cap). int.MaxValue is the sentinel for "show
             // everything" through the Take(top) calls downstream.
@@ -110,8 +123,24 @@ public static class SurfaceScoreCommand
                 var solutionDir = LocationHelper.GetSolutionDirectory(solution);
                 var config = SurfaceScoreConfig.LoadOrDefault(configPath, solutionDir, out var loadedFrom);
 
-                var engine = new SurfaceScoreEngine(config, solutionDir);
+                var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+                if (!countTokens) Console.Error.WriteLine("tokens: not counted (pass --count-tokens)");
+                else if (string.IsNullOrWhiteSpace(apiKey)) Console.Error.WriteLine("tokens: not counted, ANTHROPIC_API_KEY is not set");
+                using var counter = countTokens && !string.IsNullOrWhiteSpace(apiKey) ? new AnthropicTokenCounter(apiKey) : null;
+                var tokenCache = counter is null ? null : TokenCache.Load(tokenCachePath);
+                var measurer = counter is null ? null : new TokenMeasurer(counter, tokenCache!);
+
+                var engine = new SurfaceScoreEngine(config, solutionDir) { Tokens = measurer };
                 var report = await engine.ScoreAsync(solution, ct, maxBuildDiagnostics);
+                if (measurer is not null)
+                {
+                    try { tokenCache!.Save(); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        Console.Error.WriteLine($"tokens: cache not saved to {tokenCachePath}: {ex.Message}");
+                    }
+                    Console.Error.WriteLine($"tokens: requests={measurer.Requests} cacheHits={measurer.CacheHits} failures={measurer.Failures} model={counter!.Model} cache={tokenCachePath}");
+                }
                 report.ConfigPath = loadedFrom;
 
                 if (coveragePath is not null)
@@ -360,6 +389,7 @@ public static class SurfaceScoreCommand
             Console.WriteLine($"  {SurfaceLine(g.Surface)}");
             if (g.Tests.Files != 0) Console.WriteLine($"  {TestsLine(g.Tests)}");
             if (g.Coverage.HasData) Console.WriteLine($"  {CoverageLine(g.Coverage)}");
+            if (report.Tokens?.BySection.GetValueOrDefault(g.Name) is { } tokens) Console.WriteLine($"  {TokensLine(tokens)}");
 
             foreach (var kv in g.ByRule.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
                 Console.WriteLine($"  {kv.Key,-40} {kv.Value,5}");
@@ -646,6 +676,7 @@ public static class SurfaceScoreCommand
                 contents = ContentsJson(report.ContentsBySection.GetValueOrDefault(g.Name) ?? ContentsCensus.Empty),
                 coverage = CoverageJson(g.Coverage),
                 tests = TestsJson(g.Tests),
+                tokens = TokensJson(report.Tokens?.BySection.GetValueOrDefault(g.Name), effectiveTop),
                 byRule = g.ByRule
                     .OrderByDescending(kv => kv.Value)
                     .ThenBy(kv => kv.Key, StringComparer.Ordinal)
@@ -736,6 +767,11 @@ public static class SurfaceScoreCommand
                     || string.Equals(e.To, groupFilter, StringComparison.OrdinalIgnoreCase))
                 .Select(e => new { from = e.From, to = e.To, count = e.Count }),
             tests = TestsJson(ScopedTests(report, filteredGroups, groupFilter)),
+            tokens = report.Tokens is null ? null : groupFilter is null
+                ? new { total = report.Tokens.Total, files = report.Tokens.Files }
+                : report.Tokens.BySection.GetValueOrDefault(groupFilter) is { } scoped
+                    ? new { total = scoped.Total, files = scoped.Files }
+                    : null,
             coverage = CoverageJson(ScopedCoverage(report, filteredGroups, groupFilter)),
             coverageFormat = report.CoverageFormat,
             unattributedTestProjects = report.UnattributedTestProjects,
@@ -1005,6 +1041,18 @@ public static class SurfaceScoreCommand
     /// Test-corpus size of a scope, for the JSON report. Emitted for every group and once for the
     /// solution. Informational like <see cref="MetricsJson"/> — the test corpus is scored nowhere.
     /// </summary>
+    /// <summary>Null (omitted) unless tokens were counted. Classes largest first, capped by <c>--top</c>.</summary>
+    private static object? TokensJson(SectionTokens? t, int top) => t is null ? null : new
+    {
+        total = t.Total,
+        files = t.Files,
+        classes = t.Classes.Take(top).Select(c => new { name = c.Name, file = c.File, line = c.Line, tokens = c.Tokens }).ToArray()
+    };
+
+    private static string TokensLine(SectionTokens t) =>
+        $"tokens: {(t.Total?.ToString() ?? "unmeasured")} in {t.Files} files; largest " +
+        string.Join(", ", t.Classes.Take(3).Select(c => $"{c.Name} {(c.Tokens?.ToString() ?? "?")}"));
+
     private static object TestsJson(TestMass t) => new
     {
         loc = t.Loc,

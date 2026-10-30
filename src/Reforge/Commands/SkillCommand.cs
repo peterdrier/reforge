@@ -121,6 +121,12 @@ public static class SkillCommand
         or no key when unmeasured; `coverageFormat` says which reader ran. Test assemblies in the
         report are listed in a diagnostic and left out. Informational; never scored.
 
+        **Exact token counts are opt in.** `--count-tokens` (needs `ANTHROPIC_API_KEY`) adds
+        `tokens: { total, files, classes }` per group: a section is its whole handwritten files, a
+        class its spans across partials, measured by Anthropic's `count_tokens` net of a baseline
+        request and cached by content hash (`--token-cache`). Absent without the flag or key; null
+        where a request failed. Never estimated; never scored.
+
         **Test mass is reported per section, and scored nowhere.** A `tests` block per group (plus a
         solution rollup) carries `loc`, `files`, `projects`, and `locVsProdPercent` — test LOC as a
         percentage of the section's production LOC, which is the figure that compares two sections

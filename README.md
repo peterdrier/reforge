@@ -222,6 +222,20 @@ the solution (test projects) are listed in an `info` diagnostic and left out of 
 are sections the report never mentions. Line counts agree with Coverlet's own `lines-covered` /
 `lines-valid`. Informational: nothing here feeds a score.
 
+**Exact token counts, opt in.** `surface-score --count-tokens` measures each section (the sum of its
+whole handwritten files, the set `metrics.files` counts) and each class (its declaration spans across
+every partial file, doc comments included) with Anthropic's `count_tokens` API, using
+`ANTHROPIC_API_KEY`. Without the flag or the key nothing is estimated: the `tokens` fields are absent
+and stderr says why. Each count is the request's `input_tokens` less that of a one-character baseline
+message, counted once, so file counts add up. Counts are cached by SHA-256 of model and text in
+`<LocalApplicationData>/reforge/token-cache.json` (`--token-cache` overrides), so a rerun pays only
+for changed text. Requests run four at a time and honour `retry-after` on 429; a failure warns on
+stderr and leaves that total null. Measurement only: no weight reads it.
+
+```powershell
+$env:ANTHROPIC_API_KEY = "..."; reforge surface-score --count-tokens --format json > tokens.json
+```
+
 `reforge section-shape` renders the same sections as a report (interfaces, DTO anchors,
 cross-section use, charged read methods, advisories).
 
