@@ -63,6 +63,9 @@ public class GateOneFixtureTests
             // internal, which withdraws the surface and lowers the total. A pair would either
             // record that honest improvement as gameable or fail the no-drop assertion.
             ["exportedUnusedExternally"] = "its only fix withdraws surface, so the total must fall; the pair would be a false gameable finding",
+            // Same shape: the edit that stops them is narrowing the method to private.
+            ["internalWiderThanUse"] = "its only fix narrows the method to private, so the total must fall",
+            ["protectedWiderThanUse"] = "its only fix narrows the method to private, so the total must fall",
         };
 
     /// <summary>

@@ -44,6 +44,8 @@ public static class SurfaceScoreRuleGlossary
 
         // Signature shape
         ["methodParameterOverflow"] = "A public method has more than two parameters; points scale per parameter beyond two.",
+        ["internalWiderThanUse"] = "A method visible to its whole assembly (internal, or public on a type the assembly does not export) that nothing outside its own type names; it could be private. Overridden members, overrides, interface implementations and attributed methods are exempt.",
+        ["protectedWiderThanUse"] = "A protected method that no derived type names or overrides; it could be private. Cheaper than internalWiderThanUse, which is cheaper than public surface.",
         ["booleanParameter"] = "A public method has a boolean parameter (often a control flag that splits the method into hidden branches).",
         ["tupleReturn"] = "A public method's return type is a value tuple.",
         ["optionsBag"] = "A public method takes a single parameter whose type aggregates many public properties (heuristic: name ends in 'Options' with 4+ props, or any type with 6+ public props).",

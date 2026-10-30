@@ -271,6 +271,10 @@ public sealed class SurfaceScoreConfig
                 ["exportedReadMethod"] = 4,
                 ["exportedWriteMethod"] = 12,
                 ["exportedUnusedExternally"] = 2,
+                // A method wider than private that nothing outside its type names: cheaper than
+                // public surface, dearer than private, so widening a helper never pays.
+                ["internalWiderThanUse"] = 2,
+                ["protectedWiderThanUse"] = 1,
                 ["repositoryInterfaceMethod"] = 10,
                 ["repositoryImplementationMethod"] = 10,
                 ["newRepositoryInterface"] = 15,
