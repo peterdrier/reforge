@@ -38,24 +38,30 @@ public static class SurfaceScoreRuleGlossary
         // Dependency use
         ["sameSectionReadService"] = "A constructor dependency on a read-service interface in the same section.",
         ["crossSectionReadInterface"] = "A constructor dependency on a read-service interface owned by a different section.",
-        ["crossSectionFullService"] = "A constructor dependency on a full-service interface (or concrete service) owned by a different section.",
+        ["crossSectionConcreteService"] = "A class depends, through its constructor, on a concrete service class from another section rather than on an interface it publishes. Dearer than crossSectionFullService: the consumer binds the whole implementation.",
+        ["crossSectionFullService"] = "A constructor dependency on a full-service interface owned by a different section.",
         ["crossSectionRepository"] = "A constructor dependency on a repository interface or implementation owned by a different section.",
         ["writeCapableInterfaceUsedReadOnly"] = "A class injects a full-service interface that is paired (by inheritance or by a same-namespace 'Read'-suffixed sibling) with a read-only interface, and every observed invocation on the injected dependency targets a method that also exists on the read interface.",
 
         // Signature shape
         ["methodParameterOverflow"] = "A public method has more than two parameters; points scale per parameter beyond two.",
+        ["internalWiderThanUse"] = "A method visible to its whole assembly (internal, or public on a type the assembly does not export) that nothing outside its own type names; it could be private. Overridden members, overrides, interface implementations and attributed methods are exempt.",
+        ["protectedWiderThanUse"] = "A protected method that no derived type names or overrides; it could be private. Cheaper than internalWiderThanUse, which is cheaper than public surface.",
         ["booleanParameter"] = "A public method has a boolean parameter (often a control flag that splits the method into hidden branches).",
         ["tupleReturn"] = "A public method's return type is a value tuple.",
         ["optionsBag"] = "A public method takes a single parameter whose type aggregates many public properties (heuristic: name ends in 'Options' with 4+ props, or any type with 6+ public props).",
         ["oneImplementationInterface"] = "A classified interface has exactly one classified class implementing it.",
 
         // Implementation-shape axis
-        ["largeClass"] = "A service/repository/controller class's nonblank line count exceeds 750; points scale with size (steeper past 1500 lines).",
+        ["largeClass"] = "A service/repository/controller class's nonblank line count exceeds 750; points scale with size (steeper past 1500 lines). Skipped for a class whose tokens were counted, where classSize charges instead.",
         ["methodComplexity"] = "Every declaration that carries code (method, constructor, operator, computed property or accessor, delegate-valued field), whatever its accessibility, is charged for its own SonarSource cognitive complexity: linearly up to a threshold (default 10), plus a tax on the excess that grows faster than it, so a method far past the threshold costs more than the same branching held in several methods near it.",
         ["methodCount"] = "A flat charge per declaration that carries code, local functions included, whatever its accessibility; reported once per type. Below the complexity threshold it is the only charge that depends on how many declarations hold the logic.",
-        ["actionDispatcher"] = "A method, read or write, dispatches on a parameter via a switch or if-chain whose arms route to different members with disjoint bodies (low arm cohesion); flagged on both the implementation and any interface method it implements. Surcharges apply when the selector is an action/mode enum, when the name is a generic verb (Apply/Handle/Process/Execute/Create/Save) that hides which operation runs, and when the declaring type is an application service. Arms sharing a base body and state-machine entry points (transition validation/vocabulary) are exempt. A read fires only when two or more arms each call a solution method no other arm calls.",
+        ["actionDispatcher"] = "A method, read or write, branches on a selector parameter (an enum, a bool, or one named or typed like a mode) with a switch or if-chain whose arms are operations of their own: each calls a solution method no other arm calls, touches state of the type no other arm touches, or writes state. Arms are judged by what they do, inline or delegated alike. Each arm past the first pays the surface price of the method it replaces, each inline arm pays the flat charge its own method would (less the nesting it carries only for sitting in the branch), plus a surcharge of 20, more for an action/mode enum, a generic verb (Apply/Handle/Process/Execute/Create/Save) and an application service. Arms that only project shared work, and state-machine entry points, are exempt. Flagged on both the implementation and any interface method it implements.",
         ["mutationModeParameter"] = "A public mutation method takes an action/mode enum parameter that selects behavior, even when the body is small and does not delegate; the parameter folds multiple distinct operations behind one signature.",
-        ["flagsControlFlow"] = "A method that mutates state branches on a [Flags] enum parameter via HasFlag or bitwise tests; read methods are exempt."
+        ["flagsControlFlow"] = "A method that mutates state branches on a [Flags] enum parameter via HasFlag or bitwise tests; read methods are exempt.",
+        ["sectionSize"] = "A section's production and contracts files, summed whole, exceed a free allowance of exact tokens (default 50k): points per thousand tokens above it, plus a tax that grows faster than linear past a second threshold (default 100k). Charged only when tokens were counted.",
+        ["classSize"] = "A class's declarations, summed across every partial file, exceed a free allowance of exact tokens (default 8k): points per thousand tokens above it, plus a tax that grows faster than linear past a second threshold (default 25k). Charged only when tokens were counted.",
+        ["testSize"] = "A section's test files hold more exact tokens than a share (default 100%) of its production and contracts tokens: points per thousand tokens of the excess, linear. Charged only when tokens were counted."
     };
 
     /// <summary>

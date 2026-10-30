@@ -62,8 +62,10 @@ public class EffectiveAccessibilityTests
         // exportedReadMethod / methodParameterOverflow / booleanParameter all charge for the
         // shape of a signature nobody outside the assembly can call. (crossSectionFullService on
         // the same class is a use, not a declaration — asserted separately below.)
-        // The contents census charges internal code too, by design, so it is left out here.
-        var surface = reporting.Entries.Where(e => !SurfaceScoreRuleGroups.IsImplementationShape(e.Rule)).ToList();
+        // The contents census charges internal code too, by design, so it is left out here, and so
+        // are the *WiderThanUse rules, which price visibility an internal declaration does not need.
+        var surface = reporting.Entries.Where(e => !SurfaceScoreRuleGroups.IsImplementationShape(e.Rule)
+            && !e.Rule.EndsWith("WiderThanUse", StringComparison.Ordinal)).ToList();
         Assert.DoesNotContain(surface,
             e => e.Symbol == "InternalReportService" && e.Rule != "crossSectionFullService");
         Assert.DoesNotContain(surface, e => e.Symbol == "RenderAsync");

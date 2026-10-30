@@ -61,19 +61,20 @@ it, so nothing outside can break when it changes. (`protected` doesn't count as 
 shape its implementation actually has.
 
 The axis is named for what it measures, not for an accessibility level. `implementationShape` has no
-`internal` gate: it is a fixed set of rules — `methodComplexity`, `methodCount`, `largeClass`,
-`actionDispatcher`, `mutationModeParameter`, `flagsControlFlow` — and public code scores on it too.
+`internal` gate: it is a fixed set of rules (`methodComplexity`, `methodCount`, `largeClass`,
+`actionDispatcher`, `mutationModeParameter`, `flagsControlFlow`, and with token counts `sectionSize`,
+`classSize`, `testSize`), and public code scores on it too.
 Its rules charge for shapes an edit can genuinely improve: a class carrying too much, a parameter
 that switches a method between two behaviours.
 
-**Contents are a census.** Every declaration that carries code — method, constructor, computed
-property, delegate-valued field, local function — pays `methodCount` (5) flat, and its own
+**Contents are a census.** Every declaration that carries code (method, constructor, computed
+property, delegate-valued field, local function) pays `methodCount` (3) flat, and its own
 cognitive complexity `cc` as `methodComplexity`, whatever its accessibility: `cc` itself up to
 `complexityThreshold` (10), plus `complexityTaxPercent` (16%) of the excess raised to
 `complexityTaxExponent` (1.5). Below the threshold logic costs the same wherever it sits and only the
 flat charge moves, so tiny pieces get merged; above it the tax outgrows the flat charge, so huge
-methods get split, a two-way split paying from complexity 20. Fifty points of complexity score 95 as
-one method, 80 as five methods at 10 and 155 as 25 one-liners; a method at 156 costs 438. All five
+methods get split, a two-way split paying from complexity 18. Fifty points of complexity score 93 as
+one method, 65 as five methods at 10 and 125 as 25 one-liners; a method at 156 costs 441. All five
 numbers are proposals: `surface-score --format json` carries a `contents` block (declarations by
 accessibility, complexity bands, callers, reach and depth) to tune them against. A declaration with
 two or more callers skips the flat charge: merging reused code away means a copy per caller.
@@ -221,6 +222,38 @@ the report says nothing about the section, so unmeasured and 0% stay distinguish
 the solution (test projects) are listed in an `info` diagnostic and left out of every column, and so
 are sections the report never mentions. Line counts agree with Coverlet's own `lines-covered` /
 `lines-valid`. Informational: nothing here feeds a score.
+
+**Exact token counts, opt in.** `surface-score --count-tokens` measures each section (the sum of its
+whole handwritten files, the set `metrics.files` counts, plus the same for its attributed test files)
+and each top-level class (its declaration spans across every partial file, doc comments and nested
+types included) with Anthropic's `count_tokens` API, using `ANTHROPIC_API_KEY`. Without the flag or
+the key nothing is estimated: the `tokens` fields are absent, the size rules are skipped, and stderr
+says so. Each count is the request's `input_tokens` less that of a one-character baseline
+message, counted once, so file counts add up. Counts are cached by SHA-256 of model and text in
+`<LocalApplicationData>/reforge/token-cache.json` (`--token-cache` overrides), so a rerun pays only
+for changed text. Requests run four at a time and honour `retry-after` on 429; a failure warns on
+stderr and leaves that total null and unpriced.
+
+**Size is priced in those tokens, and only in them** (implementation-shape axis; k is thousands of
+tokens). Never LOC or characters as a stand-in.
+
+| rule | measures | free up to | linear | tax above |
+|---|---|--:|--:|---|
+| `sectionSize` | production and contracts files, whole | 50k | 2 per k | 50% x (k - 100)^1.5 |
+| `classSize` | a top-level class, all partials summed | 8k | 5 per k | 500% x (k - 25)^1.5 |
+| `testSize` | the section's test files | 100% of the section's tokens | 1 per k | none |
+
+The rates are the weights; the thresholds and taxes are `sectionSizeFreeTokens`,
+`sectionSizeTaxTokens`, `sectionSizeTaxPercent`, `classSizeFreeTokens`, `classSizeTaxTokens`,
+`classSizeTaxPercent`, `sizeTaxExponent` and `testSizeFreePercent`. Whole files make the section
+charge blind to partials and sibling types; only moving code to another section lowers it. Splitting
+a class into siblings lowers the class charge, since each piece then fits one read. A class with a
+token count skips `largeClass`, since `classSize` prices the same thing exactly; one without (no
+counts, or a failed request) keeps it. On Humans the three add about 18% to the total.
+
+```powershell
+$env:ANTHROPIC_API_KEY = "..."; reforge surface-score --count-tokens --format json > tokens.json
+```
 
 `reforge section-shape` renders the same sections as a report (interfaces, DTO anchors,
 cross-section use, charged read methods, advisories).

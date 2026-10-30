@@ -26,6 +26,12 @@ public sealed partial class SurfaceScoreEngine
         _solutionDirectory = solutionDirectory;
     }
 
+    /// <summary>
+    /// When set, the report carries exact token counts (see <see cref="TokenCensus"/>) and the size
+    /// rules price them. When null, <c>sectionSize</c>, <c>classSize</c> and <c>testSize</c> are skipped.
+    /// </summary>
+    public TokenMeasurer? Tokens { get; init; }
+
     public async Task<ScoreReport> ScoreAsync(Solution solution, CancellationToken ct, int maxBuildDiagnostics = 25)
     {
         var report = new ScoreReport();
@@ -126,20 +132,32 @@ public sealed partial class SurfaceScoreEngine
 
         // Cross-cutting: duplicate DbSet owners (resource ownership), one-implementation interfaces.
         ScoreDuplicateDbSetOwners(classified, solution, report, ct);
-        ScoreOneImplementationInterfaces(classified, report);
+        ScoreOneImplementationInterfaces(classified, report, behaviour);
 
         // Pass 5 — implementation shape (separate scalar), the counterweight to surface: the
         // contents census, class size, and structural action-dispatcher detection. The call-path
         // fold is solution-wide and only names, in a census entry's detail, what a method reaches
         // through helpers that only it calls.
+        // Token counts are taken before Pass 5 so largeClass can stand down for each class they
+        // price; Pass 7 below charges them.
+        if (Tokens is not null)
+        {
+            var testFiles = await TestMassAnalyzer.CollectFilesAsync(solution, classified, ct);
+            report.Tokens = await TokenCensus.MeasureAsync(TokenCensus.Collect(classified, ct), Tokens, ct, testFiles);
+        }
+
         var fold = await CallPathComplexity.BuildAsync(solution, analyzedAssemblies, ct);
         await ScoreContentsAsync(solution, classified, report, analyzedAssemblies, fold, ct);
-        await ScoreImplementationComplexityAsync(classified, report, solution, ct, analyzedAssemblies);
+        await ScoreImplementationComplexityAsync(classified, report, solution, ct, analyzedAssemblies, behaviour);
 
         // Pass 6 — boundary-input surface. Charges for parameter/command objects that hide a
         // long argument list (so a parameter-object refactor can't game methodParameterOverflow).
         ScoreBoundaryInputs(classified, typesByDisplay, report, ct);
         await ScoreInlineParameterObjectConstructionAsync(typesByDisplay, solution, report, ct);
+
+        // Pass 7: size in exact tokens, only when a counter was supplied. Without one the size
+        // rules are skipped: they price measured tokens or nothing.
+        if (report.Tokens is not null) ScoreSize(report.Tokens, report);
 
         // Section-architecture advisories + conservation anchors.
         EmitSectionAdvisories(architecture, report);

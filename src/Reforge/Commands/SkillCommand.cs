@@ -121,6 +121,14 @@ public static class SkillCommand
         or no key when unmeasured; `coverageFormat` says which reader ran. Test assemblies in the
         report are listed in a diagnostic and left out. Informational; never scored.
 
+        **Exact token counts are opt in, and size is priced only on them.** `--count-tokens` (needs
+        `ANTHROPIC_API_KEY`) adds `tokens: { total, files, tests, testFiles, classes }` per group: a
+        section is its whole handwritten files, a class its spans across partials, measured by
+        Anthropic's `count_tokens` net of a baseline request and cached by content hash
+        (`--token-cache`). The counts drive `sectionSize`, `classSize` and `testSize`. Without the
+        flag or key the fields are absent and those rules are skipped; a failed request leaves its
+        total null and unpriced. Never estimated.
+
         **Test mass is reported per section, and scored nowhere.** A `tests` block per group (plus a
         solution rollup) carries `loc`, `files`, `projects`, and `locVsProdPercent` — test LOC as a
         percentage of the section's production LOC, which is the figure that compares two sections
@@ -188,21 +196,23 @@ public static class SkillCommand
           // Durable surface:
           //   dtoScalarProperty (1), dtoCollectionProperty (2), dtoNestedProperty (3),
           //   publicDtoType (5), exportedReadMethod (4), exportedWriteMethod (12),
-          //   exportedUnusedExternally (2), repositoryInterfaceMethod (10),
+          //   exportedUnusedExternally (2), internalWiderThanUse (2), protectedWiderThanUse (1),
+          //   repositoryInterfaceMethod (10),
           //   repositoryImplementationMethod (10), newRepositoryInterface (15),
           //   newRepositoryImplementation (15), controllerAction (8),
           //   backgroundJob (12), duplicateDbSetOwner (20)
           //
           // Dependency use (constructor injection across sections):
-          //   sameSectionReadService (0), crossSectionReadInterface (2),
-          //   crossSectionFullService (8), crossSectionRepository (25),
-          //   writeCapableInterfaceUsedReadOnly (12, full-service interface paired with a read
+          //   sameSectionReadService (0), crossSectionReadInterface (6),
+          //   crossSectionFullService (24), crossSectionConcreteService (36),
+          //   crossSectionRepository (75),
+          //   writeCapableInterfaceUsedReadOnly (36, full-service interface paired with a read
           //     interface — via inheritance or "{Full}Read" sibling — where every observed call
           //     on the injected dep also exists on the read interface)
           //
           // Signature shape (per method):
           //   methodParameterOverflow (1, per param beyond 2), booleanParameter (3),
-          //   tupleReturn (4), optionsBag (8), oneImplementationInterface (8)
+          //   tupleReturn (4), optionsBag (8), oneImplementationInterface (24)
           "weights": {
             "crossSectionRepository": 25,
             "duplicateDbSetOwner": 20,

@@ -22,6 +22,8 @@ public sealed partial class SurfaceScoreEngine
     {
         var complexityW = _config.Weight("methodComplexity");
         var countW = _config.Weight("methodCount");
+        var internalW = _config.Weight("internalWiderThanUse");
+        var protectedW = _config.Weight("protectedWiderThanUse");
 
         var contents = classified
             .SelectMany(owner => WithPrivateNested(owner.Type).Select(t =>
@@ -41,6 +43,14 @@ public sealed partial class SurfaceScoreEngine
                 var reach = new ContentsReach(graph.Depth(u.Symbol), graph.Callers(u.Symbol), graph.Reach(u.Symbol));
                 section.Add(u, reach);
                 report.Contents.Add(u, reach);
+
+                if (WiderThanUse(u.Symbol, graph) is { } wider)
+                {
+                    var (vFile, vLine) = LocateMember(u.Location, c);
+                    AddEntry(report, c.Group, wider == Accessibility.Internal ? "internalWiderThanUse" : "protectedWiderThanUse",
+                        wider == Accessibility.Internal ? internalW : protectedW, u.Symbol, vFile, vLine,
+                        $"{u.Symbol.Name}: {(wider == Accessibility.Internal ? "internal" : "protected")}, but nothing outside {u.Symbol.ContainingType.Name} names it");
+                }
 
                 int own = u.Cognitive.Score;
                 if (complexityW == 0 || own == 0) continue;
@@ -65,6 +75,36 @@ public sealed partial class SurfaceScoreEngine
                 AddEntry(report, c.Group, "methodCount", declarations * countW, c.Type, file, line, detail);
             }
         }
+    }
+
+    /// <summary>
+    /// The visibility a method has beyond private when nothing needs it: <see cref="Accessibility.Internal"/>
+    /// for a member effectively visible to its assembly (internal, or public on a type the assembly
+    /// does not export), <see cref="Accessibility.Protected"/> for one visible to derived types, and
+    /// null when it is private, priced as public surface, or used from outside its type. Widening a
+    /// helper is never free: public pays as surface, and these pay less, in that order. Members that
+    /// are overridden, override, implement an interface or carry an attribute are left alone, since
+    /// their visibility is set by something other than their callers.
+    /// </summary>
+    private static Accessibility? WiderThanUse(ISymbol symbol, ContentsGraph graph)
+    {
+        if (symbol is not IMethodSymbol { MethodKind: MethodKind.Ordinary } m) return null;
+        if (m.IsOverride || m.IsExtern || m.GetAttributes().Length > 0 || graph.IsOverridden(m)) return null;
+        if (m.ExplicitInterfaceImplementations.Length > 0) return null;
+        for (var t = m.ContainingType; t is not null; t = t.ContainingType)
+            if (t.DeclaredAccessibility == Accessibility.Private) return null;
+        var level = m.DeclaredAccessibility switch
+        {
+            Accessibility.Public when !SurfaceVisibility.IsExported(m.ContainingType) => Accessibility.Internal,
+            Accessibility.Internal or Accessibility.ProtectedOrInternal => Accessibility.Internal,
+            Accessibility.Protected or Accessibility.ProtectedAndInternal => Accessibility.Protected,
+            _ => (Accessibility?)null
+        };
+        if (level is null || graph.UsedOutsideType(m)) return null;
+        if (m.ContainingType.AllInterfaces.SelectMany(i => i.GetMembers())
+            .Any(im => SymbolEqualityComparer.Default.Equals(m.ContainingType.FindImplementationForInterfaceMember(im), m)))
+            return null;
+        return level;
     }
 
     /// <summary>

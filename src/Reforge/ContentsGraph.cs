@@ -23,14 +23,29 @@ internal sealed class ContentsGraph
 
     private readonly Dictionary<string, HashSet<string>> _callers;
     private readonly Dictionary<string, int> _depth;
+    private readonly HashSet<string> _usedOutsideType;
+    private readonly HashSet<string> _overridden;
 
-    private ContentsGraph(Dictionary<string, HashSet<string>> callers, Dictionary<string, int> depth)
+    private ContentsGraph(Dictionary<string, HashSet<string>> callers, Dictionary<string, int> depth,
+        HashSet<string> usedOutsideType, HashSet<string> overridden)
     {
         _callers = callers;
         _depth = depth;
+        _usedOutsideType = usedOutsideType;
+        _overridden = overridden;
     }
 
-    public static ContentsGraph Empty { get; } = new(new(StringComparer.Ordinal), new(StringComparer.Ordinal));
+    public static ContentsGraph Empty { get; } = new(new(StringComparer.Ordinal), new(StringComparer.Ordinal),
+        new(StringComparer.Ordinal), new(StringComparer.Ordinal));
+
+    /// <summary>Whether a corpus declaration overrides this member.</summary>
+    public bool IsOverridden(ISymbol s) => _overridden.Contains(Key(s));
+
+    /// <summary>
+    /// Whether code outside the declaration's own type (and the types nested in it) names it directly:
+    /// the one use that needs more than private visibility.
+    /// </summary>
+    public bool UsedOutsideType(ISymbol s) => _usedOutsideType.Contains(Key(s));
 
     /// <summary>Members that reference the declaration directly.</summary>
     public int Callers(ISymbol s) => _callers.TryGetValue(Key(s), out var c) ? c.Count : 0;
@@ -69,8 +84,10 @@ internal sealed class ContentsGraph
         var names = new HashSet<string>(StringComparer.Ordinal);
         var dispatch = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var types = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+        var overridden = new HashSet<string>(StringComparer.Ordinal);
         foreach (var u in units)
         {
+            if (Overridden(u.Symbol) is { } baseMember) overridden.Add(Key(baseMember));
             nodes.Add(Key(u.Symbol));
             names.Add(u.Symbol is IMethodSymbol { MethodKind: MethodKind.Constructor } ? u.Symbol.ContainingType.Name : u.Symbol.Name);
             types.Add(u.Symbol.ContainingType);
@@ -88,6 +105,7 @@ internal sealed class ContentsGraph
         var filter = new NameFilter(names);
         var callers = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var callees = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var usedOutsideType = new HashSet<string>(StringComparer.Ordinal);
         foreach (var project in solution.Projects)
         {
             ct.ThrowIfCancellationRequested();
@@ -103,10 +121,16 @@ internal sealed class ContentsGraph
                     string? from = null;
                     foreach (var referenced in Referenced(node, model, filter, ct))
                     {
+                        if (IsDiscardedPureCall(node, referenced, model, ct)) continue;
                         from ??= Enclosing(node, model, ct);
                         if (from is null) break;
                         var to = Key(referenced);
-                        if (nodes.Contains(to)) Link(callers, callees, from, to);
+                        if (nodes.Contains(to))
+                        {
+                            Link(callers, callees, from, to);
+                            if (!usedOutsideType.Contains(to) && !InsideOwnType(node, referenced, model, ct))
+                                usedOutsideType.Add(to);
+                        }
                         // base.M() is bound statically to the base declaration, not dispatched.
                         if (!IsBaseAccess(node) && dispatch.TryGetValue(to, out var impls))
                             foreach (var impl in impls) Link(callers, callees, from, impl);
@@ -115,7 +139,7 @@ internal sealed class ContentsGraph
             }
         }
 
-        return new ContentsGraph(callers, Depths(nodes, callers, callees));
+        return new ContentsGraph(callers, Depths(nodes, callers, callees), usedOutsideType, overridden);
     }
 
     /// <summary>
@@ -213,6 +237,44 @@ internal sealed class ContentsGraph
         if (filter.Conversions && node is ExpressionSyntax expr
             && model.GetConversion(expr, ct) is { IsUserDefined: true, MethodSymbol: { } conversion })
             yield return conversion;
+    }
+
+    /// <summary>
+    /// A call whose value is thrown away (a bare statement or <c>_ = ...</c>) to a method that only
+    /// computes that value. It does nothing, so it reaches nothing: without this, one dead call buys
+    /// a helper the reuse waiver. A discarded call is kept when the method is a write, returns its
+    /// own receiver (fluent), or has a statement, assignment or increment that could act on
+    /// anything, since then it may be made for what it does rather than what it returns.
+    /// </summary>
+    private static bool IsDiscardedPureCall(SyntaxNode node, ISymbol referenced, SemanticModel model, CancellationToken ct)
+    {
+        if (referenced is not IMethodSymbol m || node is not SimpleNameSyntax) return false;
+        SyntaxNode callee = node.Parent is MemberAccessExpressionSyntax ma && ma.Name == node ? ma : node;
+        if (callee.Parent is not InvocationExpressionSyntax inv || inv.Expression != callee) return false;
+        bool discarded = inv.Parent switch
+        {
+            ExpressionStatementSyntax => true,
+            AssignmentExpressionSyntax { Left: var left } a when a.Right == inv
+                => model.GetSymbolInfo(left, ct).Symbol is IDiscardSymbol,
+            _ => false
+        };
+        if (!discarded) return false;
+        var receiver = m.IsExtensionMethod && m.Parameters.Length > 0 ? m.Parameters[0].Type : m.ContainingType;
+        if (SymbolEqualityComparer.Default.Equals(m.ReturnType.OriginalDefinition, receiver.OriginalDefinition)) return false;
+        var syntax = m.DeclaringSyntaxReferences.Select(r => r.GetSyntax(ct)).OfType<BaseMethodDeclarationSyntax>().FirstOrDefault();
+        if (syntax is null || ImplementationComplexity.IsMutation(m, syntax)) return false;
+        return !syntax.DescendantNodes().Any(n => n is ExpressionStatementSyntax or AssignmentExpressionSyntax
+            || n.IsKind(SyntaxKind.PreIncrementExpression) || n.IsKind(SyntaxKind.PreDecrementExpression)
+            || n is PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.PostIncrementExpression or (int)SyntaxKind.PostDecrementExpression });
+    }
+
+    private static bool InsideOwnType(SyntaxNode node, ISymbol referenced, SemanticModel model, CancellationToken ct)
+    {
+        var owner = Key(referenced.ContainingType);
+        var enclosing = model.GetEnclosingSymbol(node.SpanStart, ct);
+        for (var t = enclosing as INamedTypeSymbol ?? enclosing?.ContainingType; t is not null; t = t.ContainingType)
+            if (Key(t) == owner) return true;
+        return false;
     }
 
     private static bool IsBaseAccess(SyntaxNode node)

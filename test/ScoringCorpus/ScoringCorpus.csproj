@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Before/after pairs for the scoring review, labelled in manifest.json and scored pair by pair by
+    test/Reforge.Tests/ScoringCorpusTests.cs. Every variant has its own namespace, so the whole
+    corpus also builds as one library. Not in Reforge.slnx: it is fixture code, not Reforge's own.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

@@ -87,7 +87,8 @@ public sealed partial class SurfaceScoreEngine
         return owners;
     }
 
-    private void ScoreOneImplementationInterfaces(List<ClassifiedType> classified, ScoreReport report)
+    private void ScoreOneImplementationInterfaces(List<ClassifiedType> classified, ScoreReport report,
+        MethodBehaviourMap behaviour)
     {
         var weight = _config.Weight("oneImplementationInterface");
         if (weight == 0) return;
@@ -102,6 +103,9 @@ public sealed partial class SurfaceScoreEngine
             // An internal interface with one implementation is an implementation choice, not a
             // published abstraction nobody varies.
             if (!iface.IsExported) continue;
+            // An interface another assembly binds to is the section's door, which is what an
+            // exported interface is for: one implementation behind it is the intended shape.
+            if (behaviour.IsUsedExternally(iface.Type)) continue;
 
             int implCount = 0;
             ClassifiedType? singleImpl = null;

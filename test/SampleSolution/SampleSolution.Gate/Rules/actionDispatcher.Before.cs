@@ -1,21 +1,12 @@
 // gate1: actionDispatcher
-// gate1-gameable: the three delegated members are deleted and their bodies pasted into the switch
-// arms. Nothing routes to a distinct member any more, so the structural rule stops; the fold it
-// objected to is untouched and three named units with their own signatures are gone. 62 -> 36.
+// gate1-gameable: the action enum becomes `string action`. Same three operations behind the same
+// door, but no parameter reads as a selector any more, so the rule stops and nothing else charges.
 //
-// The interesting part is where the 26 points go. The cheapest fix does not escape scoring — it
-// lands on mutationModeParameter, which charges 25 where actionDispatcher charged 41. So the
-// backstop fires and still pays for the edit, because the rule for the *less* visible fold is
-// cheaper than the rule for the more visible one.
-//
-// That ordering is backwards. Between two methods that hide the same three operations behind one
-// enum, the one that delegates to `Open`/`Fill`/`Cancel` is the better of the two: the operations
-// still have names, still have signatures, and can still be called directly by anything that knows
-// which one it wants. Reforge prices it 41 and prices the inlined version 25, so an agent reading
-// the score is told to inline.
-//
-// Closing this needs the two rules re-based against each other rather than a bigger number on
-// either: while a structural dispatcher outprices an inline one, deleting the structure pays.
+// Pasting the three delegated bodies into the arms is no longer a way out: arms are judged by what
+// they do, and an inline arm pays the flat charge its own method would, so the inlined dispatcher
+// scores exactly what this one does. What is left is the selector's type. The rule recognises a
+// selector by being an enum, a bool, or named like a mode, and a string carries the identical
+// choice while matching none of those. A rule for stringly-typed selectors would close it.
 //
 // A structural dispatcher: one public mutation switches on an action enum and routes each arm to a
 // distinct private member. Three separate operations, one door, and the door's name (Apply) says

@@ -84,7 +84,7 @@ public sealed class SurfaceScoreConfig
     /// <see cref="ComplexityTaxExponent"/>, so a method far past it is cheapest split into pieces near
     /// it. With the flat <c>methodCount</c> charge this sets the method size the score prefers: a
     /// method is worth splitting once the tax on its excess exceeds the flat charge of another piece,
-    /// which the defaults put at complexity 20 for a two-way split. An exponent above 1 keeps that
+    /// which the defaults put at complexity 18 for a two-way split. An exponent above 1 keeps that
     /// pressure growing with size; at 1.5 rather than 2 one very large method no longer outweighs a
     /// whole section's surface. Proposals, to tune against a measured corpus.
     /// </summary>
@@ -114,6 +114,48 @@ public sealed class SurfaceScoreConfig
     /// transitive reach then mostly tracks depth.
     /// </summary>
     public int ComplexitySharingPercent { get; set; } = 0;
+
+    /// <summary>
+    /// Size in exact tokens, priced only when <c>surface-score --count-tokens</c> measured them; the
+    /// rules are skipped otherwise, never estimated. A section (its production and contracts files,
+    /// whole) is free up to <see cref="SectionSizeFreeTokens"/>, pays the <c>sectionSize</c> weight
+    /// per thousand tokens above it, and past <see cref="SectionSizeTaxTokens"/> also pays
+    /// <see cref="SectionSizeTaxPercent"/>% of the excess in thousands raised to
+    /// <see cref="SizeTaxExponent"/>. Summing whole files means neither partials nor sibling types
+    /// lower it. 50k fits a 200k window with room for tests and the task; past 100k the section and
+    /// the work no longer fit together.
+    /// </summary>
+    public int SectionSizeFreeTokens { get; set; } = 50_000;
+
+    /// <inheritdoc cref="SectionSizeFreeTokens"/>
+    public int SectionSizeTaxTokens { get; set; } = 100_000;
+
+    /// <inheritdoc cref="SectionSizeFreeTokens"/>
+    public int SectionSizeTaxPercent { get; set; } = 50;
+
+    /// <summary>
+    /// The same curve per class, summed over every partial declaration (nested types included):
+    /// free up to <see cref="ClassSizeFreeTokens"/>, the <c>classSize</c> weight per thousand above
+    /// it, and <see cref="ClassSizeTaxPercent"/>% of the excess past <see cref="ClassSizeTaxTokens"/>
+    /// raised to <see cref="SizeTaxExponent"/>. 8k reads comfortably with room to edit; 25k is about
+    /// where one file read stops.
+    /// </summary>
+    public int ClassSizeFreeTokens { get; set; } = 8_000;
+
+    /// <inheritdoc cref="ClassSizeFreeTokens"/>
+    public int ClassSizeTaxTokens { get; set; } = 25_000;
+
+    /// <inheritdoc cref="ClassSizeFreeTokens"/>
+    public int ClassSizeTaxPercent { get; set; } = 500;
+
+    /// <summary>Exponent of the size tax on sections and classes.</summary>
+    public double SizeTaxExponent { get; set; } = 1.5;
+
+    /// <summary>
+    /// A section's test tokens are free up to this percentage of its production and contracts
+    /// tokens; above it each thousand pays the <c>testSize</c> weight, linearly.
+    /// </summary>
+    public int TestSizeFreePercent { get; set; } = 100;
 
     /// <summary>
     /// Glob patterns matched against a dispatcher parameter's <i>type</i> name. These act
@@ -271,6 +313,10 @@ public sealed class SurfaceScoreConfig
                 ["exportedReadMethod"] = 4,
                 ["exportedWriteMethod"] = 12,
                 ["exportedUnusedExternally"] = 2,
+                // A method wider than private that nothing outside its type names: cheaper than
+                // public surface, dearer than private, so widening a helper never pays.
+                ["internalWiderThanUse"] = 2,
+                ["protectedWiderThanUse"] = 1,
                 ["repositoryInterfaceMethod"] = 10,
                 ["repositoryImplementationMethod"] = 10,
                 ["newRepositoryInterface"] = 15,
@@ -287,19 +333,21 @@ public sealed class SurfaceScoreConfig
                 ["parameterBagInput"] = 1,
                 ["inlineParameterObjectConstruction"] = 1,
 
-                // Dependency use
+                // Dependency use. Coupling predicts later fixes beyond size better per point than
+                // any other surface measure; these weights put it near a tenth of a large total.
                 ["sameSectionReadService"] = 0,
-                ["crossSectionReadInterface"] = 2,
-                ["crossSectionFullService"] = 8,
-                ["crossSectionRepository"] = 25,
-                ["writeCapableInterfaceUsedReadOnly"] = 12,
+                ["crossSectionReadInterface"] = 6,
+                ["crossSectionFullService"] = 24,
+                ["crossSectionConcreteService"] = 36,
+                ["crossSectionRepository"] = 75,
+                ["writeCapableInterfaceUsedReadOnly"] = 36,
 
                 // Signature shape (surface axis — method/return shape smells)
                 ["methodParameterOverflow"] = 1, // per param after 2
                 ["booleanParameter"] = 3,
                 ["tupleReturn"] = 4,
                 ["optionsBag"] = 8,
-                ["oneImplementationInterface"] = 8,
+                ["oneImplementationInterface"] = 24, // priced with the dependency rules
 
                 // Implementation-shape axis — implementation cost hiding behind the surface.
                 // Tracked on a separate scalar (implementationShapeTotal), never added into the
@@ -311,7 +359,7 @@ public sealed class SurfaceScoreConfig
                 // methodCount is the flat points per declaration. Proposals to tune against a
                 // measured corpus (the report's `contents` block), not settled.
                 ["methodComplexity"] = 1,
-                ["methodCount"] = 5,
+                ["methodCount"] = 3,
                 // The rest are MULTIPLIERS over base points computed from syntax (LOC tiers,
                 // dispatcher arm count); default 1 applies the base points as-is.
                 ["largeClass"] = 1,
@@ -319,7 +367,13 @@ public sealed class SurfaceScoreConfig
                 // No genericActionDispatcher key: it was folded into actionDispatcher as three
                 // surcharges rather than kept as a rule gated on all of them at once.
                 ["mutationModeParameter"] = 1,
-                ["flagsControlFlow"] = 1
+                ["flagsControlFlow"] = 1,
+                // Size in exact tokens, points per thousand above the free allowance (see
+                // SectionSizeFreeTokens). Skipped without token counts. Tests pay half the
+                // section rate and no tax: they cost reading, but nothing calls into them.
+                ["sectionSize"] = 2,
+                ["classSize"] = 5,
+                ["testSize"] = 1
             }
         };
     }

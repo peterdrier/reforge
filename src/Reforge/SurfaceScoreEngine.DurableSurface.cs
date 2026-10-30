@@ -45,7 +45,7 @@ public sealed partial class SurfaceScoreEngine
                 AddEntry(report, c.Group, "backgroundJob",
                     _config.Weight("backgroundJob"), c.Type, c.File, c.Line, null);
             else if (!c.Tags.Contains("dto") || !LooksLikeDataCarrier(c.Type, analyzedAssemblies))
-                ScoreExportedMethods(c, report, behaviour);
+                ScoreExportedMethods(c, report, behaviour, analyzedAssemblies);
         }
     }
 
@@ -59,11 +59,14 @@ public sealed partial class SurfaceScoreEngine
     /// </summary>
     /// <remarks>
     /// Applies to any exported class or interface that is not a data carrier and has no role rule
-    /// of its own (repositories, controllers and background jobs keep theirs). An interface and
-    /// the class implementing it are both charged: the interface is what consumers bind to, the
-    /// public class is callable too, and either can be made internal independently.
+    /// of its own (repositories, controllers and background jobs keep theirs). An operation is
+    /// priced once: a class method implementing a member of an exported interface in the solution
+    /// does not pay the read or write price again, since the interface already does. It still pays
+    /// <c>exportedUnusedExternally</c> when nothing outside names it, because a public class is a
+    /// second door to the same operation and making it internal is the fix.
     /// </remarks>
-    private void ScoreExportedMethods(ClassifiedType c, ScoreReport report, MethodBehaviourMap behaviour)
+    private void ScoreExportedMethods(ClassifiedType c, ScoreReport report, MethodBehaviourMap behaviour,
+        HashSet<string> analyzedAssemblies)
     {
         var readWeight = _config.Weight("exportedReadMethod");
         var writeWeight = _config.Weight("exportedWriteMethod");
@@ -81,8 +84,9 @@ public sealed partial class SurfaceScoreEngine
 
             bool write = behaviour.IsWrite(m);
             publishesWrite |= write;
-            AddEntry(report, c.Group, write ? "exportedWriteMethod" : "exportedReadMethod",
-                write ? writeWeight : readWeight, m, file, line, m.Name);
+            if (!ImplementsExportedInterfaceMember(c.Type, m, analyzedAssemblies))
+                AddEntry(report, c.Group, write ? "exportedWriteMethod" : "exportedReadMethod",
+                    write ? writeWeight : readWeight, m, file, line, m.Name);
 
             if (!behaviour.IsUsedExternally(m))
                 AddEntry(report, c.Group, "exportedUnusedExternally", unusedWeight, m, file, line,
@@ -96,6 +100,20 @@ public sealed partial class SurfaceScoreEngine
                 report.PublicWriteSurface[c.Group] = published = new List<string>();
             published.Add(c.Type.Name);
         }
+    }
+
+    private static bool ImplementsExportedInterfaceMember(INamedTypeSymbol type, IMethodSymbol m,
+        HashSet<string> analyzedAssemblies)
+    {
+        if (type.TypeKind == TypeKind.Interface) return false;
+        foreach (var iface in type.AllInterfaces)
+        {
+            if (!SurfaceVisibility.IsExported(iface) || !IsInAnalyzedSolution(iface, analyzedAssemblies)) continue;
+            foreach (var im in iface.GetMembers())
+                if (SymbolEqualityComparer.Default.Equals(type.FindImplementationForInterfaceMember(im), m))
+                    return true;
+        }
+        return false;
     }
 
     /// <summary>

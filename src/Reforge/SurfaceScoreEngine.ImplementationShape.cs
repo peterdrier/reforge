@@ -15,8 +15,10 @@ public sealed partial class SurfaceScoreEngine
     /// fire it.
     /// </summary>
     private async Task ScoreImplementationComplexityAsync(List<ClassifiedType> classified, ScoreReport report,
-        Solution solution, CancellationToken ct, HashSet<string> analyzedAssemblies)
+        Solution solution, CancellationToken ct, HashSet<string> analyzedAssemblies, MethodBehaviourMap behaviour)
     {
+        var countW = _config.Weight("methodCount");
+        var complexityW = _config.Weight("methodComplexity");
         var largeW = _config.Weight("largeClass");
         var dispW = _config.Weight("actionDispatcher");
         var mmpW = _config.Weight("mutationModeParameter");
@@ -27,6 +29,21 @@ public sealed partial class SurfaceScoreEngine
         var groupByType = new Dictionary<string, (string Group, string File)>(StringComparer.Ordinal);
         foreach (var ct2 in classified)
             groupByType[ct2.Type.ToDisplayString()] = (ct2.Group, ct2.File);
+
+        // Classes classSize prices, by section, file and line. A nested class is priced inside its
+        // outermost container, so it is looked up by that.
+        var tokenPriced = (report.Tokens?.BySection ?? new Dictionary<string, SectionTokens>())
+            .SelectMany(kv => kv.Value.Classes.Where(t => t.Tokens is not null).Select(t => (kv.Key, t.File, t.Line)))
+            .ToHashSet();
+        var classifiedBySymbol = new Dictionary<INamedTypeSymbol, ClassifiedType>(SymbolEqualityComparer.Default);
+        foreach (var c in classified) classifiedBySymbol.TryAdd(c.Type, c);
+        (string, string, int) OutermostKey(ClassifiedType c)
+        {
+            var top = c.Type;
+            while (top.ContainingType is { } outer) top = outer;
+            var owner = classifiedBySymbol.GetValueOrDefault(top) ?? c;
+            return (owner.Group, owner.File, owner.Line);
+        }
 
         foreach (var c in classified)
         {
@@ -43,7 +60,9 @@ public sealed partial class SurfaceScoreEngine
             var handwritten = HandwrittenDeclarations(c.Type, ct);
             if (handwritten.Count == 0) continue;
 
-            if (largeW != 0 && IsSizeTrackedClass(c))
+            // Where classSize prices this class in exact tokens, this LOC proxy stands down. A class
+            // without a count (no --count-tokens, or a failed request) keeps it.
+            if (largeW != 0 && !tokenPriced.Contains(OutermostKey(c)) && IsSizeTrackedClass(c))
             {
                 int classLoc = handwritten.Sum(ImplementationComplexity.NonBlankLines);
                 int pts = ImplementationComplexity.LargeClassPoints(classLoc) * largeW;
@@ -77,18 +96,13 @@ public sealed partial class SurfaceScoreEngine
                 if (HasAllowedShapeParam(m)) continue;
 
                 // A read is exempt from the mode and flags rules: a selector steering a projection
-                // is fine. It is not exempt from the structural rule. A read whose arms each route
-                // to a solution member of their own is separate getters behind one door; left
-                // unpriced, collapsing them would be free. See AnalyzeDispatcher for how a read's
-                // arms are measured.
+                // is fine. It is not exempt from the structural rule: a read whose arms are
+                // operations of their own is separate getters behind one door.
                 bool mutation = ImplementationComplexity.IsMutation(m, syntax);
-                SemanticModel? readModel = null;
-                if (!mutation)
-                {
-                    if (solution.GetDocument(syntax.SyntaxTree) is not { } doc) continue;
-                    readModel = await doc.GetSemanticModelAsync(ct);
-                }
-                var d = ImplementationComplexity.AnalyzeDispatcher(m, syntax, readModel);
+                if (solution.GetDocument(syntax.SyntaxTree) is not { } doc) continue;
+                var model = await doc.GetSemanticModelAsync(ct);
+                if (model is null) continue;
+                var d = ImplementationComplexity.AnalyzeDispatcher(m, syntax, model);
                 if (!mutation && !d.Fires) continue;
                 var dispatchEnumParams = ImplementationComplexity.DispatchEnumParams(m);
                 bool genericVerb = ImplementationComplexity.IsGenericVerb(m.Name);
@@ -100,21 +114,23 @@ public sealed partial class SurfaceScoreEngine
 
                 if (d.Fires && !stateEngine && dispW != 0)
                 {
-                    // actionDispatcher: a mutation whose body switches and routes arms to distinct
-                    // members. The three aggravating factors below used to be a separate rule
-                    // (genericActionDispatcher) that required all of them at once; as a conjunction
-                    // it measured zero on a 2,800-type corpus. They are surcharges now, so a
-                    // dispatcher is priced by how many of them it has rather than gated on all.
+                    // actionDispatcher: operations folded behind one selector. Each arm past the
+                    // first pays what the method it replaces would pay on the surface, and each
+                    // arm written in place pays the flat charge its own method would, less the
+                    // nesting it carries only for sitting in the branch. So inline and delegated
+                    // arms cost the same, and collapsing never costs less than keeping the methods
+                    // at any width. The surcharges price the fold itself.
                     bool typedSelector = modeParams.Count > 0;
                     bool appSvc = c.Tags.Contains("applicationService");
-                    int basePts = 20 + 5 * (d.ArmCount - 2)
+                    int surcharge = 20
                         + (typedSelector ? 8 : 0)   // an action/mode enum: the fold is in the signature
                         + (genericVerb ? 8 : 0)     // Apply/Handle/Process/…: the name hides which operation
                         + (appSvc ? 10 : 0);        // on an application service: the fold is the app's API
-                    int pts = basePts * dispW;
+                    int pts = (surcharge + (d.ArmCount - 1) * SurfacePrice(c, m, behaviour)) * dispW
+                        + d.InlineArms * countW - d.NestingRelief * complexityW;
                     var selector = typedSelector ? $" on {EnumParamNames(modeParams)}" : "";
                     var kind = mutation ? "dispatch" : "read dispatch";
-                    var detail = $"{m.Name} ({d.ArmCount}-arm {kind}{selector}; arms route to distinct members)";
+                    var detail = $"{m.Name} ({d.ArmCount}-arm {kind}{selector}; each arm is an operation of its own)";
                     AddEntry(report, c.Group, "actionDispatcher", pts, m, file, line, detail);
                     // A structural dispatcher declared on an interface is a contractual smell, not
                     // just an implementation one — bill the interface method too.
@@ -147,6 +163,21 @@ public sealed partial class SurfaceScoreEngine
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// What a method pays on the surface axis for being published, routed as
+    /// <see cref="ScoreDurableSurface"/> routes it: the price of each operation a selector folds in.
+    /// </summary>
+    private int SurfacePrice(ClassifiedType c, IMethodSymbol m, MethodBehaviourMap behaviour)
+    {
+        if (!c.IsExported || m.DeclaredAccessibility != Accessibility.Public) return 0;
+        if (c.Tags.Contains("repositoryInterface")) return _config.Weight("repositoryInterfaceMethod");
+        if (c.Tags.Contains("repositoryImplementation")) return _config.Weight("repositoryImplementationMethod");
+        if (c.Tags.Contains("controller")) return _config.Weight("controllerAction");
+        if (c.Tags.Contains("backgroundJob")) return 0;
+        return _config.Weight(behaviour.IsWrite(m) ? "exportedWriteMethod" : "exportedReadMethod")
+            + (behaviour.IsUsedExternally(m) ? 0 : _config.Weight("exportedUnusedExternally"));
     }
 
     private static string EnumParamNames(IReadOnlyList<IParameterSymbol> ps)
