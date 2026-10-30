@@ -7,7 +7,7 @@ namespace Reforge;
 // on the internal axis, never the surface one.
 public sealed partial class SurfaceScoreEngine
 {
-    private const int CognitiveThreshold = 15;
+    internal const int CognitiveThreshold = 15;
 
     /// <summary>
     /// Scores the implementation hiding behind the surface: per-method cognitive complexity over
@@ -88,7 +88,7 @@ public sealed partial class SurfaceScoreEngine
                 {
                     var cog = ImplementationComplexity.CognitiveDetail(syntax);
                     var path = fold.For(m, cog.Score, ImplementationComplexity.NonBlankLines(syntax));
-                    int over = path.Score - CognitiveThreshold;
+                    int over = Math.Max(0, path.Score - CognitiveThreshold) + path.CrossTypeCharge;
                     if (over > 0)
                     {
                         // Point at the code, not at the signature. When a member's body is one big
@@ -107,6 +107,9 @@ public sealed partial class SurfaceScoreEngine
                             detail = $"{m.Name} (CC {cog.Score}, {cog.NestedScore} in a nested function)";
                         else
                             detail = $"{m.Name} (CC {cog.Score})";
+                        if (path.CrossTypeCharge > 0)
+                            detail += $" +{path.CrossTypeCharge} for single-caller methods it calls in other types, "
+                                + $"most in {path.CrossTypeTop}";
                         AddEntry(report, c.Group, "cognitiveComplexity", over * cogW, m, file, cogLine, detail);
                     }
                 }
