@@ -45,7 +45,9 @@ public sealed partial class SurfaceScoreEngine
             var handwritten = HandwrittenDeclarations(c.Type, ct);
             if (handwritten.Count == 0) continue;
 
-            if (largeW != 0 && IsSizeTrackedClass(c))
+            // With token counts classSize prices the same thing in exact tokens, so this LOC proxy
+            // stands down; without them it is the only class-size signal.
+            if (largeW != 0 && Tokens is null && IsSizeTrackedClass(c))
             {
                 int classLoc = handwritten.Sum(ImplementationComplexity.NonBlankLines);
                 int pts = ImplementationComplexity.LargeClassPoints(classLoc) * largeW;

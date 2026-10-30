@@ -110,11 +110,33 @@ public class SizePricingTests
         Assert.Contains("(section)", diagnostic.Message);
     }
 
+    /// <summary>A *Service class of about 1,020 nonblank lines: past the first largeClass step at 1,000.</summary>
+    private static readonly string BigService = "namespace App.Core;\npublic sealed class BigService\n{\n"
+        + string.Concat(Enumerable.Range(0, 340).Select(i => $"    public int M{i}(int a)\n    {{ return a + {i}; }}\n\n    // {i}\n"))
+        + "}\n";
+
+    [Fact]
+    public async Task WithoutTokens_LargeClassStillCharges()
+    {
+        var report = await ScoreAsync(null, BigService);
+
+        Assert.True(report.ByRule.GetValueOrDefault("largeClass") > 0);
+    }
+
+    [Fact]
+    public async Task WithTokens_ClassSizeReplacesLargeClass()
+    {
+        var report = await ScoreAsync(new TokenMeasurer(new FakeCounter(), TokenCache.InMemory()), BigService);
+
+        Assert.False(report.ByRule.ContainsKey("largeClass"));
+        Assert.True(report.ByRule.GetValueOrDefault("classSize") > 0);
+    }
+
     private static int ImplementationShapeWithout(ScoreReport report) =>
         report.ByRule.Where(kv => SurfaceScoreRuleGroups.IsImplementationShape(kv.Key) && kv.Key is not ("sectionSize" or "classSize" or "testSize"))
             .Sum(kv => kv.Value);
 
-    private static async Task<ScoreReport> ScoreAsync(TokenMeasurer? tokens)
+    private static async Task<ScoreReport> ScoreAsync(TokenMeasurer? tokens, string prod = Prod)
     {
         var refs = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string ?? "")
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
@@ -135,7 +157,7 @@ public class SizePricingTests
         using var workspace = new AdhocWorkspace();
         var solution = workspace.AddSolution(SolutionInfo.Create(SolutionId.CreateNewId(), VersionStamp.Default,
             filePath: Path.Combine(root, "App.slnx"),
-            projects: [Project(prodId, "App.Core", Prod, []), Project(testId, "App.Core.Tests", Tests, [new ProjectReference(prodId)])]));
+            projects: [Project(prodId, "App.Core", prod, []), Project(testId, "App.Core.Tests", Tests, [new ProjectReference(prodId)])]));
 
         return await new SurfaceScoreEngine(Config, root) { Tokens = tokens }.ScoreAsync(solution, CancellationToken.None);
     }

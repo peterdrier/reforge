@@ -15,7 +15,7 @@ What changed and why. Newest first.
   cross-section dependency, so a public interface over an internal class is the cheapest door.
   `surface-score --count-tokens` measures exact tokens with Anthropic's `count_tokens`, cached by
   content hash, and only then prices size: `sectionSize` (whole files, so partials and siblings don't
-  escape it), `classSize`, and `testSize` past the section's own size, about 18% of the Humans total.
+  escape it), `classSize` (replacing `largeClass`), and `testSize` past the section's own size, about 18% of the Humans total.
 
 ## Unreleased - A labelled corpus for reviewing the weights
 
