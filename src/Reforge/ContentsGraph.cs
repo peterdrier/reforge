@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Reforge;
@@ -47,14 +48,16 @@ internal sealed class ContentsGraph
     /// </summary>
     public int Reach(ISymbol s)
     {
+        var start = Key(s);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var queue = new Queue<string>();
-        queue.Enqueue(Key(s));
+        queue.Enqueue(start);
         while (queue.Count > 0 && seen.Count < ReachCap)
         {
             if (!_callers.TryGetValue(queue.Dequeue(), out var cs)) continue;
+            // On a cycle the walk comes back to the declaration itself, which does not reach itself.
             foreach (var c in cs)
-                if (seen.Add(c)) queue.Enqueue(c);
+                if (c != start && seen.Add(c)) queue.Enqueue(c);
         }
         return Math.Min(seen.Count, ReachCap);
     }
@@ -82,6 +85,7 @@ internal sealed class ContentsGraph
                     AddDispatch(dispatch, names, member, impl);
         }
 
+        var filter = new NameFilter(names);
         var callers = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var callees = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var project in solution.Projects)
@@ -96,14 +100,17 @@ internal sealed class ContentsGraph
                 var model = compilation.GetSemanticModel(tree);
                 foreach (var node in (await tree.GetRootAsync(ct)).DescendantNodes())
                 {
-                    var referenced = Referenced(node, model, names, ct);
-                    if (referenced is null) continue;
-                    var from = Enclosing(node, model, ct);
-                    if (from is null) continue;
-                    var to = Key(referenced);
-                    if (nodes.Contains(to)) Link(callers, callees, from, to);
-                    if (dispatch.TryGetValue(to, out var impls))
-                        foreach (var impl in impls) Link(callers, callees, from, impl);
+                    string? from = null;
+                    foreach (var referenced in Referenced(node, model, filter, ct))
+                    {
+                        from ??= Enclosing(node, model, ct);
+                        if (from is null) break;
+                        var to = Key(referenced);
+                        if (nodes.Contains(to)) Link(callers, callees, from, to);
+                        // base.M() is bound statically to the base declaration, not dispatched.
+                        if (!IsBaseAccess(node) && dispatch.TryGetValue(to, out var impls))
+                            foreach (var impl in impls) Link(callers, callees, from, impl);
+                    }
                 }
             }
         }
@@ -161,30 +168,55 @@ internal sealed class ContentsGraph
     };
 
     /// <summary>
-    /// The member a node refers to, when the node can name a census declaration: a simple name, an
-    /// object creation (its constructor), or a <c>base(...)</c>/<c>this(...)</c> initializer. Names
-    /// are pre-filtered, so most of the corpus's identifiers never reach the semantic model.
+    /// Which syntax can name a census declaration. Names are pre-filtered, so most of the corpus's
+    /// identifiers never reach the semantic model; operator, conversion and indexer usages have no
+    /// name and are only bound when the corpus declares one of that kind.
     /// </summary>
-    private static ISymbol? Referenced(SyntaxNode node, SemanticModel model, HashSet<string> names, CancellationToken ct)
+    private sealed class NameFilter(HashSet<string> names)
     {
-        switch (node)
-        {
-            case SimpleNameSyntax name when names.Contains(name.Identifier.ValueText):
-                break;
-            case ObjectCreationExpressionSyntax { Type: var type } when names.Contains(RightmostName(type)):
-                break;
-            case ImplicitObjectCreationExpressionSyntax or ConstructorInitializerSyntax:
-                break;
-            default:
-                return null;
-        }
-        return model.GetSymbolInfo(node, ct).Symbol switch
-        {
-            IMethodSymbol m => m.ReducedFrom ?? m,
-            ISymbol s and (IPropertySymbol or IFieldSymbol or IEventSymbol) => s,
-            _ => null
-        };
+        public HashSet<string> Names { get; } = names;
+        public bool Operators { get; } = names.Any(n => n.StartsWith("op_", StringComparison.Ordinal)
+            && n is not (WellKnownMemberNames.ImplicitConversionName or WellKnownMemberNames.ExplicitConversionName));
+        public bool Conversions { get; } = names.Contains(WellKnownMemberNames.ImplicitConversionName)
+            || names.Contains(WellKnownMemberNames.ExplicitConversionName);
+        public bool Indexers { get; } = names.Contains(WellKnownMemberNames.Indexer);
     }
+
+    /// <summary>
+    /// The members a node refers to, when the node can name a census declaration: a simple name, an
+    /// object creation (its constructor), a <c>base(...)</c>/<c>this(...)</c> initializer, an
+    /// operator, an element access (an indexer), or a user-defined conversion, explicit or implicit.
+    /// </summary>
+    private static IEnumerable<ISymbol> Referenced(SyntaxNode node, SemanticModel model, NameFilter filter, CancellationToken ct)
+    {
+        bool bind = node switch
+        {
+            SimpleNameSyntax name => filter.Names.Contains(name.Identifier.ValueText),
+            ObjectCreationExpressionSyntax { Type: var type } => filter.Names.Contains(RightmostName(type)),
+            ImplicitObjectCreationExpressionSyntax or ConstructorInitializerSyntax => true,
+            BinaryExpressionSyntax or PrefixUnaryExpressionSyntax or PostfixUnaryExpressionSyntax
+                or AssignmentExpressionSyntax => filter.Operators,
+            CastExpressionSyntax => filter.Conversions,
+            ElementAccessExpressionSyntax or ElementBindingExpressionSyntax => filter.Indexers,
+            _ => false
+        };
+        if (bind)
+        {
+            var symbol = model.GetSymbolInfo(node, ct).Symbol switch
+            {
+                IMethodSymbol m => m.ReducedFrom ?? m,
+                ISymbol s and (IPropertySymbol or IFieldSymbol or IEventSymbol) => s,
+                _ => null
+            };
+            if (symbol is not null) yield return symbol;
+        }
+        if (filter.Conversions && node is ExpressionSyntax expr
+            && model.GetConversion(expr, ct) is { IsUserDefined: true, MethodSymbol: { } conversion })
+            yield return conversion;
+    }
+
+    private static bool IsBaseAccess(SyntaxNode node)
+        => node.Parent is MemberAccessExpressionSyntax { Expression: BaseExpressionSyntax } access && access.Name == node;
 
     private static string RightmostName(TypeSyntax type) => type switch
     {
