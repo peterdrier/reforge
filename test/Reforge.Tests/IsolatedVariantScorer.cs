@@ -71,6 +71,11 @@ internal static class IsolatedVariantScorer
     /// asks about the same immutable variants, and compiling each once instead of once per test is
     /// the difference between four compilations and sixteen.
     /// </summary>
+    /// <summary>Scores under a non-default config, uncached: the cache is keyed by file alone.</summary>
+    public static Task<ScoreReport> ScoreAsync(string sourceFile, string assemblyName, string solutionDirectory,
+        SurfaceScoreConfig config)
+        => ScoreUncachedAsync(sourceFile, assemblyName, solutionDirectory, config);
+
     public static Task<ScoreReport> ScoreAsync(string sourceFile, string assemblyName, string solutionDirectory)
     {
         Lazy<Task<ScoreReport>> entry;
@@ -113,7 +118,8 @@ internal static class IsolatedVariantScorer
         return found;
     }
 
-    private static async Task<ScoreReport> ScoreUncachedAsync(string sourceFile, string assemblyName, string solutionDirectory)
+    private static async Task<ScoreReport> ScoreUncachedAsync(string sourceFile, string assemblyName, string solutionDirectory,
+        SurfaceScoreConfig? config = null)
     {
         var projectDirectory = Path.GetDirectoryName(sourceFile)!;
         // "SampleSolution.Gate" -> "SampleSolution.", so a satellite named Camp becomes
@@ -140,7 +146,7 @@ internal static class IsolatedVariantScorer
         using var workspace = new AdhocWorkspace();
         var solution = workspace.AddSolution(solutionInfo);
 
-        var engine = new SurfaceScoreEngine(SurfaceScoreConfig.Default(), solutionDirectory);
+        var engine = new SurfaceScoreEngine(config ?? SurfaceScoreConfig.Default(), solutionDirectory);
         return await engine.ScoreAsync(solution, CancellationToken.None);
     }
 

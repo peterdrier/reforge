@@ -3,6 +3,9 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Reforge;
 
+/// <summary>Where a declaration sits in the call graph — see <see cref="ContentsGraph"/>.</summary>
+internal readonly record struct ContentsReach(int Depth, int Callers, int Reach);
+
 /// <summary>
 /// One declaration that carries code: a method, constructor, operator, finalizer, a property,
 /// indexer or event with accessor bodies, or a field or field-like event whose initializer holds a
@@ -197,8 +200,26 @@ public sealed class ContentsCensus
     /// <summary>Declarations per band of <see cref="BandUpperBounds"/>, plus one for the open top band.</summary>
     public int[] Bands { get; } = new int[BandUpperBounds.Length + 1];
 
-    internal void Add(ContentsUnit unit)
+    /// <summary>Upper bounds of the direct-caller and reach bands.</summary>
+    public static readonly int[] CallerUpperBounds = { 0, 1, 2, 5, 20 };
+
+    /// <summary>Upper bounds of the depth bands.</summary>
+    public static readonly int[] DepthUpperBounds = { 0, 1, 2, 3 };
+
+    /// <summary>Declarations per band of <see cref="CallerUpperBounds"/> by direct callers.</summary>
+    public int[] CallerBands { get; } = new int[CallerUpperBounds.Length + 1];
+
+    /// <summary>Declarations per band of <see cref="CallerUpperBounds"/> by transitive reach.</summary>
+    public int[] ReachBands { get; } = new int[CallerUpperBounds.Length + 1];
+
+    /// <summary>Declarations per band of <see cref="DepthUpperBounds"/> by depth from an entry point.</summary>
+    public int[] DepthBands { get; } = new int[DepthUpperBounds.Length + 1];
+
+    internal void Add(ContentsUnit unit, ContentsReach reach)
     {
+        CallerBands[Band(CallerUpperBounds, reach.Callers)]++;
+        ReachBands[Band(CallerUpperBounds, reach.Reach)]++;
+        DepthBands[Band(DepthUpperBounds, reach.Depth)]++;
         switch (unit.Symbol.DeclaredAccessibility)
         {
             case Accessibility.Public: Public++; break;
@@ -210,24 +231,22 @@ public sealed class ContentsCensus
         Cognitive += unit.Cognitive.Score;
         // A member is banded by the complexity it is charged for; each local declaration in it by
         // its own, so the bands count every declaration once.
-        AddToBand(unit.Cognitive.Score);
-        foreach (var local in unit.Locals) AddToBand(local);
+        Bands[Band(BandUpperBounds, unit.Cognitive.Score)]++;
+        foreach (var local in unit.Locals) Bands[Band(BandUpperBounds, local)]++;
     }
 
-    private void AddToBand(int score)
+    private static int Band(int[] upperBounds, int value)
     {
-        int band = Array.FindIndex(BandUpperBounds, b => score <= b);
-        Bands[band < 0 ? BandUpperBounds.Length : band]++;
+        int band = Array.FindIndex(upperBounds, b => value <= b);
+        return band < 0 ? upperBounds.Length : band;
     }
 
-    /// <summary>Band labels, aligned with <see cref="Bands"/>: <c>0</c>, <c>1-4</c>, … <c>50+</c>.</summary>
-    public static IReadOnlyList<string> BandLabels { get; } = BuildLabels();
-
-    private static List<string> BuildLabels()
+    /// <summary>Labels for bands with the given upper bounds: <c>0</c>, <c>1-4</c>, … <c>50+</c>.</summary>
+    public static IReadOnlyList<string> Labels(int[] upperBounds)
     {
         var labels = new List<string>();
         int lo = 0;
-        foreach (var hi in BandUpperBounds)
+        foreach (var hi in upperBounds)
         {
             labels.Add(lo == hi ? $"{hi}" : $"{lo}-{hi}");
             lo = hi + 1;

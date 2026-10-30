@@ -97,6 +97,25 @@ public sealed class SurfaceScoreConfig
     public double ComplexityTaxExponent { get; set; } = 1.5;
 
     /// <summary>
+    /// Depth factor on <c>methodComplexity</c>, in percent per level: a declaration <c>d</c> calls
+    /// away from the nearest entry point pays <c>(1 + d·pct/100)</c>. An entry point is a declaration
+    /// nothing in the corpus reaches, decided by the call graph and never by accessibility, so
+    /// widening a helper cannot shorten it. Off by default: measured from the program's entry point,
+    /// depth is mostly layering (Reforge's own code sits 3-8 calls deep), and while it is on,
+    /// inlining a helper into its caller lowers the score.
+    /// </summary>
+    public int ComplexityDepthPercent { get; set; } = 0;
+
+    /// <summary>
+    /// Sharing factor on <c>methodComplexity</c>, in percent: a declaration reached from <c>r</c>
+    /// members through any chain of calls pays <c>(1 + ln(r)·pct/100)</c>, because complexity in
+    /// widely used code has the widest blast radius. Transitive, so a forwarding wrapper cannot hide
+    /// the callers behind it. Off by default: most declarations have one or two direct callers, and
+    /// transitive reach then mostly tracks depth.
+    /// </summary>
+    public int ComplexitySharingPercent { get; set; } = 0;
+
+    /// <summary>
     /// Glob patterns matched against a dispatcher parameter's <i>type</i> name. These act
     /// only as a tie-breaker — the read/write decision is made behaviorally (does the
     /// method mutate?), so a shape type cannot be used to evade a penalty on a mutation by

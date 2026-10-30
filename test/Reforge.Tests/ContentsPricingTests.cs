@@ -123,7 +123,7 @@ public class ContentsPricingTests
 
         var units = ContentsPricing.Units(type, CancellationToken.None);
         var census = ContentsCensus.Empty;
-        foreach (var u in units) census.Add(u);
+        foreach (var u in units) census.Add(u, default);
 
         Assert.Contains(units, u => u.Symbol.Name == "Changed" && u.Cognitive.Score > 0);
         Assert.Equal(4, census.Declarations);

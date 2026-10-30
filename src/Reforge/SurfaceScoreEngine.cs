@@ -133,7 +133,7 @@ public sealed partial class SurfaceScoreEngine
         // fold is solution-wide and only names, in a census entry's detail, what a method reaches
         // through helpers that only it calls.
         var fold = await CallPathComplexity.BuildAsync(solution, analyzedAssemblies, ct);
-        ScoreContents(classified, report, fold, ct);
+        await ScoreContentsAsync(solution, classified, report, analyzedAssemblies, fold, ct);
         await ScoreImplementationComplexityAsync(classified, report, solution, ct, analyzedAssemblies);
 
         // Pass 6 — boundary-input surface. Charges for parameter/command objects that hide a
