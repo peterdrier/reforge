@@ -8,16 +8,20 @@ internal readonly record struct ContentsReach(int Depth, int Callers, int Reach)
 
 /// <summary>
 /// One declaration that carries code: a method, constructor, operator, finalizer, a property,
-/// indexer or event with accessor bodies, or a field whose initializer holds a delegate.
+/// indexer or event with accessor bodies, or a field or field-like event whose initializer holds a
+/// delegate.
 /// </summary>
 /// <param name="Symbol">The declared member.</param>
 /// <param name="Location">Where the declaration's name is, for the report.</param>
 /// <param name="Cognitive">Cognitive complexity of the declaration's own code, from its own root.</param>
-/// <param name="LocalFunctions">
-/// Local functions and lambdas held in local variables declared inside it. Each is a declaration
-/// too; its complexity is already part of <paramref name="Cognitive"/>.
+/// <param name="Locals">
+/// The own cognitive complexity of each local function and lambda held in a local variable declared
+/// inside it. Each is a declaration too; its complexity is already part of <paramref name="Cognitive"/>.
 /// </param>
-internal sealed record ContentsUnit(ISymbol Symbol, Location Location, CognitiveScore Cognitive, int LocalFunctions);
+internal sealed record ContentsUnit(ISymbol Symbol, Location Location, CognitiveScore Cognitive, IReadOnlyList<int> Locals)
+{
+    public int LocalFunctions => Locals.Count;
+}
 
 /// <summary>
 /// Prices a section's contents as a census: every declaration that carries code pays a flat
@@ -67,13 +71,16 @@ internal static class ContentsPricing
             };
             if (code is null || code.Count == 0) continue;
 
-            int score = 0, nested = 0, nestedLine = 0, locals = 0;
+            int score = 0, nested = 0, nestedLine = 0;
+            var locals = new List<int>();
             foreach (var node in code)
             {
                 var c = ImplementationComplexity.CognitiveOf(node);
                 score += c.Score;
                 if (c.NestedScore > nested) (nested, nestedLine) = (c.NestedScore, c.NestedLine);
-                locals += node.DescendantNodesAndSelf().Count(IsLocalDeclaration);
+                foreach (var local in node.DescendantNodesAndSelf())
+                    if (LocalDeclarationCode(local) is { } localCode)
+                        locals.Add(ImplementationComplexity.CognitiveOf(localCode).Score);
             }
             var tree = code[0].SyntaxTree;
             var location = member.Locations.FirstOrDefault(l => l.SourceTree == tree) ?? code[0].GetLocation();
@@ -98,7 +105,10 @@ internal static class ContentsPricing
         return null;
     }
 
-    /// <summary>Accessor bodies, an arrow body, or a delegate in a property initializer. Auto-accessors carry no code.</summary>
+    /// <summary>
+    /// Accessor bodies, an arrow body, or a delegate in a property or field-like event initializer.
+    /// Auto-accessors carry no code.
+    /// </summary>
     private static List<SyntaxNode>? AccessorCode(ISymbol member, CancellationToken ct)
     {
         var code = new List<SyntaxNode>();
@@ -121,6 +131,10 @@ internal static class ContentsPricing
                     }
                     if (bp is PropertyDeclarationSyntax { Initializer.Value: { } init } && HoldsDelegate(init))
                         code.Add(init);
+                    continue;
+                // A field-like event declares through a variable declarator, as a field does.
+                case VariableDeclaratorSyntax { Initializer.Value: { } eventInit } when HoldsDelegate(eventInit):
+                    code.Add(eventInit);
                     continue;
             }
         }
@@ -145,10 +159,15 @@ internal static class ContentsPricing
     /// <summary>
     /// A local function, or a lambda held in a local variable: a named helper either way, so turning
     /// a private method into one is not a way out of the count. A lambda passed straight to a call
-    /// (the LINQ case) is an argument, not a declaration.
+    /// (the LINQ case) is an argument, not a declaration. Returns the declaration's own code, or null.
     /// </summary>
-    private static bool IsLocalDeclaration(SyntaxNode n) => n is LocalFunctionStatementSyntax
-        or VariableDeclaratorSyntax { Initializer.Value: AnonymousFunctionExpressionSyntax, Parent.Parent: LocalDeclarationStatementSyntax };
+    private static SyntaxNode? LocalDeclarationCode(SyntaxNode n) => n switch
+    {
+        LocalFunctionStatementSyntax f => (SyntaxNode?)f.Body ?? f.ExpressionBody,
+        VariableDeclaratorSyntax { Initializer.Value: AnonymousFunctionExpressionSyntax lambda, Parent.Parent: LocalDeclarationStatementSyntax }
+            => lambda.Body,
+        _ => null,
+    };
 
     private static bool HoldsDelegate(ExpressionSyntax init)
         => init.DescendantNodesAndSelf().OfType<AnonymousFunctionExpressionSyntax>().Any();
@@ -210,7 +229,10 @@ public sealed class ContentsCensus
         }
         LocalFunctions += unit.LocalFunctions;
         Cognitive += unit.Cognitive.Score;
+        // A member is banded by the complexity it is charged for; each local declaration in it by
+        // its own, so the bands count every declaration once.
         Bands[Band(BandUpperBounds, unit.Cognitive.Score)]++;
+        foreach (var local in unit.Locals) Bands[Band(BandUpperBounds, local)]++;
     }
 
     private static int Band(int[] upperBounds, int value)

@@ -13,6 +13,9 @@ public sealed partial class SurfaceScoreEngine
     /// <c>methodCount</c>: the weight per declaration with fewer than two callers, one entry per type
     /// so the report names the type rather than every method in it. The call-path fold is not scored; it only names, in the
     /// detail, how much a method reaches through helpers that only it calls.
+    /// <para>Private nested types are not in the classified corpus, which is surface-oriented, but
+    /// their code is the section's all the same: each is priced under its nearest classified
+    /// container, so moving a helper into one changes nothing here.</para>
     /// </summary>
     private async Task ScoreContentsAsync(Solution solution, List<ClassifiedType> classified, ScoreReport report,
         HashSet<string> analyzedAssemblies, CallPathFold fold, CancellationToken ct)
@@ -21,6 +24,8 @@ public sealed partial class SurfaceScoreEngine
         var countW = _config.Weight("methodCount");
 
         var contents = classified
+            .SelectMany(owner => WithPrivateNested(owner.Type).Select(t =>
+                t.Equals(owner.Type, SymbolEqualityComparer.Default) ? owner : owner with { Type = t }))
             .Select(c => (Type: c, Units: ContentsPricing.Units(c.Type, ct)))
             .Where(x => x.Units.Count > 0)
             .ToList();
@@ -59,6 +64,29 @@ public sealed partial class SurfaceScoreEngine
                     + (reused > 0 ? $"; {reused} reused, not charged)" : ")");
                 AddEntry(report, c.Group, "methodCount", declarations * countW, c.Type, file, line, detail);
             }
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="type"/> and the types nested in it that are effectively private, to any
+    /// depth. A non-private nested type is classified on its own and walked from there.
+    /// </summary>
+    private static IEnumerable<INamedTypeSymbol> WithPrivateNested(INamedTypeSymbol type)
+    {
+        yield return type;
+        foreach (var nested in type.GetTypeMembers())
+        {
+            if (nested.IsImplicitlyDeclared || !nested.Locations.Any(l => l.IsInSource)) continue;
+            if (nested.DeclaredAccessibility != Accessibility.Private) continue;
+            foreach (var t in WithNested(nested)) yield return t;
+        }
+
+        static IEnumerable<INamedTypeSymbol> WithNested(INamedTypeSymbol t)
+        {
+            yield return t;
+            foreach (var n in t.GetTypeMembers())
+                if (!n.IsImplicitlyDeclared && n.Locations.Any(l => l.IsInSource))
+                    foreach (var d in WithNested(n)) yield return d;
         }
     }
 
