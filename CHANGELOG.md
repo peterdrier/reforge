@@ -2,6 +2,16 @@
 
 What changed and why. Newest first.
 
+## Unreleased - A labelled corpus for reviewing the weights
+
+- **`test/ScoringCorpus` holds 30 before/after pairs labelled better, worse or lateral**, scored pair by
+  pair by `ScoringCorpusTests`, so a weight or rule change can be judged by how many labels it
+  satisfies instead of by its effect on one solution's total.
+- **Pairs the current weights get wrong carry a `gap` marker** naming the root cause, and the test
+  fails when one starts passing, so a fix has to retire its marker.
+- **`REFORGE_CORPUS_CONFIG` scores the corpus under another config**, which turns it into the fitness
+  function for a weight sweep.
+
 ## Unreleased - Reused code skips the flat charge; depth and sharing are measured
 
 - **A declaration with two or more callers skips `methodCount`**, since merging reused code away

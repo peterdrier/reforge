@@ -1,0 +1,66 @@
+namespace ScoringCorpus.WideReadCollapse.Before;
+
+public sealed class LedgerReader
+{
+    private readonly Dictionary<int, int> _f0 = new();
+    private readonly Dictionary<int, int> _f1 = new();
+    private readonly Dictionary<int, int> _f2 = new();
+    private readonly Dictionary<int, int> _f3 = new();
+    private readonly Dictionary<int, int> _f4 = new();
+    private readonly Dictionary<int, int> _f5 = new();
+    private readonly Dictionary<int, int> _f6 = new();
+    private readonly Dictionary<int, int> _f7 = new();
+    private readonly Dictionary<int, int> _f8 = new();
+    private readonly Dictionary<int, int> _f9 = new();
+    private readonly Dictionary<int, int> _f10 = new();
+    private readonly Dictionary<int, int> _f11 = new();
+    private readonly Dictionary<int, int> _f12 = new();
+    private readonly Dictionary<int, int> _f13 = new();
+    private readonly Dictionary<int, int> _f14 = new();
+    private readonly Dictionary<int, int> _f15 = new();
+    private readonly Dictionary<int, int> _f16 = new();
+    private readonly Dictionary<int, int> _f17 = new();
+    private readonly Dictionary<int, int> _f18 = new();
+    private readonly Dictionary<int, int> _f19 = new();
+    private readonly Dictionary<int, int> _f20 = new();
+    private readonly Dictionary<int, int> _f21 = new();
+    private readonly Dictionary<int, int> _f22 = new();
+    private readonly Dictionary<int, int> _f23 = new();
+    private readonly Dictionary<int, int> _f24 = new();
+    private readonly Dictionary<int, int> _f25 = new();
+    private readonly Dictionary<int, int> _f26 = new();
+    private readonly Dictionary<int, int> _f27 = new();
+    private readonly Dictionary<int, int> _f28 = new();
+    private readonly Dictionary<int, int> _f29 = new();
+
+    public int GetFact0(int id) => _f0.TryGetValue(id, out var v) ? v : 0;
+    public int GetFact1(int id) => _f1.TryGetValue(id, out var v) ? v : 1;
+    public int GetFact2(int id) => _f2.TryGetValue(id, out var v) ? v : 2;
+    public int GetFact3(int id) => _f3.TryGetValue(id, out var v) ? v : 3;
+    public int GetFact4(int id) => _f4.TryGetValue(id, out var v) ? v : 4;
+    public int GetFact5(int id) => _f5.TryGetValue(id, out var v) ? v : 5;
+    public int GetFact6(int id) => _f6.TryGetValue(id, out var v) ? v : 6;
+    public int GetFact7(int id) => _f7.TryGetValue(id, out var v) ? v : 7;
+    public int GetFact8(int id) => _f8.TryGetValue(id, out var v) ? v : 8;
+    public int GetFact9(int id) => _f9.TryGetValue(id, out var v) ? v : 9;
+    public int GetFact10(int id) => _f10.TryGetValue(id, out var v) ? v : 10;
+    public int GetFact11(int id) => _f11.TryGetValue(id, out var v) ? v : 11;
+    public int GetFact12(int id) => _f12.TryGetValue(id, out var v) ? v : 12;
+    public int GetFact13(int id) => _f13.TryGetValue(id, out var v) ? v : 13;
+    public int GetFact14(int id) => _f14.TryGetValue(id, out var v) ? v : 14;
+    public int GetFact15(int id) => _f15.TryGetValue(id, out var v) ? v : 15;
+    public int GetFact16(int id) => _f16.TryGetValue(id, out var v) ? v : 16;
+    public int GetFact17(int id) => _f17.TryGetValue(id, out var v) ? v : 17;
+    public int GetFact18(int id) => _f18.TryGetValue(id, out var v) ? v : 18;
+    public int GetFact19(int id) => _f19.TryGetValue(id, out var v) ? v : 19;
+    public int GetFact20(int id) => _f20.TryGetValue(id, out var v) ? v : 20;
+    public int GetFact21(int id) => _f21.TryGetValue(id, out var v) ? v : 21;
+    public int GetFact22(int id) => _f22.TryGetValue(id, out var v) ? v : 22;
+    public int GetFact23(int id) => _f23.TryGetValue(id, out var v) ? v : 23;
+    public int GetFact24(int id) => _f24.TryGetValue(id, out var v) ? v : 24;
+    public int GetFact25(int id) => _f25.TryGetValue(id, out var v) ? v : 25;
+    public int GetFact26(int id) => _f26.TryGetValue(id, out var v) ? v : 26;
+    public int GetFact27(int id) => _f27.TryGetValue(id, out var v) ? v : 27;
+    public int GetFact28(int id) => _f28.TryGetValue(id, out var v) ? v : 28;
+    public int GetFact29(int id) => _f29.TryGetValue(id, out var v) ? v : 29;
+}
