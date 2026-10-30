@@ -80,6 +80,40 @@ public class ContentsPricingTests
         Assert.Equal(1, units.Single(u => u.Symbol.Name == "Computed").Cognitive.Score);
     }
 
+    /// <summary>
+    /// Every declaration lands in exactly one complexity band, local functions and locally held
+    /// lambdas included, so the bands sum to the declaration count.
+    /// </summary>
+    [Fact]
+    public void Census_BandsSumToDeclarations()
+    {
+        var type = Compile("""
+            using System;
+            public class C
+            {
+                public event Action<int> Changed = v => { if (v > 0) Console.WriteLine(v); };
+                public int Run(int[] xs)
+                {
+                    Func<int, bool> keep = v => v > 0 && v < 10;
+                    int Local(int v)
+                    {
+                        if (v > 1) { for (int i = 0; i < v; i++) { if (i % 2 == 0) v++; } }
+                        return v;
+                    }
+                    return keep(xs[0]) ? Local(xs[0]) : 0;
+                }
+            }
+            """);
+
+        var units = ContentsPricing.Units(type, CancellationToken.None);
+        var census = ContentsCensus.Empty;
+        foreach (var u in units) census.Add(u);
+
+        Assert.Contains(units, u => u.Symbol.Name == "Changed" && u.Cognitive.Score > 0);
+        Assert.Equal(4, census.Declarations);
+        Assert.Equal(census.Declarations, census.Bands.Sum());
+    }
+
     private static INamedTypeSymbol Compile(string source)
     {
         var refs = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string ?? "")

@@ -10,8 +10,8 @@ What changed and why. Newest first.
   charged. Huge methods are cheapest split near the threshold and tiny unreused ones merged, so
   neither a monolith nor a shatter into one-liners is rewarded. All weights are proposals to tune.
 - **Moving code to another type or kind of declaration is not an escape.** Computed properties,
-  delegate-valued fields, local functions and lambdas held in locals all count, and a declaration
-  costs the same in any type, so the cross-type charge (#76) goes with the fold, which survives only
+  delegate-valued fields and events, local functions, lambdas held in locals and private nested
+  types all count, and a declaration costs the same in any type, so the cross-type charge (#76) goes with the fold, which survives only
   as the entry's detail.
 - **`surface-score --format json` reports a `contents` census** per section: declarations by
   accessibility and own-complexity bands, the measurement those weights are tuned against.

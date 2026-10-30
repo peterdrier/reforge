@@ -74,6 +74,8 @@ public class LateralMoveTests
         ("lambda in a local", Service("", "classify(id)").Replace("int total = 0;\n        foreach",
             $"int total = 0;\n        Func<int, int> classify = id =>\n{Body};\n        foreach")),
         ("delegate field", Service($"private static readonly Func<int, int> Classify = id =>\n{Body};")),
+        ("event initializer", Service($"private static event Func<int, int> Classify = id =>\n{Body};")),
+        ("private nested type", Service($"private static class Rules\n{{\n    internal static int Classify(int id)\n{Body}\n}}", "Rules.Classify(id)")),
     };
 
     [Fact]
