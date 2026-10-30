@@ -405,32 +405,44 @@ public static class ImplementationComplexity
     /// Include/Where/projection — so one member is called by ≥ half the arms and the
     /// rule does not fire. The method name is never consulted (no Apply/Handle/Create
     /// heuristic), which removes the Create-verb contradiction.
+    /// <para>
+    /// A read is measured differently when <paramref name="readModel"/> is given. Its selector is
+    /// examined whatever the selector type is called, since a read-shape name is no evidence the arms
+    /// share work. Only calls that resolve to methods declared in the solution's source count, so arms
+    /// that differ by a LINQ or BCL call (a sort selector, an enum-to-string map) are not separate
+    /// operations, and two lookups that share a name on different types are. And the shared-member
+    /// check gives way to a per-arm one: the read fires when two or more arms each call a method no
+    /// other arm calls, priced on those arms. Under the shared check, wrapping every arm in one shared
+    /// helper would exempt three getters behind a selector; under this one it changes nothing.
+    /// </para>
     /// </summary>
-    public static DispatcherAnalysis AnalyzeDispatcher(IMethodSymbol method, BaseMethodDeclarationSyntax syntax)
+    public static DispatcherAnalysis AnalyzeDispatcher(IMethodSymbol method, BaseMethodDeclarationSyntax syntax,
+        SemanticModel? readModel = null)
     {
         SyntaxNode? body = (SyntaxNode?)syntax.Body ?? syntax.ExpressionBody?.Expression;
         if (body is null) return default;
 
         var paramNames = method.Parameters
-            .Where(IsDispatchParam)
+            .Where(p => readModel is null ? IsDispatchParam(p) : IsSelectorCandidate(p))
             .Select(p => p.Name)
             .ToHashSet(StringComparer.Ordinal);
         if (paramNames.Count == 0) return default;
 
         DispatcherAnalysis best = default;
+        DispatcherAnalysis Measure(IEnumerable<SyntaxNode> armNodes) => readModel is null
+            ? Evaluate(armNodes.Select(InvokedMembers).ToList())
+            : EvaluateRead(armNodes.Select(a => InvokedSolutionMethods(a, readModel)).ToList());
 
         foreach (var sw in body.DescendantNodesAndSelf().OfType<SwitchStatementSyntax>())
         {
             if (!ReferencesParam(sw.Expression, paramNames)) continue;
-            var arms = sw.Sections.Select(s => InvokedMembers(s)).ToList();
-            best = Better(best, Evaluate(arms));
+            best = Better(best, Measure(sw.Sections));
         }
 
         foreach (var swe in body.DescendantNodesAndSelf().OfType<SwitchExpressionSyntax>())
         {
             if (!ReferencesParam(swe.GoverningExpression, paramNames)) continue;
-            var arms = swe.Arms.Select(a => InvokedMembers(a.Expression)).ToList();
-            best = Better(best, Evaluate(arms));
+            best = Better(best, Measure(swe.Arms.Select(a => a.Expression)));
         }
 
         foreach (var ifs in body.DescendantNodesAndSelf().OfType<IfStatementSyntax>())
@@ -438,23 +450,23 @@ public static class ImplementationComplexity
             if (ifs.Parent is ElseClauseSyntax) continue; // only chain heads
             if (!ReferencesParam(ifs.Condition, paramNames)) continue;
 
-            var arms = new List<HashSet<string>>();
+            var arms = new List<SyntaxNode>();
             IfStatementSyntax? cur = ifs;
             while (cur is not null)
             {
                 if (!ReferencesParam(cur.Condition, paramNames)) break;
-                arms.Add(InvokedMembers(cur.Statement));
+                arms.Add(cur.Statement);
                 if (cur.Else?.Statement is IfStatementSyntax next)
                 {
                     cur = next;
                 }
                 else
                 {
-                    if (cur.Else is { } tail) arms.Add(InvokedMembers(tail.Statement));
+                    if (cur.Else is { } tail) arms.Add(tail.Statement);
                     cur = null;
                 }
             }
-            best = Better(best, Evaluate(arms));
+            best = Better(best, Measure(arms));
         }
 
         return best;
@@ -482,6 +494,39 @@ public static class ImplementationComplexity
         if ((double)maxShared / arms.Count >= 0.5) return default;
 
         return new DispatcherAnalysis(true, arms.Count);
+    }
+
+    private static DispatcherAnalysis EvaluateRead(List<HashSet<IMethodSymbol>> arms)
+    {
+        if (arms.Count < 2) return default;
+        var callers = new Dictionary<IMethodSymbol, int>(SymbolEqualityComparer.Default);
+        foreach (var arm in arms)
+            foreach (var m in arm)
+                callers[m] = callers.GetValueOrDefault(m) + 1;
+
+        // An arm is a hidden operation when it calls a solution method that no other arm calls.
+        int distinctArms = arms.Count(a => a.Any(m => callers[m] == 1));
+        return distinctArms >= 2 ? new DispatcherAnalysis(true, distinctArms) : default;
+    }
+
+    /// <summary>
+    /// The methods an arm invokes that the solution declares in source. An override counts only when
+    /// the method it overrides is the solution's too, so a ToString override does not make every
+    /// ToString call one.
+    /// </summary>
+    private static HashSet<IMethodSymbol> InvokedSolutionMethods(SyntaxNode arm, SemanticModel model)
+    {
+        var set = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
+        foreach (var inv in arm.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
+        {
+            if (model.GetSymbolInfo(inv).Symbol is not IMethodSymbol m) continue;
+            m = (m.ReducedFrom ?? m).OriginalDefinition;
+            if (m.MethodKind is not (MethodKind.Ordinary or MethodKind.LocalFunction)) continue;
+            var root = m;
+            while (root.OverriddenMethod is { } o) root = o.OriginalDefinition;
+            if (root.Locations.Any(l => l.IsInSource)) set.Add(m);
+        }
+        return set;
     }
 
     private static HashSet<string> InvokedMembers(SyntaxNode arm)
@@ -531,10 +576,10 @@ public static class ImplementationComplexity
 
     // ---------------- Shared helpers ----------------
 
-    // Read/query "shape" enums steer projection, not mutation. They must NOT be treated as
-    // dispatch parameters — otherwise Get*(RotaReadShape) / Search*(ShiftEventQueryFlags) would
-    // be falsely penalized. Note QueryFlags ends in "Flags" and SearchScope ends in "Scope",
-    // both of which are dispatch suffixes, so this exclusion has to run first.
+    // Read/query "shape" enums steer projection, not mutation, so a write's selector of one of
+    // these types is not a dispatch parameter. A read's selector is judged by its arms instead (see
+    // AnalyzeDispatcher). Note QueryFlags ends in "Flags" and SearchScope ends in "Scope", both of
+    // which are dispatch suffixes, so this exclusion has to run first.
     private static readonly string[] ReadShapeSuffixes = { "ReadShape", "QueryFlags", "Filter", "SearchScope", "Query" };
 
     private static readonly string[] GenericVerbs = { "Apply", "Handle", "Process", "Execute", "Create", "Save" };
@@ -546,8 +591,10 @@ public static class ImplementationComplexity
     }
 
     public static bool IsDispatchParam(IParameterSymbol p)
+        => !IsReadShapeType(p.Type) && IsSelectorCandidate(p);
+
+    private static bool IsSelectorCandidate(IParameterSymbol p)
     {
-        if (IsReadShapeType(p.Type)) return false;
         if (p.Type.TypeKind == TypeKind.Enum) return true;
         if (DispatchParamNames.Contains(p.Name)) return true;
         var tn = p.Type.Name;

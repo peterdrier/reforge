@@ -2,6 +2,18 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Collapsing reads behind a selector no longer pays
+
+- **`actionDispatcher` now prices reads**, so three public getters folded into one enum-dispatched
+  getter cost more than the three did (31 vs 18 on the Gate 1 pair), not less. The pair is no longer
+  marked `gate1-gameable`.
+- **A read is a dispatcher when two or more arms each call a solution method no other arm calls**,
+  priced on those arms, whatever its selector type is called. Calls are resolved by symbol, so
+  `_names.Get` and `_ages.Get` are two methods. Wrapping every arm in one shared helper does not
+  exempt it, while arms that share their work (one load, different projections) or differ only by
+  LINQ/BCL calls (sort selectors, enum-to-string maps) are not charged.
+- Mode-parameter and flags rules still exempt reads: a selector steering a projection is fine.
+
 ## Unreleased - Moving a helper to another type no longer lowers its caller's complexity
 
 - **`cognitiveComplexity` charges what a type boundary hides** (#76). A single-caller method in
