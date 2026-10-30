@@ -18,8 +18,8 @@ What changed and why. Newest first.
 ## Unreleased - Contents are priced as a census
 
 - **`methodComplexity` and `methodCount` replace `cognitiveComplexity`.** Every declaration that
-  carries code pays a flat 5 and its own cognitive complexity, linearly up to 10 and taxed
-  quadratically past it, whatever its accessibility, instead of only call paths over 15 being
+  carries code pays a flat 5 and its own cognitive complexity, linearly up to 10 and taxed at
+  16% of the excess to the power 1.5 past it, whatever its accessibility, instead of only call paths over 15 being
   charged. Huge methods are cheapest split near the threshold and tiny unreused ones merged, so
   neither a monolith nor a shatter into one-liners is rewarded. All weights are proposals to tune.
 - **Moving code to another type or kind of declaration is not an escape.** Computed properties,

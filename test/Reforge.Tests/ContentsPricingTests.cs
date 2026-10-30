@@ -42,7 +42,23 @@ public class ContentsPricingTests
 
         double monolith = Arrangement(1, 50), middle = Arrangement(5, 10), slivers = Arrangement(25, 2);
         Assert.True(middle < monolith, $"5x10 {middle} not below 1x50 {monolith}");
+        Assert.True(middle < slivers, $"5x10 {middle} not below 25x2 {slivers}");
         Assert.True(monolith <= slivers, $"25x2 {slivers} below 1x50 {monolith}");
+    }
+
+    /// <summary>
+    /// Splitting a method in two pays once the tax saved exceeds the flat charge of the second piece:
+    /// from complexity 20 with the defaults, and for every larger method after that.
+    /// </summary>
+    [Fact]
+    public void TwoWaySplit_PaysFromComplexityTwenty()
+    {
+        int m = Defaults.Weight("methodCount");
+        for (int n = Defaults.ComplexityThreshold + 1; n <= 400; n++)
+        {
+            double whole = F(n) + m, halves = F(n / 2) + F(n - n / 2) + 2 * m;
+            Assert.True(whole > halves == n >= 20, $"CC {n}: whole {whole:F2}, halves {halves:F2}");
+        }
     }
 
     [Fact]
