@@ -15,7 +15,7 @@
     { "id": "MergeTinyUnreused", "label": "better", "rationale": "Three single-use one-line helpers merged into their only caller." },
     { "id": "InlineReusedHelper", "label": "worse", "rationale": "A helper with three callers pasted into each caller: three copies of the same logic." },
     { "id": "RemoveDuplication", "label": "better", "rationale": "A duplicated validation block extracted into one helper used by both callers." },
-    { "id": "InlineSingleUseHelper", "label": "lateral", "rationale": "A CC-3 helper with one caller inlined into its CC-3 caller; both shapes read fine.", "confidence": "low", "gap": "flat-charge-arrangement" },
+    { "id": "InlineSingleUseHelper", "label": "better", "rationale": "A CC-3 helper with one caller inlined into its CC-3 caller; the code moves laterally, and one fewer method carries its own cost." },
     { "id": "ManufacturedSecondCaller", "label": "worse", "rationale": "A dead call that discards its result is added so a helper looks reused." },
     { "id": "NarrowPublicToPrivate", "label": "better", "rationale": "A public helper nothing outside the class needs becomes private." },
     { "id": "WidenPrivateToPublic", "label": "worse", "rationale": "A private helper becomes public surface." },
