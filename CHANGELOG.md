@@ -2,9 +2,21 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Price the logic, not its arrangement
+
+- **`actionDispatcher` prices a selector by the operations its arms hide**, inline or delegated, bool
+  or enum: each arm past the first pays the surface price of the method it replaces, so collapsing
+  methods behind a selector never pays at any width. A table of delegates nests like the switch it
+  replaces, and a discarded call to a pure method no longer counts as a second caller.
+- **Widening a method is never free:** `internalWiderThanUse` (2) and `protectedWiderThanUse` (1)
+  charge visibility beyond private that nothing outside the type uses, below public surface.
+- **An interface operation is priced once**, `oneImplementationInterface` skips an interface another
+  assembly binds to, and `crossSectionConcreteService` (12) makes a concrete class the dearest
+  cross-section dependency, so a public interface over an internal class is the cheapest door.
+
 ## Unreleased - A labelled corpus for reviewing the weights
 
-- **`test/ScoringCorpus` holds 30 before/after pairs labelled better, worse or lateral**, scored pair by
+- **`test/ScoringCorpus` holds 31 before/after pairs labelled better, worse or lateral**, scored pair by
   pair by `ScoringCorpusTests`, so a weight or rule change can be judged by how many labels it
   satisfies instead of by its effect on one solution's total.
 - **Pairs the current weights get wrong carry a `gap` marker** naming the root cause, and the test
