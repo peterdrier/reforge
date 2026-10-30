@@ -71,11 +71,11 @@ public static class SurfaceScoreCommand
 
         var countTokensOption = new Option<bool>("--count-tokens")
         {
-            Description = "Count exact tokens per section (its whole handwritten files, and its tests') and per class (its declaration spans across partials) with Anthropic's count_tokens API, using ANTHROPIC_API_KEY, and price them with sectionSize, classSize and testSize. Counts are net of a one-character baseline request and cached by content hash. Without counts the size rules are skipped."
+            Description = "Count exact tokens for files the cache lacks with Anthropic's count_tokens API, using ANTHROPIC_API_KEY. Counts are net of a one-character baseline request and cached by model and content hash. sectionSize, classSize and testSize price every file's exact count when one is cached or counted, and a lexical estimate otherwise; estimates within 5% of a threshold are flagged near-threshold."
         };
         var tokenCacheOption = new Option<string?>("--token-cache")
         {
-            Description = "Token cache file (default: <LocalApplicationData>/reforge/token-cache.json)."
+            Description = "Token cache file, read on every run and shared safely by concurrent runs (default: $REFORGE_TOKEN_CACHE, else <LocalApplicationData>/reforge/token-cache.txt)."
         };
 
         var command = new Command("surface-score",
@@ -111,7 +111,7 @@ public static class SurfaceScoreCommand
             var coveragePath = parseResult.GetValue(coverageOption);
             var format = parseResult.GetValue(formatOption);
             var countTokens = parseResult.GetValue(countTokensOption);
-            var tokenCachePath = parseResult.GetValue(tokenCacheOption) ?? TokenCache.DefaultPath;
+            var tokenCachePath = TokenCache.ResolvePath(parseResult.GetValue(tokenCacheOption));
 
             // --all is an alias for --top 0 (no cap). int.MaxValue is the sentinel for "show
             // everything" through the Take(top) calls downstream.
@@ -123,27 +123,23 @@ public static class SurfaceScoreCommand
                 var solutionDir = LocationHelper.GetSolutionDirectory(solution);
                 var config = SurfaceScoreConfig.LoadOrDefault(configPath, solutionDir, out var loadedFrom);
 
+                // Cached exact counts are used with or without a key; only --count-tokens with a key
+                // asks the API for the rest. Whatever stays uncounted is estimated.
                 var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-                const string skipped = "; sectionSize, classSize and testSize skipped";
-                if (!countTokens) Console.Error.WriteLine($"tokens: not counted (pass --count-tokens){skipped}");
-                else if (string.IsNullOrWhiteSpace(apiKey)) Console.Error.WriteLine($"tokens: not counted, ANTHROPIC_API_KEY is not set{skipped}");
+                if (countTokens && string.IsNullOrWhiteSpace(apiKey))
+                    Console.Error.WriteLine("tokens: ANTHROPIC_API_KEY is not set; uncached files are estimated");
                 using var counter = countTokens && !string.IsNullOrWhiteSpace(apiKey) ? new AnthropicTokenCounter(apiKey) : null;
-                var tokenCache = counter is null ? null : TokenCache.Load(tokenCachePath);
-                var measurer = counter is null ? null : new TokenMeasurer(counter, tokenCache!);
+                var tokenCache = TokenCache.Load(tokenCachePath);
+                var measurer = new TokenMeasurer(counter, tokenCache);
 
                 var engine = new SurfaceScoreEngine(config, solutionDir) { Tokens = measurer };
                 var report = await engine.ScoreAsync(solution, ct, maxBuildDiagnostics);
-                if (measurer is not null)
+                try { tokenCache.Save(); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    try { tokenCache!.Save(); }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    {
-                        Console.Error.WriteLine($"tokens: cache not saved to {tokenCachePath}: {ex.Message}");
-                    }
-                    Console.Error.WriteLine($"tokens: requests={measurer.Requests} cacheHits={measurer.CacheHits} failures={measurer.Failures} model={counter!.Model} cache={tokenCachePath}");
-                    foreach (var d in report.Diagnostics.Where(d => d.Code == "size-unpriced"))
-                        Console.Error.WriteLine($"tokens: {d.Message}");
+                    Console.Error.WriteLine($"tokens: cache not saved to {tokenCachePath}: {ex.Message}");
                 }
+                Console.Error.WriteLine($"tokens: total {report.Tokens?.Total} ({report.Tokens?.Total.Source}) requests={measurer.Requests} cacheHits={measurer.CacheHits} failures={measurer.Failures} model={measurer.Model} cache={tokenCachePath}");
                 report.ConfigPath = loadedFrom;
 
                 if (coveragePath is not null)
@@ -771,9 +767,9 @@ public static class SurfaceScoreCommand
                 .Select(e => new { from = e.From, to = e.To, count = e.Count }),
             tests = TestsJson(ScopedTests(report, filteredGroups, groupFilter)),
             tokens = report.Tokens is null ? null : groupFilter is null
-                ? new { total = report.Tokens.Total, files = report.Tokens.Files }
+                ? new { total = report.Tokens.Total.Value, totalSource = report.Tokens.Total.Source, files = report.Tokens.Files }
                 : report.Tokens.BySection.GetValueOrDefault(groupFilter) is { } scoped
-                    ? new { total = scoped.Total, files = scoped.Files }
+                    ? new { total = scoped.Total.Value, totalSource = scoped.Total.Source, files = scoped.Files }
                     : null,
             coverage = CoverageJson(ScopedCoverage(report, filteredGroups, groupFilter)),
             coverageFormat = report.CoverageFormat,
@@ -1044,19 +1040,32 @@ public static class SurfaceScoreCommand
     /// Test-corpus size of a scope, for the JSON report. Emitted for every group and once for the
     /// solution. Informational like <see cref="MetricsJson"/> — the test corpus is scored nowhere.
     /// </summary>
-    /// <summary>Null (omitted) unless tokens were counted. Classes largest first, capped by <c>--top</c>.</summary>
+    /// <summary>
+    /// A section's token figures, each with its source (exact or estimate) and, when an estimate sits
+    /// within 5% of a threshold, <c>nearThreshold</c>. Classes largest first, capped by <c>--top</c>.
+    /// </summary>
     private static object? TokensJson(SectionTokens? t, int top) => t is null ? null : new
     {
-        total = t.Total,
+        total = t.Total.Value,
+        totalSource = t.Total.Source,
+        totalNearThreshold = Near(t.Total),
         files = t.Files,
-        tests = t.Tests,
+        tests = t.Tests.Value,
+        testsSource = t.Tests.Source,
+        testsNearThreshold = Near(t.Tests),
         testFiles = t.TestFiles,
-        classes = t.Classes.Take(top).Select(c => new { name = c.Name, file = c.File, line = c.Line, tokens = c.Tokens }).ToArray()
+        classes = t.Classes.Take(top).Select(c => new
+        {
+            name = c.Name, file = c.File, line = c.Line, tokens = c.Tokens.Value, source = c.Tokens.Source, nearThreshold = Near(c.Tokens)
+        }).ToArray()
     };
 
+    private static bool? Near(TokenFigure f) => f.NearThreshold ? true : null;
+
+    /// <summary>"~" marks an estimate, "near-threshold" an estimate within 5% of a threshold.</summary>
     private static string TokensLine(SectionTokens t) =>
-        $"tokens: {(t.Total?.ToString() ?? "unmeasured")} in {t.Files} files, tests {(t.Tests?.ToString() ?? "unmeasured")} in {t.TestFiles}; largest " +
-        string.Join(", ", t.Classes.Take(3).Select(c => $"{c.Name} {(c.Tokens?.ToString() ?? "?")}"));
+        $"tokens: {t.Total} in {t.Files} files, tests {t.Tests} in {t.TestFiles}; largest " +
+        string.Join(", ", t.Classes.Take(3).Select(c => $"{c.Name} {c.Tokens}"));
 
     private static object TestsJson(TestMass t) => new
     {

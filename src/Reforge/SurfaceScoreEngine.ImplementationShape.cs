@@ -2,14 +2,15 @@ using Microsoft.CodeAnalysis;
 
 namespace Reforge;
 
-// Pass 6 — implementation shape, the counterweight to surface. Class size and the structural
-// dispatcher/flags smells; the per-declaration contents census is SurfaceScoreEngine.Contents.cs.
+// Pass 6: implementation shape, the counterweight to surface: the structural dispatcher/flags
+// smells. Class size is SurfaceScoreEngine.Size.cs; the per-declaration contents census is
+// SurfaceScoreEngine.Contents.cs.
 // Every point here lands on the internal axis, never the surface one.
 public sealed partial class SurfaceScoreEngine
 {
     /// <summary>
-    /// Scores the implementation hiding behind the surface: per-class size (services/repos/
-    /// controllers) and the structural action-dispatcher / flags smells. Mode-parameter and flags
+    /// Scores the implementation hiding behind the surface: the structural action-dispatcher /
+    /// flags smells. Mode-parameter and flags
     /// penalties apply only to methods that observably mutate state; the structural dispatcher
     /// applies to reads too, and a read-shape consolidation whose arms share a base query does not
     /// fire it.
@@ -19,31 +20,15 @@ public sealed partial class SurfaceScoreEngine
     {
         var countW = _config.Weight("methodCount");
         var complexityW = _config.Weight("methodComplexity");
-        var largeW = _config.Weight("largeClass");
         var dispW = _config.Weight("actionDispatcher");
         var mmpW = _config.Weight("mutationModeParameter");
         var flagsW = _config.Weight("flagsControlFlow");
-        if (largeW == 0 && dispW == 0 && mmpW == 0 && flagsW == 0) return;
+        if (dispW == 0 && mmpW == 0 && flagsW == 0) return;
 
         // For interface propagation: where does each classified type live, and what file.
         var groupByType = new Dictionary<string, (string Group, string File)>(StringComparer.Ordinal);
         foreach (var ct2 in classified)
             groupByType[ct2.Type.ToDisplayString()] = (ct2.Group, ct2.File);
-
-        // Classes classSize prices, by section, file and line. A nested class is priced inside its
-        // outermost container, so it is looked up by that.
-        var tokenPriced = (report.Tokens?.BySection ?? new Dictionary<string, SectionTokens>())
-            .SelectMany(kv => kv.Value.Classes.Where(t => t.Tokens is not null).Select(t => (kv.Key, t.File, t.Line)))
-            .ToHashSet();
-        var classifiedBySymbol = new Dictionary<INamedTypeSymbol, ClassifiedType>(SymbolEqualityComparer.Default);
-        foreach (var c in classified) classifiedBySymbol.TryAdd(c.Type, c);
-        (string, string, int) OutermostKey(ClassifiedType c)
-        {
-            var top = c.Type;
-            while (top.ContainingType is { } outer) top = outer;
-            var owner = classifiedBySymbol.GetValueOrDefault(top) ?? c;
-            return (owner.Group, owner.File, owner.Line);
-        }
 
         foreach (var c in classified)
         {
@@ -59,20 +44,6 @@ public sealed partial class SurfaceScoreEngine
             // half or skipped the handwritten one depending on that order. Matches SectionMetrics.
             var handwritten = HandwrittenDeclarations(c.Type, ct);
             if (handwritten.Count == 0) continue;
-
-            // Where classSize prices this class in exact tokens, this LOC proxy stands down. A class
-            // without a count (no --count-tokens, or a failed request) keeps it.
-            if (largeW != 0 && !tokenPriced.Contains(OutermostKey(c)) && IsSizeTrackedClass(c))
-            {
-                int classLoc = handwritten.Sum(ImplementationComplexity.NonBlankLines);
-                int pts = ImplementationComplexity.LargeClassPoints(classLoc) * largeW;
-                if (pts != 0)
-                {
-                    // Name a handwritten declaration: the charge is for that half.
-                    var (classFile, classLine) = LocateDeclaration(handwritten[0], c);
-                    AddEntry(report, c.Group, "largeClass", pts, c.Type, classFile, classLine, $"{c.Type.Name} ({classLoc} LOC)");
-                }
-            }
 
             foreach (var member in c.Type.GetMembers())
             {
@@ -215,12 +186,6 @@ public sealed partial class SurfaceScoreEngine
             }
         }
     }
-
-    private static bool IsSizeTrackedClass(ClassifiedType c)
-        => c.Tags.Contains("applicationService")
-        || c.Tags.Contains("repositoryImplementation")
-        || c.Tags.Contains("controller")
-        || c.Tags.Contains("backgroundJob");
 
     /// <summary>Declarations in files a developer wrote. Empty only when every declaration is generated.</summary>
     private static List<Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax> HandwrittenDeclarations(

@@ -97,7 +97,7 @@ public static class TestMassAnalyzer
     /// <summary>
     /// The text of every handwritten file in each section's attributed test projects, by the same
     /// filters and attribution <see cref="AnalyzeAsync"/> measures LOC with. Unattributed projects
-    /// are left out. Feeds the exact token counts that <c>testSize</c> prices.
+    /// are left out. Feeds the token figures that <c>testSize</c> prices.
     /// </summary>
     public static async Task<Dictionary<string, List<(string Path, string Text)>>> CollectFilesAsync(
         Solution solution, IReadOnlyList<ClassifiedType> classified, CancellationToken ct)

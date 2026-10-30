@@ -2,6 +2,17 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Size without a key
+
+- **Size is always priced.** Without exact counts each file's tokens are estimated by a linear model
+  over Roslyn lexer features, fitted on Humans: +2.2% on reforge's own files, about 2% median per
+  section. JSON marks every token figure `exact` or `estimate` and flags estimates within 5% of a
+  threshold `nearThreshold`; an exact count, measured or cached, always wins for its file.
+- **`largeClass` is retired.** It only priced classes without a token count, and every class now has one.
+- **The token cache is durable and shared.** Keyed by model and content hash, read on every run so
+  cached counts stay exact without a key, appended under a lock so concurrent runs lose nothing, and
+  settable once per driver with `REFORGE_TOKEN_CACHE`.
+
 ## Unreleased - Price the logic, not its arrangement
 
 - **`actionDispatcher` prices a selector by the operations its arms hide**, inline or delegated, bool

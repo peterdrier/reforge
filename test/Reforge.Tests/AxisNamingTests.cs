@@ -33,7 +33,7 @@ public class AxisNamingTests
         Assert.Equal(
             new[]
             {
-                "actionDispatcher", "classSize", "flagsControlFlow", "largeClass", "methodComplexity",
+                "actionDispatcher", "classSize", "flagsControlFlow", "methodComplexity",
                 "methodCount", "mutationModeParameter", "sectionSize", "testSize"
             },
             SurfaceScoreRuleGroups.ImplementationShape.OrderBy(r => r, StringComparer.Ordinal).ToArray());

@@ -61,9 +61,9 @@ it, so nothing outside can break when it changes. (`protected` doesn't count as 
 shape its implementation actually has.
 
 The axis is named for what it measures, not for an accessibility level. `implementationShape` has no
-`internal` gate: it is a fixed set of rules (`methodComplexity`, `methodCount`, `largeClass`,
-`actionDispatcher`, `mutationModeParameter`, `flagsControlFlow`, and with token counts `sectionSize`,
-`classSize`, `testSize`), and public code scores on it too.
+`internal` gate: it is a fixed set of rules (`methodComplexity`, `methodCount`,
+`actionDispatcher`, `mutationModeParameter`, `flagsControlFlow`, `sectionSize`, `classSize`,
+`testSize`), and public code scores on it too.
 Its rules charge for shapes an edit can genuinely improve: a class carrying too much, a parameter
 that switches a method between two behaviours.
 
@@ -152,10 +152,8 @@ continuity with the `snapshot` history series, which has always recorded it solu
 The corpus is the **scoring** corpus, so a metric and a score always describe the same code: no
 test projects (they are measured separately — see below), no generated code (EF
 migrations, `*.g.cs`, `*.Designer.cs` — excluded from the implementation-shape axis too), and complexity
-measured only over methods that have a body. `maxClassLoc` covers classes and structs — the same
-set `classes` counts, which is deliberately wider than the set the `largeClass` rule scores (that
-rule tracks only application services, repository implementations, controllers and background jobs).
-The block describes the section's size, so it reports the section's largest class even when no rule
+measured only over methods that have a body. `maxClassLoc` covers classes and structs, the same
+set `classes` counts. The block describes the section's size, so it reports the section's largest class even when no rule
 currently charges for it. With `--group` set, the top-level rollup
 scopes to that section, the way `byRule` already does. `--list-groups` carries `locProd` for every
 section — including sections that scored nothing — so sections can be ranked by size without
@@ -223,19 +221,30 @@ the solution (test projects) are listed in an `info` diagnostic and left out of 
 are sections the report never mentions. Line counts agree with Coverlet's own `lines-covered` /
 `lines-valid`. Informational: nothing here feeds a score.
 
-**Exact token counts, opt in.** `surface-score --count-tokens` measures each section (the sum of its
-whole handwritten files, the set `metrics.files` counts, plus the same for its attributed test files)
-and each top-level class (its declaration spans across every partial file, doc comments and nested
-types included) with Anthropic's `count_tokens` API, using `ANTHROPIC_API_KEY`. Without the flag or
-the key nothing is estimated: the `tokens` fields are absent, the size rules are skipped, and stderr
-says so. Each count is the request's `input_tokens` less that of a one-character baseline
-message, counted once, so file counts add up. Counts are cached by SHA-256 of model and text in
-`<LocalApplicationData>/reforge/token-cache.json` (`--token-cache` overrides), so a rerun pays only
-for changed text. Requests run four at a time and honour `retry-after` on 429; a failure warns on
-stderr and leaves that total null and unpriced.
+**Tokens, exact where counted and estimated elsewhere.** `surface-score` sizes each section (the
+sum of its whole handwritten files, the set `metrics.files` counts, plus the same for its attributed
+test files) and each top-level class (its declaration spans across every partial file, doc comments
+and nested types included) in Claude tokens. Each text takes its exact count when the cache holds
+one, and otherwise a keyless estimate: a linear model over Roslyn lexer features (identifier
+subwords, keywords, punctuation, numbers, string and comment characters, indented lines), fitted on
+Humans and within about 2% of exact on Humans and reforge totals. In JSON every figure carries
+`totalSource`/`testsSource`/`source` (`exact` or `estimate`), and an estimate within 5% of one of its
+thresholds carries `nearThreshold`, since its error could put it on either side; the compact output
+marks estimates `~` and those `near-threshold`. `--count-tokens` with `ANTHROPIC_API_KEY` asks
+Anthropic's `count_tokens` API for every text the cache lacks, four requests at a time, honouring
+`retry-after` on 429; a failure warns on stderr and that text is estimated. Each count is the
+request's `input_tokens` less that of a one-character baseline message, counted once, so file counts
+add up.
 
-**Size is priced in those tokens, and only in them** (implementation-shape axis; k is thousands of
-tokens). Never LOC or characters as a stand-in.
+**The token cache** is keyed by model and content hash and read on every run, key or not, so a
+cached count stays exact and a text already cached costs no request. It lives at `--token-cache`,
+else `$REFORGE_TOKEN_CACHE`, else `<LocalApplicationData>/reforge/token-cache.txt`, and is built for
+a driver scoring many snapshots: one `count model hash` line per entry, appended under a lock file
+so concurrent runs lose nothing, rewritten through a temp file and rename when duplicates pile up. A
+million entries load in about a second.
+
+**Size is priced in those tokens** (implementation-shape axis; k is thousands of tokens), never in
+LOC or characters.
 
 | rule | measures | free up to | linear | tax above |
 |---|---|--:|--:|---|
@@ -247,11 +256,11 @@ The rates are the weights; the thresholds and taxes are `sectionSizeFreeTokens`,
 `sectionSizeTaxTokens`, `sectionSizeTaxPercent`, `classSizeFreeTokens`, `classSizeTaxTokens`,
 `classSizeTaxPercent`, `sizeTaxExponent` and `testSizeFreePercent`. Whole files make the section
 charge blind to partials and sibling types; only moving code to another section lowers it. Splitting
-a class into siblings lowers the class charge, since each piece then fits one read. A class with a
-token count skips `largeClass`, since `classSize` prices the same thing exactly; one without (no
-counts, or a failed request) keeps it. On Humans the three add about 18% to the total.
+a class into siblings lowers the class charge, since each piece then fits one read. On Humans the
+three add about 18% to the total.
 
 ```powershell
+reforge surface-score --format json > score.json   # estimates, plus any cached exact counts
 $env:ANTHROPIC_API_KEY = "..."; reforge surface-score --count-tokens --format json > tokens.json
 ```
 

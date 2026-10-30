@@ -121,13 +121,14 @@ public static class SkillCommand
         or no key when unmeasured; `coverageFormat` says which reader ran. Test assemblies in the
         report are listed in a diagnostic and left out. Informational; never scored.
 
-        **Exact token counts are opt in, and size is priced only on them.** `--count-tokens` (needs
-        `ANTHROPIC_API_KEY`) adds `tokens: { total, files, tests, testFiles, classes }` per group: a
-        section is its whole handwritten files, a class its spans across partials, measured by
-        Anthropic's `count_tokens` net of a baseline request and cached by content hash
-        (`--token-cache`). The counts drive `sectionSize`, `classSize` and `testSize`. Without the
-        flag or key the fields are absent and those rules are skipped; a failed request leaves its
-        total null and unpriced. Never estimated.
+        **Size is priced in tokens, exact where counted and estimated elsewhere.** Each group has
+        `tokens: { total, files, tests, testFiles, classes }`: a section is its whole handwritten
+        files, a class its spans across partials. A file takes its cached exact count, else a
+        lexical estimate (about 2% off on a section); `totalSource`, `testsSource` and each class's
+        `source` say `exact` or `estimate`, and `nearThreshold` marks an estimate within 5% of a
+        threshold, which may sit on either side. `--count-tokens` (needs `ANTHROPIC_API_KEY`) counts
+        uncached files with Anthropic's `count_tokens`, cached by model and content hash
+        (`--token-cache`, else `REFORGE_TOKEN_CACHE`). They drive `sectionSize`, `classSize` and `testSize`.
 
         **Test mass is reported per section, and scored nowhere.** A `tests` block per group (plus a
         solution rollup) carries `loc`, `files`, `projects`, and `locVsProdPercent` — test LOC as a

@@ -17,7 +17,6 @@ public static class SurfaceScoreRuleGroups
 {
     public static readonly IReadOnlySet<string> ImplementationShape = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "largeClass",
         "methodComplexity",
         "methodCount",
         "actionDispatcher",
@@ -66,15 +65,6 @@ public static class ImplementationComplexity
             if (!string.IsNullOrWhiteSpace(s)) n++;
         }
         return n;
-    }
-
-    /// <summary>largeClass base points: +10 per 250 nonblank LOC over 750, +25 over 1500.</summary>
-    public static int LargeClassPoints(int loc)
-    {
-        if (loc <= 750) return 0;
-        int p = ((loc - 750) / 250) * 10;
-        if (loc > 1500) p += 25;
-        return p;
     }
 
     // ---------------- Cognitive complexity (SonarSource) ----------------

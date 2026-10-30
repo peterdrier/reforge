@@ -52,11 +52,11 @@ public class TokenCountTests
 
         var core = census.BySection["Core"];
         // Baseline "." is 1 char: every measurement is length - 1.
-        Assert.Equal(99 + 49 + 29, core.Total);
+        Assert.Equal(new TokenFigure(99 + 49 + 29, false), core.Total);
         Assert.Equal(3, core.Files);
         Assert.Equal(core.Total, census.Total);
         Assert.Equal(["Core.A", "Core.Nested"], core.Classes.Select(x => x.Name));
-        Assert.Equal(79 + 39, core.Classes[0].Tokens);
+        Assert.Equal(79 + 39, core.Classes[0].Tokens.Value);
     }
 
     [Fact]
@@ -75,13 +75,13 @@ public class TokenCountTests
         var before = await TokenCensus.MeasureAsync(one, new TokenMeasurer(new FakeCounter(), TokenCache.InMemory()), CancellationToken.None);
         var after = await TokenCensus.MeasureAsync(split, new TokenMeasurer(new FakeCounter(), TokenCache.InMemory()), CancellationToken.None);
 
-        Assert.True(after.BySection["S"].Total >= before.BySection["S"].Total);
+        Assert.True(after.BySection["S"].Total.Value >= before.BySection["S"].Total.Value);
     }
 
     [Fact]
     public async Task SecondRun_IsServedFromCache()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"reforge-tokens-{Guid.NewGuid():N}.json");
+        var path = Path.Combine(Path.GetTempPath(), $"reforge-tokens-{Guid.NewGuid():N}.txt");
         try
         {
             var types = new List<TypeText> { Type("S", "S.A", true, [("A.cs", "class A { int x; }")], "class A { int x; }") };
@@ -98,13 +98,13 @@ public class TokenCountTests
             var census = await TokenCensus.MeasureAsync(types, measurer, CancellationToken.None);
             Assert.Equal(0, second.Calls);
             Assert.Equal(0, measurer.Requests);
-            Assert.Equal("class A { int x; }".Length - 1, census.Total);
+            Assert.Equal(new TokenFigure("class A { int x; }".Length - 1, false), census.Total);
         }
-        finally { File.Delete(path); }
+        finally { File.Delete(path); File.Delete(path + ".lock"); }
     }
 
     [Fact]
-    public async Task FailedCount_LeavesTotalsNull_AndIsNotCached()
+    public async Task FailedCount_IsEstimated_AndIsNotCached()
     {
         var types = new List<TypeText>
         {
@@ -116,13 +116,56 @@ public class TokenCountTests
 
         var census = await TokenCensus.MeasureAsync(types, measurer, CancellationToken.None);
 
-        Assert.Null(census.Total);
-        Assert.Null(census.BySection["S"].Total);
-        Assert.Null(census.BySection["S"].Classes.Single(c => c.Name == "S.Bad").Tokens);
-        Assert.Equal(11, census.BySection["S"].Classes.Single(c => c.Name == "S.Ok").Tokens);
+        var bad = census.BySection["S"].Classes.Single(c => c.Name == "S.Bad").Tokens;
+        Assert.Equal(new TokenFigure(TokenEstimator.Estimate("class Bad { }"), true), bad);
+        Assert.Equal(new TokenFigure(11, false), census.BySection["S"].Classes.Single(c => c.Name == "S.Ok").Tokens);
+        Assert.Equal(new TokenFigure(11 + bad.Value, true), census.Total);
         Assert.Equal(1, measurer.Failures);
         Assert.Equal(2, cache.Count);
     }
+
+    [Fact]
+    public async Task WithoutAKey_CachedTextIsExact_PerFile_AndTheRestIsEstimated()
+    {
+        const string cached = "class Cached { }";
+        const string fresh = "class Fresh { int x; }";
+        var cache = TokenCache.InMemory();
+        var model = AnthropicTokenCounter.DefaultModel;
+        cache.Set(TokenCache.Key(model, TokenMeasurer.BaselineText), 8);
+        cache.Set(TokenCache.Key(model, cached), 1008); // far from any estimate, so a mix-up shows
+        var types = new List<TypeText>
+        {
+            Type("S", "S.Cached", true, [("Cached.cs", cached)], cached),
+            Type("S", "S.Fresh", true, [("Fresh.cs", fresh)], fresh),
+        };
+
+        var census = await TokenCensus.MeasureAsync(types, new TokenMeasurer(null, cache), CancellationToken.None);
+
+        var classes = census.BySection["S"].Classes.ToDictionary(c => c.Name, c => c.Tokens);
+        Assert.Equal(new TokenFigure(1000, false), classes["S.Cached"]);
+        Assert.Equal(new TokenFigure(TokenEstimator.Estimate(fresh), true), classes["S.Fresh"]);
+        Assert.Equal(new TokenFigure(1000 + TokenEstimator.Estimate(fresh), true), census.BySection["S"].Total);
+        Assert.Equal("estimate", census.BySection["S"].Total.Source);
+    }
+
+    [Fact]
+    public async Task NoMeasurer_EstimatesEverything()
+    {
+        var types = new List<TypeText> { Type("S", "S.A", true, [("A.cs", "class A { }")], "class A { }") };
+
+        var census = await TokenCensus.MeasureAsync(types, null, CancellationToken.None);
+
+        Assert.Equal(new TokenFigure(TokenEstimator.Estimate("class A { }"), true), census.Total);
+    }
+
+    [Theory]
+    [InlineData(7_600, true, true)]    // 5% under 8k
+    [InlineData(8_400, true, true)]    // 5% over
+    [InlineData(8_401, true, false)]
+    [InlineData(23_800, true, true)]   // near the second threshold
+    [InlineData(8_000, false, false)]  // exact figures are trusted on either side
+    public void NearThreshold_FlagsOnlyEstimatesWithinFivePercent(int value, bool estimated, bool near) =>
+        Assert.Equal(near, new TokenFigure(value, estimated).Flag(8_000, 25_000).NearThreshold);
 
     [Fact]
     public void Collect_TakesEveryPartialSpan_AndSkipsGeneratedFiles()

@@ -21,7 +21,7 @@ namespace Reforge.Tests;
 /// section, referenced by the main one, except a subdirectory whose name contains <c>Test</c>: that is
 /// a test project referencing the main one. A pair with <c>tokensPerChar</c> is scored with a fake
 /// token counter (that many tokens per letter or digit), so the size rules price it; other pairs are
-/// scored without tokens and the size rules are skipped. Set <c>REFORGE_CORPUS_REPORT</c> to a path to write the
+/// priced on estimated tokens, as a run without counts is. Set <c>REFORGE_CORPUS_REPORT</c> to a path to write the
 /// results table, and <c>REFORGE_CORPUS_CONFIG</c> to score under another config (the ratchet is
 /// skipped then, since the gap markers describe the default weights).</para>
 /// </summary>
