@@ -18,7 +18,8 @@ public static class SurfaceScoreRuleGroups
     public static readonly IReadOnlySet<string> ImplementationShape = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "largeClass",
-        "cognitiveComplexity",
+        "methodComplexity",
+        "methodCount",
         "actionDispatcher",
         "mutationModeParameter",
         "flagsControlFlow"
@@ -96,12 +97,24 @@ public static class ImplementationComplexity
     /// reader to a signature the code is not in.
     /// </remarks>
     public static CognitiveScore CognitiveDetail(BaseMethodDeclarationSyntax method)
+        => method.Body is { } block ? CognitiveOf(block)
+            : method.ExpressionBody is { } arrow ? CognitiveOf(arrow)
+            : new CognitiveScore(0, 0, 0);
+
+    /// <summary>
+    /// Cognitive complexity of one piece of code walked from its own root: a block body, an arrow
+    /// body, or an initializer expression. What a method, an accessor and a delegate-valued field
+    /// have in common, so all three are measured the same way.
+    /// </summary>
+    internal static CognitiveScore CognitiveOf(SyntaxNode code)
     {
         var w = new CognitiveWalker();
-        if (method.Body is { } block)
-            w.VisitChildren(block, 0);
-        else if (method.ExpressionBody is { } arrow)
-            w.Visit(arrow.Expression, 0);
+        switch (code)
+        {
+            case BlockSyntax block: w.VisitChildren(block, 0); break;
+            case ArrowExpressionClauseSyntax arrow: w.Visit(arrow.Expression, 0); break;
+            default: w.Visit(code, 0); break;
+        }
         return new CognitiveScore(w.Score, w.TopNestedScore, w.TopNestedLine);
     }
 

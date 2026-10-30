@@ -153,8 +153,9 @@ most important method in the corpus to keep simple.
 Current `cognitiveComplexity` scores on the fold: a method's call-path score is its own cognitive
 complexity plus that of every helper of any accessibility, other than overrides and interface
 implementations, whose sole caller it is within the same top-level type, transitively, and the
-threshold of 15 applies to that sum. This document proposes moving the fold to a reporting view and
-scoring per declaration instead.
+threshold of 15 applies to that sum. A group that calls single-caller methods in other types is
+also charged what the type boundary kept under the threshold, at most one threshold (#76). This
+document proposes moving the fold to a reporting view and scoring per declaration instead.
 
 The fold exists to defend the threshold. Charge every method from zero and splitting is already
 total-neutral without it. As a scoring basis under a census it fails three ways:
@@ -170,7 +171,8 @@ total-neutral without it. As a scoring basis under a census it fails three ways:
 
 The fold survives as an **attribution and reporting** view ("what does it cost to read this entry
 point") and stays out of the scored total. That also removes the sole-caller rule, and with it the
-manufactured-second-caller escape fixtured on `cognitiveComplexity`.
+manufactured-second-caller escape fixtured on `cognitiveComplexity`, and the cross-type charge with
+its one-threshold cap: a declaration costs the same in whichever type it sits.
 
 ### Dividing by caller count
 

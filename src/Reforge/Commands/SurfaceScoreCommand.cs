@@ -643,6 +643,7 @@ public static class SurfaceScoreCommand
                 total = g.Total,
                 metrics = MetricsJson(g.Metrics),
                 surface = SurfaceJson(g.Surface),
+                contents = ContentsJson(report.ContentsBySection.GetValueOrDefault(g.Name) ?? ContentsCensus.Empty),
                 coverage = CoverageJson(g.Coverage),
                 tests = TestsJson(g.Tests),
                 byRule = g.ByRule
@@ -726,6 +727,9 @@ public static class SurfaceScoreCommand
             // the section's. `scope` says which one this is.
             metrics = MetricsJson(ScopedMetrics(report, filteredGroups, groupFilter)),
             surface = SurfaceJson(ScopedSurface(report, filteredGroups, groupFilter)),
+            contents = ContentsJson(groupFilter is null
+                ? report.Contents
+                : report.ContentsBySection.GetValueOrDefault(groupFilter) ?? ContentsCensus.Empty),
             edges = report.Edges
                 .Where(e => groupFilter is null
                     || string.Equals(e.From, groupFilter, StringComparison.OrdinalIgnoreCase)
@@ -943,6 +947,28 @@ public static class SurfaceScoreCommand
             read = s.InternalReadMethods,
             write = s.InternalWriteMethods
         }
+    };
+
+    /// <summary>
+    /// The contents census of a scope, for the JSON report: what <c>methodCount</c> and
+    /// <c>methodComplexity</c> priced, by accessibility and by own-complexity band. Informational,
+    /// and JSON only — it is calibration data for those weights, not something to act on.
+    /// </summary>
+    private static object ContentsJson(ContentsCensus c) => new
+    {
+        declarations = c.Declarations,
+        byAccessibility = new
+        {
+            @public = c.Public,
+            @internal = c.Internal,
+            @protected = c.Protected,
+            @private = c.Private,
+            localFunctions = c.LocalFunctions
+        },
+        cognitive = c.Cognitive,
+        complexityBands = ContentsCensus.BandLabels
+            .Select((label, i) => (label, i))
+            .ToDictionary(x => x.label, x => c.Bands[x.i])
     };
 
     /// <summary>One-line census for the compact and markdown reports.</summary>

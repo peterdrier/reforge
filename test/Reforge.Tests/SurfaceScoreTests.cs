@@ -622,7 +622,7 @@ public class SurfaceScoreTests
     {
         var report = await ScoreDefaultAsync();
         var entries = AllEntries(report).ToList();
-        Assert.Contains(entries, e => e.Rule == "cognitiveComplexity" && e.Symbol == "BuildEverything");
+        Assert.Contains(entries, e => e.Rule == "methodComplexity" && e.Symbol == "BuildEverything");
     }
 
     [Fact]
@@ -719,10 +719,10 @@ public class SurfaceScoreTests
     [Fact]
     public void Pareto_SurfaceDownComplexityUp_IsTradedAndSuspicious()
     {
-        // Bad consolidation: surface dropped 48 but complexity rose 63, driven by cognitiveComplexity
+        // Bad consolidation: surface dropped 48 but complexity rose 63, driven by methodComplexity
         // (a god-method growth, not a dispatcher) — so the kind is complexity-traded-for-surface.
         var basePath = WriteBaseline(surface: 1000, internalC: 50, byRule: new() { ["applicationServiceMethod"] = 80 });
-        var now = MakeReport(surface: 952, internalC: 113, byRule: new() { ["applicationServiceMethod"] = 80, ["cognitiveComplexity"] = 63 });
+        var now = MakeReport(surface: 952, internalC: 113, byRule: new() { ["applicationServiceMethod"] = 80, ["methodComplexity"] = 63 });
 
         var cmp = SurfaceScoreBaseline.Compare(now, basePath);
 
@@ -781,11 +781,11 @@ public class SurfaceScoreTests
     [Fact]
     public void Pareto_MethodSurfaceDownDispatcherUp_FlagsConsolidation()
     {
-        // The sneaky non-traded case: complexity net IMPROVES (cognitiveComplexity fell more than the
+        // The sneaky non-traded case: complexity net IMPROVES (methodComplexity fell more than the
         // dispatcher rose), so the verdict isn't "traded" — but a dispatcher appeared while
         // public method surface shrank. The early-warning detector must still flag it.
-        var basePath = WriteBaseline(surface: 1000, internalC: 50, byRule: new() { ["applicationServiceMethod"] = 60, ["cognitiveComplexity"] = 50 });
-        var now = MakeReport(surface: 985, internalC: 40, byRule: new() { ["applicationServiceMethod"] = 30, ["actionDispatcher"] = 30, ["cognitiveComplexity"] = 10 });
+        var basePath = WriteBaseline(surface: 1000, internalC: 50, byRule: new() { ["applicationServiceMethod"] = 60, ["methodComplexity"] = 50 });
+        var now = MakeReport(surface: 985, internalC: 40, byRule: new() { ["applicationServiceMethod"] = 30, ["actionDispatcher"] = 30, ["methodComplexity"] = 10 });
 
         var cmp = SurfaceScoreBaseline.Compare(now, basePath);
 

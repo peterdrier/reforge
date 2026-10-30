@@ -62,11 +62,13 @@ public class EffectiveAccessibilityTests
         // exportedReadMethod / methodParameterOverflow / booleanParameter all charge for the
         // shape of a signature nobody outside the assembly can call. (crossSectionFullService on
         // the same class is a use, not a declaration — asserted separately below.)
-        Assert.DoesNotContain(reporting.Entries,
+        // The contents census charges internal code too, by design, so it is left out here.
+        var surface = reporting.Entries.Where(e => !SurfaceScoreRuleGroups.IsImplementationShape(e.Rule)).ToList();
+        Assert.DoesNotContain(surface,
             e => e.Symbol == "InternalReportService" && e.Rule != "crossSectionFullService");
-        Assert.DoesNotContain(reporting.Entries, e => e.Symbol == "RenderAsync");
-        Assert.DoesNotContain(reporting.Entries, e => e.Symbol == "InternalReportInfo");
-        Assert.DoesNotContain(reporting.Entries, e => e.Symbol == "PayloadInfo");
+        Assert.DoesNotContain(surface, e => e.Symbol == "RenderAsync");
+        Assert.DoesNotContain(surface, e => e.Symbol == "InternalReportInfo");
+        Assert.DoesNotContain(surface, e => e.Symbol == "PayloadInfo");
 
         // The exported consumer in the same section still scores normally — the gate is per
         // declaration, not a blanket exemption for the section.
@@ -93,7 +95,8 @@ public class EffectiveAccessibilityTests
 
         // IReportExporter is exported, but HiddenExportInput is only ever a parameter of its
         // C# 8 `private static` member — no external consumer can pass one.
-        Assert.DoesNotContain(reporting.Entries, e => e.Symbol == "HiddenExportInput");
+        Assert.DoesNotContain(reporting.Entries,
+            e => e.Symbol == "HiddenExportInput" && !SurfaceScoreRuleGroups.IsImplementationShape(e.Rule));
     }
 
     [Fact]

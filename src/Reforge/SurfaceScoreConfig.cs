@@ -79,6 +79,24 @@ public sealed class SurfaceScoreConfig
     public int ContractsAssemblyMultiplier { get; set; } = 1;
 
     /// <summary>
+    /// The method complexity <c>methodComplexity</c> charges linearly up to. Past it each declaration
+    /// also pays <see cref="ComplexityTaxPercent"/>% of the excess raised to
+    /// <see cref="ComplexityTaxExponent"/>, so a method far past it is cheapest split into pieces near
+    /// it. With the flat <c>methodCount</c> charge this sets the method size the score prefers: a
+    /// method is worth splitting once the tax on its excess exceeds the flat charge of another piece,
+    /// which the defaults put at complexity 20 for a two-way split. An exponent above 1 keeps that
+    /// pressure growing with size; at 1.5 rather than 2 one very large method no longer outweighs a
+    /// whole section's surface. Proposals, to tune against a measured corpus.
+    /// </summary>
+    public int ComplexityThreshold { get; set; } = 10;
+
+    /// <inheritdoc cref="ComplexityThreshold"/>
+    public int ComplexityTaxPercent { get; set; } = 16;
+
+    /// <inheritdoc cref="ComplexityThreshold"/>
+    public double ComplexityTaxExponent { get; set; } = 1.5;
+
+    /// <summary>
     /// Glob patterns matched against a dispatcher parameter's <i>type</i> name. These act
     /// only as a tie-breaker — the read/write decision is made behaviorally (does the
     /// method mutate?), so a shape type cannot be used to evade a penalty on a mutation by
@@ -265,14 +283,19 @@ public sealed class SurfaceScoreConfig
                 ["oneImplementationInterface"] = 8,
 
                 // Implementation-shape axis — implementation cost hiding behind the surface.
-                // These weights are MULTIPLIERS over base points computed from syntax
-                // (cognitive complexity, LOC tiers, dispatcher arm count); default 1 applies
-                // the base points as-is, 0 disables the rule. They are tracked on a separate
-                // scalar (implementationShapeTotal) and are never added into the surface score.
-                // No longMethod key: length is not charged separately from the call-path
-                // complexity it almost entirely duplicated.
+                // Tracked on a separate scalar (implementationShapeTotal), never added into the
+                // surface score; 0 disables a rule.
+                //
+                // The contents census charges every declaration that carries code, whatever its
+                // accessibility. methodComplexity multiplies each declaration's own cognitive
+                // complexity through the curve set by ComplexityThreshold/TaxPercent/TaxExponent;
+                // methodCount is the flat points per declaration. Proposals to tune against a
+                // measured corpus (the report's `contents` block), not settled.
+                ["methodComplexity"] = 1,
+                ["methodCount"] = 5,
+                // The rest are MULTIPLIERS over base points computed from syntax (LOC tiers,
+                // dispatcher arm count); default 1 applies the base points as-is.
                 ["largeClass"] = 1,
-                ["cognitiveComplexity"] = 1,
                 ["actionDispatcher"] = 1,
                 // No genericActionDispatcher key: it was folded into actionDispatcher as three
                 // surcharges rather than kept as a rule gated on all of them at once.

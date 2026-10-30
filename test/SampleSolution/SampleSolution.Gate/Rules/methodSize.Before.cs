@@ -1,0 +1,56 @@
+// gate1: methodComplexity
+//
+// The three arrangements of the same 50 points of cognitive complexity, scored against each other.
+// This one is the monolith: five independent tallies in one method at complexity 50, far past the
+// threshold, so it pays the tax on all 40 points of excess, which outweighs five extra flat charges.
+
+namespace SampleSolution.Gate.Rules;
+
+public sealed class GateMeterBeforeService
+{
+    public int Total(IReadOnlyList<int> values)
+    {
+        int s = 0;
+        foreach (var v in values)
+        {
+            if (v % 2 == 0) s += 1;
+            if (v % 3 == 0) s += 2;
+            if (v % 5 == 0) s += 3;
+            if (v % 7 == 0) s += 4;
+            else s -= 1;
+        }
+        foreach (var v in values)
+        {
+            if (v % 3 == 0) s += 1;
+            if (v % 4 == 0) s += 2;
+            if (v % 6 == 0) s += 3;
+            if (v % 11 == 0) s += 4;
+            else s -= 1;
+        }
+        foreach (var v in values)
+        {
+            if (v % 2 == 0) s += 1;
+            if (v % 5 == 0) s += 2;
+            if (v % 9 == 0) s += 3;
+            if (v % 13 == 0) s += 4;
+            else s -= 1;
+        }
+        foreach (var v in values)
+        {
+            if (v % 4 == 0) s += 1;
+            if (v % 7 == 0) s += 2;
+            if (v % 10 == 0) s += 3;
+            if (v % 17 == 0) s += 4;
+            else s -= 1;
+        }
+        foreach (var v in values)
+        {
+            if (v % 3 == 0) s += 1;
+            if (v % 8 == 0) s += 2;
+            if (v % 11 == 0) s += 3;
+            if (v % 19 == 0) s += 4;
+            else s -= 1;
+        }
+        return s;
+    }
+}

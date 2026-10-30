@@ -111,6 +111,10 @@ public sealed class ScoreReport
     /// no <see cref="GroupScore"/>. Keyed by section name.
     /// </summary>
     public Dictionary<string, SectionMetrics> MetricsBySection { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Solution-level contents census — see <see cref="ContentsCensus"/>. Informational.</summary>
+    public ContentsCensus Contents { get; } = new();
+    /// <summary>Contents census per section that declares any code. Keyed by section name.</summary>
+    public Dictionary<string, ContentsCensus> ContentsBySection { get; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Solution-level surface census — see <see cref="SurfaceCensus"/>. Informational.</summary>
     public SurfaceCensus Surface { get; set; } = SurfaceCensus.Empty;
     /// <summary>Surface census for every section in the corpus, scored or not. Keyed by section name.</summary>
