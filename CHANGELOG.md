@@ -8,14 +8,18 @@ What changed and why. Newest first.
   or enum: each arm past the first pays the surface price of the method it replaces, so collapsing
   methods behind a selector never pays at any width. A table of delegates nests like the switch it
   replaces, and a discarded call to a pure method no longer counts as a second caller.
-- **Widening a method is never free:** `internalWiderThanUse` (2) and `protectedWiderThanUse` (1)
-  charge visibility beyond private that nothing outside the type uses, below public surface.
-- **An interface operation is priced once**, `oneImplementationInterface` skips an interface another
-  assembly binds to, and `crossSectionConcreteService` (12) makes a concrete class the dearest
-  cross-section dependency, so a public interface over an internal class is the cheapest door.
-  `surface-score --count-tokens` measures exact tokens with Anthropic's `count_tokens`, cached by
-  content hash, and only then prices size: `sectionSize` (whole files, so partials and siblings don't
-  escape it), `classSize` (replacing `largeClass`), and `testSize` past the section's own size, about 18% of the Humans total.
+- **Arrangement costs less, visibility more:** `methodCount` falls from 5 to 3, the charge that
+  predicted fixes least beyond size, so a two-way split pays from complexity 18 and a lambda table
+  replacing a switch costs one flat charge more. `internalWiderThanUse` (2) and
+  `protectedWiderThanUse` (1) charge visibility beyond private that nothing outside the type uses.
+- **Coupling weighs three times as much** (`crossSection*`, `writeCapableInterfaceUsedReadOnly`,
+  `oneImplementationInterface`): it predicted fixes beyond size best per point but carried about 4%
+  of the Humans total, now about 10%. An interface operation is priced once, `oneImplementationInterface`
+  skips an interface another assembly binds to, and `crossSectionConcreteService` (36) makes a
+  concrete class the dearest cross-section dependency. `surface-score --count-tokens` measures exact
+  tokens with Anthropic's `count_tokens`, cached by content hash, and only then prices size:
+  `sectionSize` (whole files, so partials and siblings don't escape it), `classSize` (replacing
+  `largeClass`), and `testSize` past the section's own size, about a fifth of the Humans total.
 
 ## Unreleased - A labelled corpus for reviewing the weights
 

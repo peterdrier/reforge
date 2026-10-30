@@ -34,6 +34,6 @@
     { "id": "SplitGodClassIntoSiblings", "label": "better", "tokensPerChar": 100, "rationale": "A class past the 25k-token tax split into two sibling classes along a seam no method crosses; each piece now fits one read." },
     { "id": "CopyPasteTestSetup", "label": "worse", "tokensPerChar": 10, "rationale": "A shared test helper pasted into every test, so the section's tests outgrow its production code; the logic tested is unchanged." },
     { "id": "ExplicitInterfaceImpl", "label": "lateral", "rationale": "An internal interface implemented explicitly instead of implicitly." },
-    { "id": "SwitchToDictionaryDispatch", "label": "lateral", "rationale": "A switch whose arms compute a price becomes a dictionary of lambdas keyed by the same enum.", "gap": "extra-declaration" }
+    { "id": "SwitchToDictionaryDispatch", "label": "worse", "rationale": "A switch whose arms compute a price becomes a dictionary of lambdas keyed by the same enum; the table is one more declaration to read, so it pays one more flat charge." }
   ]
 }

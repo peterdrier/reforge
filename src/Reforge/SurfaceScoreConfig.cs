@@ -84,7 +84,7 @@ public sealed class SurfaceScoreConfig
     /// <see cref="ComplexityTaxExponent"/>, so a method far past it is cheapest split into pieces near
     /// it. With the flat <c>methodCount</c> charge this sets the method size the score prefers: a
     /// method is worth splitting once the tax on its excess exceeds the flat charge of another piece,
-    /// which the defaults put at complexity 20 for a two-way split. An exponent above 1 keeps that
+    /// which the defaults put at complexity 18 for a two-way split. An exponent above 1 keeps that
     /// pressure growing with size; at 1.5 rather than 2 one very large method no longer outweighs a
     /// whole section's surface. Proposals, to tune against a measured corpus.
     /// </summary>
@@ -333,20 +333,21 @@ public sealed class SurfaceScoreConfig
                 ["parameterBagInput"] = 1,
                 ["inlineParameterObjectConstruction"] = 1,
 
-                // Dependency use
+                // Dependency use. Coupling predicts later fixes beyond size better per point than
+                // any other surface measure; these weights put it near a tenth of a large total.
                 ["sameSectionReadService"] = 0,
-                ["crossSectionReadInterface"] = 2,
-                ["crossSectionFullService"] = 8,
-                ["crossSectionConcreteService"] = 12,
-                ["crossSectionRepository"] = 25,
-                ["writeCapableInterfaceUsedReadOnly"] = 12,
+                ["crossSectionReadInterface"] = 6,
+                ["crossSectionFullService"] = 24,
+                ["crossSectionConcreteService"] = 36,
+                ["crossSectionRepository"] = 75,
+                ["writeCapableInterfaceUsedReadOnly"] = 36,
 
                 // Signature shape (surface axis — method/return shape smells)
                 ["methodParameterOverflow"] = 1, // per param after 2
                 ["booleanParameter"] = 3,
                 ["tupleReturn"] = 4,
                 ["optionsBag"] = 8,
-                ["oneImplementationInterface"] = 8,
+                ["oneImplementationInterface"] = 24, // priced with the dependency rules
 
                 // Implementation-shape axis — implementation cost hiding behind the surface.
                 // Tracked on a separate scalar (implementationShapeTotal), never added into the
@@ -358,7 +359,7 @@ public sealed class SurfaceScoreConfig
                 // methodCount is the flat points per declaration. Proposals to tune against a
                 // measured corpus (the report's `contents` block), not settled.
                 ["methodComplexity"] = 1,
-                ["methodCount"] = 5,
+                ["methodCount"] = 3,
                 // The rest are MULTIPLIERS over base points computed from syntax (LOC tiers,
                 // dispatcher arm count); default 1 applies the base points as-is.
                 ["largeClass"] = 1,

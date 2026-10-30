@@ -48,16 +48,16 @@ public class ContentsPricingTests
 
     /// <summary>
     /// Splitting a method in two pays once the tax saved exceeds the flat charge of the second piece:
-    /// from complexity 20 with the defaults, and for every larger method after that.
+    /// from complexity 18 with the defaults, and for every larger method after that.
     /// </summary>
     [Fact]
-    public void TwoWaySplit_PaysFromComplexityTwenty()
+    public void TwoWaySplit_PaysFromComplexityEighteen()
     {
         int m = Defaults.Weight("methodCount");
         for (int n = Defaults.ComplexityThreshold + 1; n <= 400; n++)
         {
             double whole = F(n) + m, halves = F(n / 2) + F(n - n / 2) + 2 * m;
-            Assert.True(whole > halves == n >= 20, $"CC {n}: whole {whole:F2}, halves {halves:F2}");
+            Assert.True(whole > halves == n >= 18, $"CC {n}: whole {whole:F2}, halves {halves:F2}");
         }
     }
 

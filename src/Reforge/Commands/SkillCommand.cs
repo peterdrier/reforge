@@ -203,16 +203,16 @@ public static class SkillCommand
           //   backgroundJob (12), duplicateDbSetOwner (20)
           //
           // Dependency use (constructor injection across sections):
-          //   sameSectionReadService (0), crossSectionReadInterface (2),
-          //   crossSectionFullService (8), crossSectionConcreteService (12),
-          //   crossSectionRepository (25),
-          //   writeCapableInterfaceUsedReadOnly (12, full-service interface paired with a read
+          //   sameSectionReadService (0), crossSectionReadInterface (6),
+          //   crossSectionFullService (24), crossSectionConcreteService (36),
+          //   crossSectionRepository (75),
+          //   writeCapableInterfaceUsedReadOnly (36, full-service interface paired with a read
           //     interface — via inheritance or "{Full}Read" sibling — where every observed call
           //     on the injected dep also exists on the read interface)
           //
           // Signature shape (per method):
           //   methodParameterOverflow (1, per param beyond 2), booleanParameter (3),
-          //   tupleReturn (4), optionsBag (8), oneImplementationInterface (8)
+          //   tupleReturn (4), optionsBag (8), oneImplementationInterface (24)
           "weights": {
             "crossSectionRepository": 25,
             "duplicateDbSetOwner": 20,
