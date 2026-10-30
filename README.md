@@ -247,9 +247,9 @@ The rates are the weights; the thresholds and taxes are `sectionSizeFreeTokens`,
 `sectionSizeTaxTokens`, `sectionSizeTaxPercent`, `classSizeFreeTokens`, `classSizeTaxTokens`,
 `classSizeTaxPercent`, `sizeTaxExponent` and `testSizeFreePercent`. Whole files make the section
 charge blind to partials and sibling types; only moving code to another section lowers it. Splitting
-a class into siblings lowers the class charge, since each piece then fits one read. With token
-counts `largeClass` is skipped, since `classSize` prices the same thing exactly; without them it
-stays the class-size signal. On Humans the three add about 18% to the total.
+a class into siblings lowers the class charge, since each piece then fits one read. A class with a
+token count skips `largeClass`, since `classSize` prices the same thing exactly; one without (no
+counts, or a failed request) keeps it. On Humans the three add about 18% to the total.
 
 ```powershell
 $env:ANTHROPIC_API_KEY = "..."; reforge surface-score --count-tokens --format json > tokens.json

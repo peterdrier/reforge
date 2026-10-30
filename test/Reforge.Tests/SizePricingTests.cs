@@ -132,6 +132,15 @@ public class SizePricingTests
         Assert.True(report.ByRule.GetValueOrDefault("classSize") > 0);
     }
 
+    [Fact]
+    public async Task FailedClassCount_FallsBackToLargeClass()
+    {
+        var report = await ScoreAsync(new TokenMeasurer(new FakeCounter(t => t.Contains("class BigService")), TokenCache.InMemory()), BigService);
+
+        Assert.True(report.ByRule.GetValueOrDefault("largeClass") > 0);
+        Assert.False(report.ByRule.ContainsKey("classSize"));
+    }
+
     private static int ImplementationShapeWithout(ScoreReport report) =>
         report.ByRule.Where(kv => SurfaceScoreRuleGroups.IsImplementationShape(kv.Key) && kv.Key is not ("sectionSize" or "classSize" or "testSize"))
             .Sum(kv => kv.Value);

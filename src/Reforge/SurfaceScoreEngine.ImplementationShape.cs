@@ -30,6 +30,21 @@ public sealed partial class SurfaceScoreEngine
         foreach (var ct2 in classified)
             groupByType[ct2.Type.ToDisplayString()] = (ct2.Group, ct2.File);
 
+        // Classes classSize prices, by section, file and line. A nested class is priced inside its
+        // outermost container, so it is looked up by that.
+        var tokenPriced = (report.Tokens?.BySection ?? new Dictionary<string, SectionTokens>())
+            .SelectMany(kv => kv.Value.Classes.Where(t => t.Tokens is not null).Select(t => (kv.Key, t.File, t.Line)))
+            .ToHashSet();
+        var classifiedBySymbol = new Dictionary<INamedTypeSymbol, ClassifiedType>(SymbolEqualityComparer.Default);
+        foreach (var c in classified) classifiedBySymbol.TryAdd(c.Type, c);
+        (string, string, int) OutermostKey(ClassifiedType c)
+        {
+            var top = c.Type;
+            while (top.ContainingType is { } outer) top = outer;
+            var owner = classifiedBySymbol.GetValueOrDefault(top) ?? c;
+            return (owner.Group, owner.File, owner.Line);
+        }
+
         foreach (var c in classified)
         {
             if (c.Type.TypeKind is not (TypeKind.Class or TypeKind.Struct)) continue;
@@ -45,9 +60,9 @@ public sealed partial class SurfaceScoreEngine
             var handwritten = HandwrittenDeclarations(c.Type, ct);
             if (handwritten.Count == 0) continue;
 
-            // With token counts classSize prices the same thing in exact tokens, so this LOC proxy
-            // stands down; without them it is the only class-size signal.
-            if (largeW != 0 && Tokens is null && IsSizeTrackedClass(c))
+            // Where classSize prices this class in exact tokens, this LOC proxy stands down. A class
+            // without a count (no --count-tokens, or a failed request) keeps it.
+            if (largeW != 0 && !tokenPriced.Contains(OutermostKey(c)) && IsSizeTrackedClass(c))
             {
                 int classLoc = handwritten.Sum(ImplementationComplexity.NonBlankLines);
                 int pts = ImplementationComplexity.LargeClassPoints(classLoc) * largeW;
