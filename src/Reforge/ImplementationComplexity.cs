@@ -118,6 +118,17 @@ public static class ImplementationComplexity
         return new CognitiveScore(w.Score, w.TopNestedScore, w.TopNestedLine);
     }
 
+    /// <summary>
+    /// Cognitive complexity of <paramref name="code"/> walked as if it sat at <paramref name="nesting"/>,
+    /// each node visited the way its parent visits it.
+    /// </summary>
+    internal static int CognitiveAt(IEnumerable<SyntaxNode> code, int nesting)
+    {
+        var w = new CognitiveWalker();
+        foreach (var node in code) w.Visit(node, nesting);
+        return w.Score;
+    }
+
     private sealed class CognitiveWalker
     {
         public int Score;
@@ -398,9 +409,15 @@ public static class ImplementationComplexity
             ? name[..^5]
             : name;
 
-    // ---------------- Structural dispatcher (arm cohesion) ----------------
+    // ---------------- Selector dispatch (hidden operations) ----------------
 
-    public readonly record struct DispatcherAnalysis(bool Fires, int ArmCount);
+    /// <summary>
+    /// A selector branch's verdict. <see cref="ArmCount"/> is how many arms are operations of their
+    /// own; <see cref="InlineArms"/> how many of those hold their work in place rather than calling
+    /// a method of their own; <see cref="NestingRelief"/> how much cognitive complexity the arms
+    /// carry only because they sit inside the branch (what they would shed as methods).
+    /// </summary>
+    public readonly record struct DispatcherAnalysis(bool Fires, int ArmCount, int InlineArms = 0, int NestingRelief = 0);
 
     private static readonly HashSet<string> DispatchParamNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -409,53 +426,42 @@ public static class ImplementationComplexity
 
     private static readonly string[] DispatchTypeSuffixes = { "Action", "Mode", "Operation", "Scope", "Flags", "Kind" };
 
+    private sealed record Arm(IReadOnlyList<SyntaxNode> Code, int Nesting);
+
     /// <summary>
-    /// Detects the "generic action dispatcher" shape structurally: a method whose body
-    /// is essentially one switch/if-chain over a candidate parameter, where the arms
-    /// route to <i>different</i> members with disjoint bodies. That low arm-cohesion is
-    /// the fingerprint of explicit commands collapsed behind one method. A read-shape
-    /// consolidation looks different — its arms share a base query and differ only by
-    /// Include/Where/projection — so one member is called by ≥ half the arms and the
-    /// rule does not fire. The method name is never consulted (no Apply/Handle/Create
-    /// heuristic), which removes the Create-verb contradiction.
-    /// <para>
-    /// A read is measured differently when <paramref name="readModel"/> is given. Its selector is
-    /// examined whatever the selector type is called, since a read-shape name is no evidence the arms
-    /// share work. Only calls that resolve to methods declared in the solution's source count, so arms
-    /// that differ by a LINQ or BCL call (a sort selector, an enum-to-string map) are not separate
-    /// operations, and two lookups that share a name on different types are. And the shared-member
-    /// check gives way to a per-arm one: the read fires when two or more arms each call a method no
-    /// other arm calls, priced on those arms. Under the shared check, wrapping every arm in one shared
-    /// helper would exempt three getters behind a selector; under this one it changes nothing.
-    /// </para>
+    /// Finds the operations a method hides behind a selector parameter: a switch, switch expression or
+    /// if/else chain on an enum, a bool, or a parameter named or typed like a mode. The arms are
+    /// judged by what they do, never by how they are written, so arms pasted inline and arms that
+    /// call one private method each read the same.
+    /// <para>An arm is an operation of its own when it calls a solution method no other arm calls,
+    /// touches state of the method's type that no other arm touches, or writes that state (or commits
+    /// a persistent write). Arms that only project values the method computed before branching, or
+    /// that differ only by LINQ or BCL calls, share their work and are not separate operations. An
+    /// <c>if</c> on the selector whose body always leaves the method has the rest of the block as its
+    /// other arm.</para>
     /// </summary>
     public static DispatcherAnalysis AnalyzeDispatcher(IMethodSymbol method, BaseMethodDeclarationSyntax syntax,
-        SemanticModel? readModel = null)
+        SemanticModel model)
     {
         SyntaxNode? body = (SyntaxNode?)syntax.Body ?? syntax.ExpressionBody?.Expression;
         if (body is null) return default;
 
-        var paramNames = method.Parameters
-            .Where(p => readModel is null ? IsDispatchParam(p) : IsSelectorCandidate(p))
-            .Select(p => p.Name)
-            .ToHashSet(StringComparer.Ordinal);
+        var paramNames = method.Parameters.Where(IsSelectorCandidate).Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
         if (paramNames.Count == 0) return default;
 
         DispatcherAnalysis best = default;
-        DispatcherAnalysis Measure(IEnumerable<SyntaxNode> armNodes) => readModel is null
-            ? Evaluate(armNodes.Select(InvokedMembers).ToList())
-            : EvaluateRead(armNodes.Select(a => InvokedSolutionMethods(a, readModel)).ToList());
-
         foreach (var sw in body.DescendantNodesAndSelf().OfType<SwitchStatementSyntax>())
         {
             if (!ReferencesParam(sw.Expression, paramNames)) continue;
-            best = Better(best, Measure(sw.Sections));
+            int n = NestingOf(sw, body) + 1;
+            best = Better(best, Evaluate(sw.Sections.Select(s => new Arm(s.Statements.ToList<SyntaxNode>(), n)).ToList(), method, model));
         }
 
         foreach (var swe in body.DescendantNodesAndSelf().OfType<SwitchExpressionSyntax>())
         {
             if (!ReferencesParam(swe.GoverningExpression, paramNames)) continue;
-            best = Better(best, Measure(swe.Arms.Select(a => a.Expression)));
+            int n = NestingOf(swe, body) + 1;
+            best = Better(best, Evaluate(swe.Arms.Select(a => new Arm(new[] { a.Expression }, n)).ToList(), method, model));
         }
 
         foreach (var ifs in body.DescendantNodesAndSelf().OfType<IfStatementSyntax>())
@@ -463,23 +469,20 @@ public static class ImplementationComplexity
             if (ifs.Parent is ElseClauseSyntax) continue; // only chain heads
             if (!ReferencesParam(ifs.Condition, paramNames)) continue;
 
-            var arms = new List<SyntaxNode>();
+            int n = NestingOf(ifs, body);
+            var arms = new List<Arm>();
             IfStatementSyntax? cur = ifs;
             while (cur is not null)
             {
                 if (!ReferencesParam(cur.Condition, paramNames)) break;
-                arms.Add(cur.Statement);
-                if (cur.Else?.Statement is IfStatementSyntax next)
-                {
-                    cur = next;
-                }
-                else
-                {
-                    if (cur.Else is { } tail) arms.Add(tail.Statement);
-                    cur = null;
-                }
+                arms.Add(new Arm(cur.Statement.ChildNodes().ToList(), n + 1));
+                if (cur.Else?.Statement is IfStatementSyntax next) { cur = next; continue; }
+                if (cur.Else is { } tail) arms.Add(new Arm(tail.Statement.ChildNodes().ToList(), n + 1));
+                else if (Exits(cur.Statement) && ifs.Parent is BlockSyntax block)
+                    arms.Add(new Arm(block.Statements.SkipWhile(s => s != ifs).Skip(1).ToList<SyntaxNode>(), n));
+                cur = null;
             }
-            best = Better(best, Measure(arms));
+            best = Better(best, Evaluate(arms, method, model));
         }
 
         return best;
@@ -488,69 +491,130 @@ public static class ImplementationComplexity
     private static DispatcherAnalysis Better(DispatcherAnalysis a, DispatcherAnalysis b)
         => b.ArmCount > a.ArmCount ? b : a;
 
-    private static DispatcherAnalysis Evaluate(List<HashSet<string>> arms)
+    private static DispatcherAnalysis Evaluate(List<Arm> arms, IMethodSymbol method, SemanticModel model)
     {
         if (arms.Count < 2) return default;
-
-        var union = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var a in arms) union.UnionWith(a);
-        if (union.Count < 2) return default; // arms don't delegate to ≥2 distinct members
-
-        // Shared-body check: if one member is called by ≥ half the arms, the arms share a
-        // base body (the read-shape pattern) and this is cohesive, not a dispatcher.
-        int maxShared = 0;
-        foreach (var m in union)
+        var facts = arms.Select(a => ArmFacts.Of(a.Code, method.ContainingType, model)).ToList();
+        var calls = new Dictionary<IMethodSymbol, int>(SymbolEqualityComparer.Default);
+        var touches = new Dictionary<ISymbol, int>(SymbolEqualityComparer.Default);
+        foreach (var f in facts)
         {
-            int c = arms.Count(a => a.Contains(m));
-            if (c > maxShared) maxShared = c;
+            foreach (var m in f.Calls) calls[m] = calls.GetValueOrDefault(m) + 1;
+            foreach (var s in f.State) touches[s] = touches.GetValueOrDefault(s) + 1;
         }
-        if ((double)maxShared / arms.Count >= 0.5) return default;
 
-        return new DispatcherAnalysis(true, arms.Count);
+        int own = 0, inline = 0, relief = 0;
+        for (int i = 0; i < arms.Count; i++)
+        {
+            var f = facts[i];
+            bool delegated = f.Calls.Any(m => calls[m] == 1);
+            if (!delegated && !f.Writes && !f.State.Any(s => touches[s] == 1)) continue;
+            own++;
+            if (!delegated) inline++;
+            relief += CognitiveAt(arms[i].Code, arms[i].Nesting) - CognitiveAt(arms[i].Code, 0);
+        }
+        return own >= 2 ? new DispatcherAnalysis(true, own, inline, relief) : default;
     }
 
-    private static DispatcherAnalysis EvaluateRead(List<HashSet<IMethodSymbol>> arms)
+    /// <summary>What one arm calls and which state of the method's own type it reads or writes.</summary>
+    private sealed record ArmFacts(HashSet<IMethodSymbol> Calls, HashSet<ISymbol> State, bool Writes)
     {
-        if (arms.Count < 2) return default;
-        var callers = new Dictionary<IMethodSymbol, int>(SymbolEqualityComparer.Default);
-        foreach (var arm in arms)
-            foreach (var m in arm)
-                callers[m] = callers.GetValueOrDefault(m) + 1;
+        public static ArmFacts Of(IReadOnlyList<SyntaxNode> code, INamedTypeSymbol owner, SemanticModel model)
+        {
+            var calls = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
+            var state = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+            bool writes = false;
+            foreach (var node in code.SelectMany(c => c.DescendantNodesAndSelf()))
+            {
+                if (node is InvocationExpressionSyntax inv && SolutionMethod(inv, model) is { } m) calls.Add(m);
+                if (node is not SimpleNameSyntax name || !IsOwnState(model.GetSymbolInfo(name).Symbol, owner, out var s)) continue;
+                state.Add(s);
+                writes |= IsWriteTarget(name);
+            }
+            writes |= code.Any(CommitsPersistentWrite);
+            return new ArmFacts(calls, state, writes);
+        }
 
-        // An arm is a hidden operation when it calls a solution method that no other arm calls.
-        int distinctArms = arms.Count(a => a.Any(m => callers[m] == 1));
-        return distinctArms >= 2 ? new DispatcherAnalysis(true, distinctArms) : default;
+        private static bool IsOwnState(ISymbol? symbol, INamedTypeSymbol owner, out ISymbol state)
+        {
+            state = symbol?.OriginalDefinition!;
+            if (symbol is IFieldSymbol { IsConst: true }) return false;
+            if (symbol is not (IFieldSymbol or IPropertySymbol or IEventSymbol)) return false;
+            for (INamedTypeSymbol? t = owner.OriginalDefinition; t is not null; t = t.BaseType?.OriginalDefinition)
+                if (SymbolEqualityComparer.Default.Equals(t, symbol.ContainingType.OriginalDefinition)) return true;
+            return false;
+        }
+
+        private static bool IsWriteTarget(SimpleNameSyntax name)
+        {
+            SyntaxNode target = name.Parent is MemberAccessExpressionSyntax ma && ma.Name == name ? ma : name;
+            return target.Parent switch
+            {
+                AssignmentExpressionSyntax a => a.Left == target,
+                PrefixUnaryExpressionSyntax u => u.IsKind(SyntaxKind.PreIncrementExpression) || u.IsKind(SyntaxKind.PreDecrementExpression),
+                PostfixUnaryExpressionSyntax => true,
+                _ => false
+            };
+        }
     }
 
     /// <summary>
-    /// The methods an arm invokes that the solution declares in source. An override counts only when
-    /// the method it overrides is the solution's too, so a ToString override does not make every
+    /// The invoked method when the solution declares it in source. An override counts only when the
+    /// method it overrides is the solution's too, so a ToString override does not make every
     /// ToString call one.
     /// </summary>
-    private static HashSet<IMethodSymbol> InvokedSolutionMethods(SyntaxNode arm, SemanticModel model)
+    private static IMethodSymbol? SolutionMethod(InvocationExpressionSyntax inv, SemanticModel model)
     {
-        var set = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
-        foreach (var inv in arm.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
-        {
-            if (model.GetSymbolInfo(inv).Symbol is not IMethodSymbol m) continue;
-            m = (m.ReducedFrom ?? m).OriginalDefinition;
-            if (m.MethodKind is not (MethodKind.Ordinary or MethodKind.LocalFunction)) continue;
-            var root = m;
-            while (root.OverriddenMethod is { } o) root = o.OriginalDefinition;
-            if (root.Locations.Any(l => l.IsInSource)) set.Add(m);
-        }
-        return set;
+        if (model.GetSymbolInfo(inv).Symbol is not IMethodSymbol m) return null;
+        m = (m.ReducedFrom ?? m).OriginalDefinition;
+        if (m.MethodKind is not (MethodKind.Ordinary or MethodKind.LocalFunction)) return null;
+        var root = m;
+        while (root.OverriddenMethod is { } o) root = o.OriginalDefinition;
+        return root.Locations.Any(l => l.IsInSource) ? m : null;
     }
 
-    private static HashSet<string> InvokedMembers(SyntaxNode arm)
+    /// <summary>Whether a statement always leaves the method: a return or throw, last in its block.</summary>
+    private static bool Exits(StatementSyntax s) => s switch
     {
-        var set = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var inv in arm.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
+        ReturnStatementSyntax or ThrowStatementSyntax => true,
+        BlockSyntax b => b.Statements.LastOrDefault() is { } last && Exits(last),
+        _ => false
+    };
+
+    /// <summary>
+    /// The nesting level the cognitive walk reaches <paramref name="node"/> at, counted the way
+    /// <c>CognitiveWalker</c> counts it: if, else, loop, switch section and arm, catch and the
+    /// branches of a conditional each add one, and a nested function adds one unless it is the
+    /// outermost and sits at the member's own top level.
+    /// </summary>
+    private static int NestingOf(SyntaxNode node, SyntaxNode body)
+    {
+        var path = new List<SyntaxNode>();
+        for (var n = node; n is not null && n != body; n = n.Parent) path.Add(n);
+        path.Reverse();
+        int nesting = 0;
+        bool inNested = false;
+        for (int i = 0; i + 1 < path.Count; i++)
         {
-            var name = InvokedName(inv);
-            if (name is not null) set.Add(name);
+            var (a, c) = (path[i], path[i + 1]);
+            switch (a)
+            {
+                case IfStatementSyntax ifs when c == ifs.Statement:
+                case ElseClauseSyntax els when els.Statement is not IfStatementSyntax:
+                case ForStatementSyntax or CommonForEachStatementSyntax or WhileStatementSyntax or DoStatementSyntax
+                    when c is StatementSyntax:
+                case SwitchSectionSyntax or CatchClauseSyntax:
+                case SwitchExpressionArmSyntax arm when c == arm.Expression:
+                case ConditionalExpressionSyntax cond when c != cond.Condition:
+                    nesting++;
+                    break;
+                case AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax:
+                    if (nesting != 0 || inNested) nesting++;
+                    inNested = true;
+                    break;
+            }
         }
-        return set;
+        return nesting;
     }
 
     // ---------------- Flags-driven control flow ----------------
@@ -589,9 +653,9 @@ public static class ImplementationComplexity
 
     // ---------------- Shared helpers ----------------
 
-    // Read/query "shape" enums steer projection, not mutation, so a write's selector of one of
-    // these types is not a dispatch parameter. A read's selector is judged by its arms instead (see
-    // AnalyzeDispatcher). Note QueryFlags ends in "Flags" and SearchScope ends in "Scope", both of
+    // Read/query "shape" enums steer projection, not mutation, so a write carrying one is not
+    // charged as a mode parameter. A selector's arms are judged by what they do whatever its type is
+    // called (see AnalyzeDispatcher). Note QueryFlags ends in "Flags" and SearchScope ends in "Scope", both of
     // which are dispatch suffixes, so this exclusion has to run first.
     private static readonly string[] ReadShapeSuffixes = { "ReadShape", "QueryFlags", "Filter", "SearchScope", "Query" };
 
@@ -603,12 +667,9 @@ public static class ImplementationComplexity
         return ReadShapeSuffixes.Any(s => n.EndsWith(s, StringComparison.Ordinal));
     }
 
-    public static bool IsDispatchParam(IParameterSymbol p)
-        => !IsReadShapeType(p.Type) && IsSelectorCandidate(p);
-
     private static bool IsSelectorCandidate(IParameterSymbol p)
     {
-        if (p.Type.TypeKind == TypeKind.Enum) return true;
+        if (p.Type.TypeKind == TypeKind.Enum || p.Type.SpecialType == SpecialType.System_Boolean) return true;
         if (DispatchParamNames.Contains(p.Name)) return true;
         var tn = p.Type.Name;
         return DispatchTypeSuffixes.Any(s => tn.EndsWith(s, StringComparison.Ordinal));

@@ -134,7 +134,7 @@ public sealed partial class SurfaceScoreEngine
         // through helpers that only it calls.
         var fold = await CallPathComplexity.BuildAsync(solution, analyzedAssemblies, ct);
         await ScoreContentsAsync(solution, classified, report, analyzedAssemblies, fold, ct);
-        await ScoreImplementationComplexityAsync(classified, report, solution, ct, analyzedAssemblies);
+        await ScoreImplementationComplexityAsync(classified, report, solution, ct, analyzedAssemblies, behaviour);
 
         // Pass 6 — boundary-input surface. Charges for parameter/command objects that hide a
         // long argument list (so a parameter-object refactor can't game methodParameterOverflow).

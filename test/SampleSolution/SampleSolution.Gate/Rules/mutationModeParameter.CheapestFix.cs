@@ -5,23 +5,20 @@
 // the identical three behaviours.
 //
 // This is a downgrade in every direction that matters. The compiler no longer knows the set of
-// legal values, no longer rejects a misspelling, no longer tells you where the switch is
-// non-exhaustive, and the third arm now silently swallows "hlod" as a drop. The fold the rule
-// objects to is not merely still present — it got worse, because the selector lost its type.
+// legal values, no longer rejects a misspelling, and "urgnet" now silently sends at normal weight.
 
 namespace SampleSolution.Gate.Rules;
 
 public sealed class GateNoticeCheapestFixService
 {
     private int _sent;
-    private int _held;
-    private int _dropped;
 
     public void ProcessNotice(int noticeId, string mode)
     {
-        if (mode == "Send") _sent += noticeId > 0 ? 1 : 0;
-        else if (mode == "Hold") _held++;
-        else _dropped++;
+        int weight = 1;
+        if (mode == "Urgent") weight = 3;
+        else if (mode == "Quiet") weight = 0;
+        _sent += noticeId > 0 ? weight : 0;
     }
 
     public int SentCount() => _sent;
