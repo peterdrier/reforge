@@ -226,7 +226,6 @@ This tool is built by an AI coding assistant, for AI coding assistants. It will 
 
 - **Scope before building.** Before implementing a "you don't measure X" finding, grep the corpus for X. Zero occurrences → reply on the thread and resolve. Don't build it.
 - **Stop when rounds stop converging.** A round that doesn't change the command's output on the corpus counts for nothing. After two, stop taking findings and reply once with what's still flagged.
-- **Diff ceiling.** Past ~1.5× the first commit's size, stop and report to the user rather than continuing.
 - **Comments explain the code, not its history.** Git holds what it used to be. No round-by-round archaeology in source, changelog, or PR body.
 - **Changelog is bullet points, max 3 per release.** Existing long entries are not precedent.
 

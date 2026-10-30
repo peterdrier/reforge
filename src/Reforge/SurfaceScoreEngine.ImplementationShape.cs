@@ -9,12 +9,13 @@ public sealed partial class SurfaceScoreEngine
 {
     /// <summary>
     /// Scores the implementation hiding behind the surface: per-class size (services/repos/
-    /// controllers) and the structural action-dispatcher / flags smells. Dispatcher and flags
-    /// penalties apply only to methods that observably mutate state — a read-shape consolidation
-    /// on a query is exempt by behavior, not by parameter naming.
+    /// controllers) and the structural action-dispatcher / flags smells. Mode-parameter and flags
+    /// penalties apply only to methods that observably mutate state; the structural dispatcher
+    /// applies to reads too, and a read-shape consolidation whose arms share a base query does not
+    /// fire it.
     /// </summary>
-    private void ScoreImplementationComplexity(List<ClassifiedType> classified, ScoreReport report,
-        CancellationToken ct, HashSet<string> analyzedAssemblies)
+    private async Task ScoreImplementationComplexityAsync(List<ClassifiedType> classified, ScoreReport report,
+        Solution solution, CancellationToken ct, HashSet<string> analyzedAssemblies)
     {
         var largeW = _config.Weight("largeClass");
         var dispW = _config.Weight("actionDispatcher");
@@ -68,17 +69,27 @@ public sealed partial class SurfaceScoreEngine
                 // location is the defining part, which may be the generated half.
                 var (file, line) = LocateDeclaration(syntax, c);
 
-                // Dispatcher / flags are surface-level smells — only public-ish methods, and
-                // only when the method mutates. Read methods are exempt by behavior.
+                // Dispatcher / flags are surface-level smells — only public-ish methods.
                 bool surfaceMethod = m.DeclaredAccessibility
                     is Accessibility.Public or Accessibility.Internal or Accessibility.ProtectedOrInternal;
                 if (!surfaceMethod) continue;
                 if (IsAllowedDispatcherMethod(c.Type, m)) continue;
                 if (HasAllowedShapeParam(m)) continue;
-                // Read methods (including *ReadShape / *Query shaped reads) are exempt by behavior.
-                if (!ImplementationComplexity.IsMutation(m, syntax)) continue;
 
-                var d = ImplementationComplexity.AnalyzeDispatcher(m, syntax);
+                // A read is exempt from the mode and flags rules: a selector steering a projection
+                // is fine. It is not exempt from the structural rule. A read whose arms each route
+                // to a solution member of their own is separate getters behind one door; left
+                // unpriced, collapsing them would be free. See AnalyzeDispatcher for how a read's
+                // arms are measured.
+                bool mutation = ImplementationComplexity.IsMutation(m, syntax);
+                SemanticModel? readModel = null;
+                if (!mutation)
+                {
+                    if (solution.GetDocument(syntax.SyntaxTree) is not { } doc) continue;
+                    readModel = await doc.GetSemanticModelAsync(ct);
+                }
+                var d = ImplementationComplexity.AnalyzeDispatcher(m, syntax, readModel);
+                if (!mutation && !d.Fires) continue;
                 var dispatchEnumParams = ImplementationComplexity.DispatchEnumParams(m);
                 bool genericVerb = ImplementationComplexity.IsGenericVerb(m.Name);
                 bool stateEngine = ImplementationComplexity.LooksLikeStateEngine(syntax);
@@ -102,7 +113,8 @@ public sealed partial class SurfaceScoreEngine
                         + (appSvc ? 10 : 0);        // on an application service: the fold is the app's API
                     int pts = basePts * dispW;
                     var selector = typedSelector ? $" on {EnumParamNames(modeParams)}" : "";
-                    var detail = $"{m.Name} ({d.ArmCount}-arm dispatch{selector}; arms route to distinct members)";
+                    var kind = mutation ? "dispatch" : "read dispatch";
+                    var detail = $"{m.Name} ({d.ArmCount}-arm {kind}{selector}; arms route to distinct members)";
                     AddEntry(report, c.Group, "actionDispatcher", pts, m, file, line, detail);
                     // A structural dispatcher declared on an interface is a contractual smell, not
                     // just an implementation one — bill the interface method too.
@@ -113,6 +125,7 @@ public sealed partial class SurfaceScoreEngine
                 // mutationModeParameter: a mutation carrying an action/mode enum selector that
                 // folds distinct operations behind one signature, even when the body is small and
                 // doesn't delegate (so it isn't caught structurally above). State engines are exempt.
+                if (!mutation) continue;
                 if (!structuralFired && !stateEngine && modeParams.Count > 0 && mmpW != 0)
                 {
                     int basePts = 10 + 5 * modeParams.Count + (genericVerb ? 10 : 0);
