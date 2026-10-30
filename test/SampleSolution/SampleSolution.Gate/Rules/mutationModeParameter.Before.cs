@@ -1,6 +1,6 @@
 // gate1: mutationModeParameter
 // gate1-gameable: the enum selector becomes `string mode`. Same choice, same call sites, same
-// behaviour — the selector just loses its type, so the rule (which recognises a mode parameter by
+// behaviour. The selector just loses its type, so the rule (which recognises a mode parameter by
 // its enum-ness) stops seeing it, and nothing else charges anything.
 //
 // The fix is a strict downgrade with no backstop at all. After it the compiler no longer knows the
