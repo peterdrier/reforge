@@ -37,7 +37,7 @@ Every reference is found via the compiler's semantic model — including referen
 | `reforge injected <type>` | Who injects this type via constructor |
 | `reforge usages <type>` | Where a type is used, categorized by kind |
 | `reforge parameters --name X --type Y` | Find parameters matching patterns |
-| `reforge snapshot [--by-assembly] [--coverage report.xml] [--append file.csv]` | Macro health record for time-series charting; `--by-assembly` emits one row per section with size, complexity, surface census, test mass and coverage |
+| `reforge snapshot [--by-assembly] [--no-score] [--coverage report.xml] [--append file.csv]` | Macro health record for time-series charting; `--by-assembly` emits one row per section with size, complexity, surface census, tokens, size charges, the test value, coverage and the main score (`--no-score` skips the main score) |
 | `reforge audit-surface <type>` | Per-method inbound view: caller counts (prod/test) + body shape for classes (passthrough-repo/-service/-self, linq-over-repo/-service, write, composite, complex) |
 | `reforge audit-downstream <class>` | Per-method outbound view: dependency calls, DbSet reads/writes traced one hop through repository implementations with `via` attribution, untraced repo-to-repo hops, and external IO |
 
@@ -61,9 +61,9 @@ it, so nothing outside can break when it changes. (`protected` doesn't count as 
 shape its implementation actually has.
 
 The axis is named for what it measures, not for an accessibility level. `implementationShape` has no
-`internal` gate: it is a fixed set of rules (`methodComplexity`, `methodCount`, `largeClass`,
-`actionDispatcher`, `mutationModeParameter`, `flagsControlFlow`, and with token counts `sectionSize`,
-`classSize`, `testSize`), and public code scores on it too.
+`internal` gate: it is a fixed set of rules (`methodComplexity`, `methodCount`,
+`actionDispatcher`, `mutationModeParameter`, `flagsControlFlow`, `sectionSize`, `classSize`), and
+public code scores on it too.
 Its rules charge for shapes an edit can genuinely improve: a class carrying too much, a parameter
 that switches a method between two behaviours.
 
@@ -152,10 +152,8 @@ continuity with the `snapshot` history series, which has always recorded it solu
 The corpus is the **scoring** corpus, so a metric and a score always describe the same code: no
 test projects (they are measured separately — see below), no generated code (EF
 migrations, `*.g.cs`, `*.Designer.cs` — excluded from the implementation-shape axis too), and complexity
-measured only over methods that have a body. `maxClassLoc` covers classes and structs — the same
-set `classes` counts, which is deliberately wider than the set the `largeClass` rule scores (that
-rule tracks only application services, repository implementations, controllers and background jobs).
-The block describes the section's size, so it reports the section's largest class even when no rule
+measured only over methods that have a body. `maxClassLoc` covers classes and structs, the same
+set `classes` counts. The block describes the section's size, so it reports the section's largest class even when no rule
 currently charges for it. With `--group` set, the top-level rollup
 scopes to that section, the way `byRule` already does. `--list-groups` carries `locProd` for every
 section — including sections that scored nothing — so sections can be ranked by size without
@@ -184,14 +182,20 @@ reflection, convention-based DI and serialization are invisible, as they are to 
 analysis. The same walk records `edges`: one `{from, to, count}` per pair of sections, the number
 of times source in one names a symbol declared in the other. Informational, like `metrics`.
 
-**Test mass is reported per section, and scored nowhere.** Test projects are outside the scoring
-corpus by construction — everything in one is public, so every surface rule would fire on code no
-other section can call — which also made a section's test size invisible. Each group now carries a
-`tests` block beside its `metrics`:
+**Tests are a value of their own, apart from the main score.** Test projects are outside the
+scoring corpus by construction, since everything in one is public. Each group, and the solution,
+carries a `tests` block beside its `metrics`:
 
 ```json
-"tests": { "loc": 3410, "files": 22, "projects": 2, "locVsProdPercent": 77 }
+"tests": { "score": 12, "loc": 3410, "files": 22, "projects": 2, "locVsProdPercent": 77,
+           "methods": 140, "methodsPerClass": 1.8, "tokenRatio": 1.12, "coveragePercent": 64 }
 ```
+
+`score` is the test score, the `testSize` charge on test tokens past the section's own; it is summed
+into a top-level `testTotal` and never into `total`, so neither tests nor coverage (given or not) can
+move the main score. `methods` counts methods carrying an xUnit, NUnit or MSTest test attribute,
+`methodsPerClass` divides them by production classes, `tokenRatio` is test tokens over production
+and contracts tokens, and `coveragePercent` is absent without a coverage report.
 
 `locVsProdPercent` is the figure that compares two sections: raw test LOC scales with section size,
 so the biggest section carries the most tests by default and the ratio is what distinguishes them.
@@ -201,8 +205,7 @@ name — `X.Tests` and `X.IntegrationTests` have to land in the same column, and
 nothing still tests something. Where the references name several sections (an integration suite
 reaching past the section under test) the project name breaks the tie; where nothing breaks it, the
 project is listed in `unattributedTestProjects` with an `info` diagnostic, and its mass is in the
-solution rollup and in no column. Nothing about the test corpus is scored: there is no test axis and
-no weight reads any of these numbers.
+solution rollup and in no column.
 
 **Coverage is attributed per section when you hand over a report.** Reforge does not run tests;
 `--coverage <file>` on `surface-score` and `snapshot --by-assembly` reads what the test run wrote and
@@ -223,35 +226,65 @@ the solution (test projects) are listed in an `info` diagnostic and left out of 
 are sections the report never mentions. Line counts agree with Coverlet's own `lines-covered` /
 `lines-valid`. Informational: nothing here feeds a score.
 
-**Exact token counts, opt in.** `surface-score --count-tokens` measures each section (the sum of its
-whole handwritten files, the set `metrics.files` counts, plus the same for its attributed test files)
-and each top-level class (its declaration spans across every partial file, doc comments and nested
-types included) with Anthropic's `count_tokens` API, using `ANTHROPIC_API_KEY`. Without the flag or
-the key nothing is estimated: the `tokens` fields are absent, the size rules are skipped, and stderr
-says so. Each count is the request's `input_tokens` less that of a one-character baseline
-message, counted once, so file counts add up. Counts are cached by SHA-256 of model and text in
-`<LocalApplicationData>/reforge/token-cache.json` (`--token-cache` overrides), so a rerun pays only
-for changed text. Requests run four at a time and honour `retry-after` on 429; a failure warns on
-stderr and leaves that total null and unpriced.
+**Tokens, exact where counted and estimated elsewhere.** `surface-score` sizes each section (the
+sum of its whole handwritten files, the set `metrics.files` counts, plus the same for its attributed
+test files) and each top-level class (its declaration spans across every partial file, doc comments
+and nested types included) in Claude tokens. Each text takes its exact count when the cache holds
+one, and otherwise a keyless estimate: a linear model over Roslyn lexer features (identifier
+subwords, keywords, punctuation, numbers, string and comment characters, indented lines), fitted on
+Humans and within about 2% of exact on Humans and reforge totals. In JSON every figure carries
+`totalSource`/`testsSource`/`source` (`exact` or `estimate`), and an estimate within 5% of one of its
+thresholds carries `nearThreshold`, since its error could put it on either side; the compact output
+marks estimates `~` and those `near-threshold`. `--count-tokens` with `ANTHROPIC_API_KEY` asks
+Anthropic's `count_tokens` API for every text the cache lacks, four requests at a time, honouring
+`retry-after` on 429; a failure warns on stderr and that text is estimated. Each count is the
+request's `input_tokens` less that of a one-character baseline message, counted once, so file counts
+add up.
 
-**Size is priced in those tokens, and only in them** (implementation-shape axis; k is thousands of
-tokens). Never LOC or characters as a stand-in.
+**The token cache** is keyed by model and content hash and read on every run, key or not, so a
+cached count stays exact and a text already cached costs no request. It lives at `--token-cache`,
+else `$REFORGE_TOKEN_CACHE`, else `<LocalApplicationData>/reforge/token-cache.txt`, and is built for
+a driver scoring many snapshots: one `count model hash` line per entry, appended under a lock file
+so concurrent runs lose nothing, rewritten through a temp file and rename when duplicates pile up. A
+million entries load in about a second.
+
+**`snapshot --by-assembly` rows** are built for a driver that runs once per commit and charts each
+column per section. The schema has 49 columns:
+
+- stamp: `commit_date`, `commit` (full SHA), `solution`, `section` (`(solution)` is the rollup),
+  `reforge_version`, `config_hash` (8 hex digits of a SHA-256 over the effective config, so rows
+  priced under other weights are told apart), `load_failures` (projects MSBuild failed to load)
+- size and shape: `loc_prod` through `exported_write_methods_unused_externally`, as before
+- tokens: `tokens_prod` (the section's own assembly), `tokens_contracts` (its `.Contracts`
+  satellite), each with a `_source` of `exact`, `estimate` or `mixed`, from the same cache as
+  `surface-score`
+- score: `score_surface`, `score_implementation`, `score_total`, filled by default by the full
+  engine; `--no-score` leaves them empty and roughly halves the run time; `section_size_charge` and
+  `class_size_charge` are priced off the tokens either way
+- tests: `test_score`, `test_loc`, `test_files`, `test_methods`, `test_methods_per_class`,
+  `tokens_tests`, `tokens_tests_source`, `test_token_ratio`, `coverage_covered`, `coverage_total`,
+  `coverage_pct`
+
+`--append` refuses a file whose header is not this schema, so a history file never mixes widths:
+start a new file when the schema changes.
+
+**Size is priced in those tokens** (implementation-shape axis; k is thousands of tokens), never in
+LOC or characters.
 
 | rule | measures | free up to | linear | tax above |
 |---|---|--:|--:|---|
 | `sectionSize` | production and contracts files, whole | 50k | 2 per k | 50% x (k - 100)^1.5 |
 | `classSize` | a top-level class, all partials summed | 8k | 5 per k | 500% x (k - 25)^1.5 |
-| `testSize` | the section's test files | 100% of the section's tokens | 1 per k | none |
+| `testSize` | the section's test files (test score only) | 100% of the section's tokens | 1 per k | none |
 
 The rates are the weights; the thresholds and taxes are `sectionSizeFreeTokens`,
 `sectionSizeTaxTokens`, `sectionSizeTaxPercent`, `classSizeFreeTokens`, `classSizeTaxTokens`,
 `classSizeTaxPercent`, `sizeTaxExponent` and `testSizeFreePercent`. Whole files make the section
 charge blind to partials and sibling types; only moving code to another section lowers it. Splitting
-a class into siblings lowers the class charge, since each piece then fits one read. A class with a
-token count skips `largeClass`, since `classSize` prices the same thing exactly; one without (no
-counts, or a failed request) keeps it. On Humans the three add about 18% to the total.
+a class into siblings lowers the class charge, since each piece then fits one read.
 
 ```powershell
+reforge surface-score --format json > score.json   # estimates, plus any cached exact counts
 $env:ANTHROPIC_API_KEY = "..."; reforge surface-score --count-tokens --format json > tokens.json
 ```
 

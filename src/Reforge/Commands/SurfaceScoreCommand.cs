@@ -71,11 +71,11 @@ public static class SurfaceScoreCommand
 
         var countTokensOption = new Option<bool>("--count-tokens")
         {
-            Description = "Count exact tokens per section (its whole handwritten files, and its tests') and per class (its declaration spans across partials) with Anthropic's count_tokens API, using ANTHROPIC_API_KEY, and price them with sectionSize, classSize and testSize. Counts are net of a one-character baseline request and cached by content hash. Without counts the size rules are skipped."
+            Description = "Count exact tokens for files the cache lacks with Anthropic's count_tokens API, using ANTHROPIC_API_KEY. Counts are net of a one-character baseline request and cached by model and content hash. sectionSize, classSize and testSize price every file's exact count when one is cached or counted, and a lexical estimate otherwise; estimates within 5% of a threshold are flagged near-threshold."
         };
         var tokenCacheOption = new Option<string?>("--token-cache")
         {
-            Description = "Token cache file (default: <LocalApplicationData>/reforge/token-cache.json)."
+            Description = "Token cache file, read on every run and shared safely by concurrent runs (default: $REFORGE_TOKEN_CACHE, else <LocalApplicationData>/reforge/token-cache.txt)."
         };
 
         var command = new Command("surface-score",
@@ -111,7 +111,7 @@ public static class SurfaceScoreCommand
             var coveragePath = parseResult.GetValue(coverageOption);
             var format = parseResult.GetValue(formatOption);
             var countTokens = parseResult.GetValue(countTokensOption);
-            var tokenCachePath = parseResult.GetValue(tokenCacheOption) ?? TokenCache.DefaultPath;
+            var tokenCache = parseResult.GetValue(tokenCacheOption);
 
             // --all is an alias for --top 0 (no cap). int.MaxValue is the sentinel for "show
             // everything" through the Take(top) calls downstream.
@@ -123,27 +123,12 @@ public static class SurfaceScoreCommand
                 var solutionDir = LocationHelper.GetSolutionDirectory(solution);
                 var config = SurfaceScoreConfig.LoadOrDefault(configPath, solutionDir, out var loadedFrom);
 
-                var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-                const string skipped = "; sectionSize, classSize and testSize skipped";
-                if (!countTokens) Console.Error.WriteLine($"tokens: not counted (pass --count-tokens){skipped}");
-                else if (string.IsNullOrWhiteSpace(apiKey)) Console.Error.WriteLine($"tokens: not counted, ANTHROPIC_API_KEY is not set{skipped}");
-                using var counter = countTokens && !string.IsNullOrWhiteSpace(apiKey) ? new AnthropicTokenCounter(apiKey) : null;
-                var tokenCache = counter is null ? null : TokenCache.Load(tokenCachePath);
-                var measurer = counter is null ? null : new TokenMeasurer(counter, tokenCache!);
-
+                using var tokens = TokenSession.Open(countTokens, tokenCache, Console.Error);
+                var measurer = tokens.Measurer;
                 var engine = new SurfaceScoreEngine(config, solutionDir) { Tokens = measurer };
                 var report = await engine.ScoreAsync(solution, ct, maxBuildDiagnostics);
-                if (measurer is not null)
-                {
-                    try { tokenCache!.Save(); }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    {
-                        Console.Error.WriteLine($"tokens: cache not saved to {tokenCachePath}: {ex.Message}");
-                    }
-                    Console.Error.WriteLine($"tokens: requests={measurer.Requests} cacheHits={measurer.CacheHits} failures={measurer.Failures} model={counter!.Model} cache={tokenCachePath}");
-                    foreach (var d in report.Diagnostics.Where(d => d.Code == "size-unpriced"))
-                        Console.Error.WriteLine($"tokens: {d.Message}");
-                }
+                tokens.Save(Console.Error);
+                Console.Error.WriteLine($"tokens: total {report.Tokens?.Total} ({report.Tokens?.Total.Source}) requests={measurer.Requests} cacheHits={measurer.CacheHits} failures={measurer.Failures} model={measurer.Model} cache={tokens.CachePath}");
                 report.ConfigPath = loadedFrom;
 
                 if (coveragePath is not null)
@@ -315,11 +300,11 @@ public static class SurfaceScoreCommand
 
     internal static void WriteCompact(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
     {
-        Console.WriteLine($"surface-score: surface={report.SurfaceTotal} implementationShape={report.ImplementationShapeTotal} combined={report.Total} (informational) types={report.TypesAnalyzed} groups={report.Groups.Count} config={(report.ConfigPath ?? "(defaults)")}");
+        Console.WriteLine($"surface-score: surface={report.SurfaceTotal} implementationShape={report.ImplementationShapeTotal} combined={report.Total} (informational) tests={report.TestTotal} (separate) types={report.TypesAnalyzed} groups={report.Groups.Count} config={(report.ConfigPath ?? "(defaults)")}");
         Console.WriteLine($"corpus{(groupFilter is null ? "" : $" ({groupFilter})")}: " +
                           $"{MetricsLine(ScopedMetrics(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
         Console.WriteLine($"surface: {SurfaceLine(ScopedSurface(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
-        var solutionTests = TestsLine(ScopedTests(report, FilterAndOrderGroups(report, groupFilter), groupFilter));
+        var solutionTests = TestsLine(report.TestValueOf(groupFilter));
         if (solutionTests.Length > 0) Console.WriteLine(solutionTests);
         var solutionCoverage = ScopedCoverage(report, FilterAndOrderGroups(report, groupFilter), groupFilter);
         if (solutionCoverage.HasData) Console.WriteLine($"{CoverageLine(solutionCoverage)} ({report.CoverageFormat})");
@@ -390,7 +375,7 @@ public static class SurfaceScoreCommand
                 : $"{g.Name} ({g.Total})");
             Console.WriteLine($"  {MetricsLine(g.Metrics)}");
             Console.WriteLine($"  {SurfaceLine(g.Surface)}");
-            if (g.Tests.Files != 0) Console.WriteLine($"  {TestsLine(g.Tests)}");
+            if (TestsLine(report.TestValueOf(g.Name)) is { Length: > 0 } testsLine) Console.WriteLine($"  {testsLine}");
             if (g.Coverage.HasData) Console.WriteLine($"  {CoverageLine(g.Coverage)}");
             if (report.Tokens?.BySection.GetValueOrDefault(g.Name) is { } tokens) Console.WriteLine($"  {TokensLine(tokens)}");
 
@@ -441,6 +426,7 @@ public static class SurfaceScoreCommand
         sb.AppendLine();
         sb.AppendLine($"- **Surface Score**: {report.SurfaceTotal}");
         sb.AppendLine($"- **Implementation Shape Score**: {report.ImplementationShapeTotal}");
+        sb.AppendLine($"- **Test Score** (separate, not in the total): {report.TestTotal}");
         sb.AppendLine($"- **Combined Score** (informational, not an optimization target): {report.Total}");
         sb.AppendLine($"- **Types analyzed**: {report.TypesAnalyzed}");
         sb.AppendLine($"- **Corpus**{(groupFilter is null ? "" : $" (`{groupFilter}`)")}: " +
@@ -554,9 +540,9 @@ public static class SurfaceScoreCommand
                 sb.AppendLine($"`{CoverageLine(g.Coverage)}`");
             }
             sb.AppendLine();
-            if (g.Tests.Files != 0)
+            if (TestsLine(report.TestValueOf(g.Name)) is { Length: > 0 } testsLine)
             {
-                sb.AppendLine($"`{TestsLine(g.Tests)}`");
+                sb.AppendLine($"`{testsLine}`");
                 sb.AppendLine();
             }
 
@@ -678,7 +664,7 @@ public static class SurfaceScoreCommand
                 surface = SurfaceJson(g.Surface),
                 contents = ContentsJson(report.ContentsBySection.GetValueOrDefault(g.Name) ?? ContentsCensus.Empty),
                 coverage = CoverageJson(g.Coverage),
-                tests = TestsJson(g.Tests),
+                tests = TestsJson(report.TestValueOf(g.Name)),
                 tokens = TokensJson(report.Tokens?.BySection.GetValueOrDefault(g.Name), effectiveTop),
                 byRule = g.ByRule
                     .OrderByDescending(kv => kv.Value)
@@ -756,6 +742,7 @@ public static class SurfaceScoreCommand
             surfaceTotal = report.SurfaceTotal,
             implementationShapeTotal = report.ImplementationShapeTotal,
             combinedTotal = report.Total,
+            testTotal = report.TestTotal,
             typesAnalyzed = report.TypesAnalyzed,
             // Scoped like byRule below: with --group set, the solution-wide corpus would read as
             // the section's. `scope` says which one this is.
@@ -769,11 +756,11 @@ public static class SurfaceScoreCommand
                     || string.Equals(e.From, groupFilter, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(e.To, groupFilter, StringComparison.OrdinalIgnoreCase))
                 .Select(e => new { from = e.From, to = e.To, count = e.Count }),
-            tests = TestsJson(ScopedTests(report, filteredGroups, groupFilter)),
+            tests = TestsJson(report.TestValueOf(groupFilter)),
             tokens = report.Tokens is null ? null : groupFilter is null
-                ? new { total = report.Tokens.Total, files = report.Tokens.Files }
+                ? new { total = report.Tokens.Total.Value, totalSource = report.Tokens.Total.Source, files = report.Tokens.Files }
                 : report.Tokens.BySection.GetValueOrDefault(groupFilter) is { } scoped
-                    ? new { total = scoped.Total, files = scoped.Files }
+                    ? new { total = scoped.Total.Value, totalSource = scoped.Total.Source, files = scoped.Files }
                     : null,
             coverage = CoverageJson(ScopedCoverage(report, filteredGroups, groupFilter)),
             coverageFormat = report.CoverageFormat,
@@ -1041,48 +1028,56 @@ public static class SurfaceScoreCommand
         $"coverage: {c.Percent}% ({c.Covered}/{c.Total} statements)";
 
     /// <summary>
-    /// Test-corpus size of a scope, for the JSON report. Emitted for every group and once for the
-    /// solution. Informational like <see cref="MetricsJson"/> — the test corpus is scored nowhere.
+    /// A section's token figures, each with its source (exact or estimate) and, when an estimate sits
+    /// within 5% of a threshold, <c>nearThreshold</c>. Classes largest first, capped by <c>--top</c>.
     /// </summary>
-    /// <summary>Null (omitted) unless tokens were counted. Classes largest first, capped by <c>--top</c>.</summary>
     private static object? TokensJson(SectionTokens? t, int top) => t is null ? null : new
     {
-        total = t.Total,
+        total = t.Total.Value,
+        totalSource = t.Total.Source,
+        totalNearThreshold = Near(t.Total),
         files = t.Files,
-        tests = t.Tests,
+        tests = t.Tests.Value,
+        testsSource = t.Tests.Source,
+        testsNearThreshold = Near(t.Tests),
         testFiles = t.TestFiles,
-        classes = t.Classes.Take(top).Select(c => new { name = c.Name, file = c.File, line = c.Line, tokens = c.Tokens }).ToArray()
+        classes = t.Classes.Take(top).Select(c => new
+        {
+            name = c.Name, file = c.File, line = c.Line, tokens = c.Tokens.Value, source = c.Tokens.Source, nearThreshold = Near(c.Tokens)
+        }).ToArray()
     };
 
+    private static bool? Near(TokenFigure f) => f.NearThreshold ? true : null;
+
+    /// <summary>"~" marks an estimate, "near-threshold" an estimate within 5% of a threshold.</summary>
     private static string TokensLine(SectionTokens t) =>
-        $"tokens: {(t.Total?.ToString() ?? "unmeasured")} in {t.Files} files, tests {(t.Tests?.ToString() ?? "unmeasured")} in {t.TestFiles}; largest " +
-        string.Join(", ", t.Classes.Take(3).Select(c => $"{c.Name} {(c.Tokens?.ToString() ?? "?")}"));
+        $"tokens: {t.Total} in {t.Files} files, tests {t.Tests} in {t.TestFiles}; largest " +
+        string.Join(", ", t.Classes.Take(3).Select(c => $"{c.Name} {c.Tokens}"));
 
-    private static object TestsJson(TestMass t) => new
+    /// <summary>
+    /// A scope's test value for the JSON report: its test score (apart from <c>total</c>), mass, and
+    /// the ratios to production. <c>coveragePercent</c> is absent when no report covered the scope.
+    /// </summary>
+    private static object TestsJson(TestValue v) => new
     {
-        loc = t.Loc,
-        files = t.Files,
-        projects = t.Projects,
-        locVsProdPercent = t.LocVsProdPercent
+        score = v.Score,
+        loc = v.Mass.Loc,
+        files = v.Mass.Files,
+        projects = v.Mass.Projects,
+        locVsProdPercent = v.Mass.LocVsProdPercent,
+        methods = v.Mass.Methods,
+        methodsPerClass = v.MethodsPerClass,
+        tokenRatio = v.TokenRatio,
+        coveragePercent = v.CoveragePercent
     };
 
-    /// <summary>
-    /// Test mass for the scope the reader is looking at, scoped like <see cref="ScopedMetrics"/>.
-    /// </summary>
-    private static TestMass ScopedTests(ScoreReport report, List<GroupScore> filteredGroups, string? groupFilter)
-    {
-        if (groupFilter is null) return report.Tests;
-        if (report.TestsBySection.TryGetValue(groupFilter, out var t)) return t;
-        return filteredGroups.Count > 0 ? filteredGroups[0].Tests : TestMass.Empty;
-    }
-
-    /// <summary>
-    /// One-line test-corpus summary, or empty when the scope has no test project. The percentage is
-    /// the comparison the column exists for: raw test LOC scales with section size, so the biggest
-    /// section carries the most tests by default and the ratio is what distinguishes them.
-    /// </summary>
-    private static string TestsLine(TestMass t) =>
-        t.Files == 0 ? "" : $"tests: loc={t.Loc} files={t.Files} projects={t.Projects} ({t.LocVsProdPercent}% of prod loc)";
+    /// <summary>One-line test value, or empty when the scope has neither tests nor a test score.</summary>
+    private static string TestsLine(TestValue v) =>
+        v.Mass.Files == 0 && v.Score == 0 ? "" :
+            $"tests: score={v.Score} loc={v.Mass.Loc} files={v.Mass.Files} projects={v.Mass.Projects} methods={v.Mass.Methods}" +
+            $" ({v.Mass.LocVsProdPercent}% of prod loc" +
+            (v.MethodsPerClass is { } perClass ? $", {perClass:0.##} per prod class" : "") +
+            (v.TokenRatio is { } ratio ? $", {ratio:0.##}x prod tokens" : "") + ")";
 
     /// <summary>Terser form for the per-section summary list, where one line per section is the budget.</summary>
     private static string MetricsSummary(SectionMetrics m) =>

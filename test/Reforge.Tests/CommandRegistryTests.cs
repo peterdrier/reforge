@@ -83,6 +83,14 @@ public class CommandRegistryTests
         Assert.Contains(name, CommandRegistry.CreateAll(Options(), relayEligibleOnly: true).Select(c => c.Name));
     }
 
+    [Fact]
+    public void Snapshot_ScoresByDefault_WithANoScoreOptOut()
+    {
+        var options = CommandRegistry.Create("snapshot", Options()).Options.Select(o => o.Name).ToList();
+        Assert.Contains("--no-score", options);
+        Assert.DoesNotContain("--score", options);
+    }
+
     /// <summary>
     /// The mirror-image defect: the old server list registered <c>skill</c>, which the client never
     /// relays, so the registration could never be reached. Eligibility now decides both sides.

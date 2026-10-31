@@ -116,8 +116,8 @@ public sealed class SurfaceScoreConfig
     public int ComplexitySharingPercent { get; set; } = 0;
 
     /// <summary>
-    /// Size in exact tokens, priced only when <c>surface-score --count-tokens</c> measured them; the
-    /// rules are skipped otherwise, never estimated. A section (its production and contracts files,
+    /// Size in tokens: each file's exact count where one was measured or cached, otherwise its lexical
+    /// estimate (see <see cref="TokenEstimator"/>). A section (its production and contracts files,
     /// whole) is free up to <see cref="SectionSizeFreeTokens"/>, pays the <c>sectionSize</c> weight
     /// per thousand tokens above it, and past <see cref="SectionSizeTaxTokens"/> also pays
     /// <see cref="SectionSizeTaxPercent"/>% of the excess in thousands raised to
@@ -360,16 +360,15 @@ public sealed class SurfaceScoreConfig
                 // measured corpus (the report's `contents` block), not settled.
                 ["methodComplexity"] = 1,
                 ["methodCount"] = 3,
-                // The rest are MULTIPLIERS over base points computed from syntax (LOC tiers,
-                // dispatcher arm count); default 1 applies the base points as-is.
-                ["largeClass"] = 1,
+                // The rest are MULTIPLIERS over base points computed from syntax (dispatcher arm
+                // count); default 1 applies the base points as-is.
                 ["actionDispatcher"] = 1,
                 // No genericActionDispatcher key: it was folded into actionDispatcher as three
                 // surcharges rather than kept as a rule gated on all of them at once.
                 ["mutationModeParameter"] = 1,
                 ["flagsControlFlow"] = 1,
-                // Size in exact tokens, points per thousand above the free allowance (see
-                // SectionSizeFreeTokens). Skipped without token counts. Tests pay half the
+                // Size in tokens, points per thousand above the free allowance (see
+                // SectionSizeFreeTokens), exact where counted and estimated elsewhere. Tests pay half the
                 // section rate and no tax: they cost reading, but nothing calls into them.
                 ["sectionSize"] = 2,
                 ["classSize"] = 5,

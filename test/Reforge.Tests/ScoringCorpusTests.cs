@@ -21,7 +21,7 @@ namespace Reforge.Tests;
 /// section, referenced by the main one, except a subdirectory whose name contains <c>Test</c>: that is
 /// a test project referencing the main one. A pair with <c>tokensPerChar</c> is scored with a fake
 /// token counter (that many tokens per letter or digit), so the size rules price it; other pairs are
-/// scored without tokens and the size rules are skipped. Set <c>REFORGE_CORPUS_REPORT</c> to a path to write the
+/// priced on estimated tokens, as a run without counts is. Set <c>REFORGE_CORPUS_REPORT</c> to a path to write the
 /// results table, and <c>REFORGE_CORPUS_CONFIG</c> to score under another config (the ratchet is
 /// skipped then, since the gap markers describe the default weights).</para>
 /// </summary>
@@ -32,7 +32,7 @@ public class ScoringCorpusTests
 
     public ScoringCorpusTests(ITestOutputHelper output) => _output = output;
 
-    private sealed record Pair(string Id, string Label, string Rationale, string? Gap, string? Confidence, int? TokensPerChar);
+    private sealed record Pair(string Id, string Label, string Rationale, string? Gap, string? Confidence, int? TokensPerChar, string? Axis);
 
     /// <summary>
     /// Tokens = <c>scale</c> per letter or digit, plus a request overhead. The baseline "." nets to
@@ -48,10 +48,17 @@ public class ScoringCorpusTests
                 .Sum(line => line.Count(char.IsLetterOrDigit)) + 3);
     }
 
+    /// <summary>
+    /// A pair on the <c>test</c> axis is judged on the test score, and passes only if the main total
+    /// stays put: tests are a value of their own and must never move the main score.
+    /// </summary>
     private sealed record Result(Pair Pair, ScoreReport Before, ScoreReport After)
     {
-        public int Delta => After.Total - Before.Total;
-        public bool Passes => Pair.Label switch
+        private bool OnTestAxis => Pair.Axis == "test";
+        public int BeforeScore => OnTestAxis ? Before.TestTotal : Before.Total;
+        public int AfterScore => OnTestAxis ? After.TestTotal : After.Total;
+        public int Delta => AfterScore - BeforeScore;
+        public bool Passes => (!OnTestAxis || After.Total == Before.Total) && Pair.Label switch
         {
             "better" => Delta < 0,
             "worse" => Delta > 0,
@@ -88,7 +95,7 @@ public class ScoringCorpusTests
             .Where(r => r.Passes == (r.Pair.Gap is not null))
             .Select(r => r.Passes
                 ? $"{r.Pair.Id}: passes now; remove gap '{r.Pair.Gap}' from the manifest"
-                : $"{r.Pair.Id}: {r.Pair.Label} expected, total {r.Before.Total} -> {r.After.Total}")
+                : $"{r.Pair.Id}: {r.Pair.Label} expected, {r.Pair.Axis ?? "main"} {r.BeforeScore} -> {r.AfterScore}, main total {r.Before.Total} -> {r.After.Total}")
             .ToList();
         Assert.True(surprises.Count == 0, string.Join(Environment.NewLine, surprises));
     }
@@ -102,7 +109,8 @@ public class ScoringCorpusTests
             p.GetProperty("rationale").GetString()!,
             p.TryGetProperty("gap", out var g) ? g.GetString() : null,
             p.TryGetProperty("confidence", out var c) ? c.GetString() : null,
-            p.TryGetProperty("tokensPerChar", out var t) ? t.GetInt32() : null)).ToList();
+            p.TryGetProperty("tokensPerChar", out var t) ? t.GetInt32() : null,
+            p.TryGetProperty("axis", out var a) ? a.GetString() : null)).ToList();
     }
 
     private static string Table(List<Result> results)
@@ -113,7 +121,7 @@ public class ScoringCorpusTests
         sb.AppendLine("| pair | label | before | after | delta | verdict | gap | rules moved |");
         sb.AppendLine("|---|---|---:|---:|---:|---|---|---|");
         foreach (var r in results)
-            sb.AppendLine($"| {r.Pair.Id} | {r.Pair.Label} | {r.Before.Total} | {r.After.Total} | {r.Delta:+0;-0;0} "
+            sb.AppendLine($"| {r.Pair.Id}{(r.Pair.Axis is { } axis ? $" ({axis})" : "")} | {r.Pair.Label} | {r.BeforeScore} | {r.AfterScore} | {r.Delta:+0;-0;0} "
                 + $"| {(r.Passes ? "PASS" : "FAIL")} | {r.Pair.Gap ?? ""} | {RulesMoved(r.Before, r.After)} |");
         return sb.ToString();
     }

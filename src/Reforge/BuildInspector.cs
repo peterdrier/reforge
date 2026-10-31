@@ -57,18 +57,26 @@ public static class BuildInspector
     /// </summary>
     public static async Task<BuildHealth> InspectAsync(Solution solution, int maxDiagnostics, CancellationToken ct)
     {
-        var byProject = new List<(Compilation Compilation, string Project)>();
+        // GetDiagnostics binds every method body and caches nothing, so each project's is taken once
+        // and both the counts and the retained list are read off it.
+        var solutionDir = LocationHelper.GetSolutionDirectory(solution);
+        var raw = new List<BuildDiagnostic>();
+        int errors = 0, unresolved = 0;
         foreach (var project in solution.Projects)
         {
             var compilation = await project.GetCompilationAsync(ct);
-            if (compilation is not null) byProject.Add((compilation, project.Name));
+            if (compilation is null) continue;
+            foreach (var d in compilation.GetDiagnostics(ct))
+            {
+                if (d.Severity != DiagnosticSeverity.Error) continue;
+                errors++;
+                if (UnresolvedReferenceCodes.Contains(d.Id)) unresolved++;
+                raw.Add(ToBuildDiagnostic(d, project.Name, solutionDir));
+            }
         }
 
-        var (errors, unresolved) = CountErrors(byProject.Select(x => x.Compilation), ct);
         var appearsUnbuilt = AppearsUnbuilt(solution.Projects.Select(p => p.FilePath));
-
-        var solutionDir = LocationHelper.GetSolutionDirectory(solution);
-        var (diagnostics, truncated) = CollectDiagnostics(byProject, solutionDir, maxDiagnostics, ct);
+        var (diagnostics, truncated) = DedupAndCap(raw, maxDiagnostics);
 
         return new BuildHealth(errors > 0, errors, unresolved, appearsUnbuilt)
         {

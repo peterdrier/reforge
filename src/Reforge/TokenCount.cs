@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -112,80 +113,209 @@ public sealed class AnthropicTokenCounter : ITokenCounter, IDisposable
     }
 }
 
-/// <summary>
-/// Raw counts keyed by SHA-256 of model and text, in one JSON file. Reruns only pay for changed
-/// text. Failures are never stored. <see cref="Save"/> merges with what is on disk, so two runs
-/// sharing a cache lose nothing.
-/// </summary>
-public sealed class TokenCache
+/// <summary>A cache key: the counting model, and the first 128 bits of the text's SHA-256.</summary>
+public readonly record struct TokenKey(string Model, UInt128 Hash)
 {
-    private readonly ConcurrentDictionary<string, int> _counts;
-    private readonly string? _path;
-
-    private TokenCache(string? path, Dictionary<string, int> counts)
+    /// <summary>The hash is already uniform, so its low bits are the dictionary hash.</summary>
+    public sealed class Comparer : IEqualityComparer<TokenKey>
     {
-        _path = path;
-        _counts = new ConcurrentDictionary<string, int>(counts, StringComparer.Ordinal);
-    }
-
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "reforge", "token-cache.json");
-
-    public static TokenCache InMemory() => new(null, new Dictionary<string, int>());
-
-    public static TokenCache Load(string path) => new(path, Read(path));
-
-    public int Count => _counts.Count;
-
-    public static string Key(string model, string text) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(model + "\0" + text)));
-
-    public bool TryGet(string key, out int count) => _counts.TryGetValue(key, out count);
-
-    public void Set(string key, int count) => _counts[key] = count;
-
-    public void Save()
-    {
-        if (_path is null) return;
-        var merged = Read(_path);
-        foreach (var (k, v) in _counts) merged[k] = v;
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(_path))!);
-        var temp = _path + "." + Environment.ProcessId + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(merged));
-        File.Move(temp, _path, overwrite: true);
-    }
-
-    private static Dictionary<string, int> Read(string path)
-    {
-        try
-        {
-            return File.Exists(path)
-                ? JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(path)) ?? new()
-                : new();
-        }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
-        {
-            Console.Error.WriteLine($"tokens: ignoring unreadable cache {path}: {ex.Message}");
-            return new();
-        }
+        public static readonly Comparer Instance = new();
+        public bool Equals(TokenKey x, TokenKey y) => x.Hash == y.Hash && string.Equals(x.Model, y.Model, StringComparison.Ordinal);
+        public int GetHashCode(TokenKey key) => (int)(ulong)key.Hash;
     }
 }
 
 /// <summary>
-/// Token counts for arbitrary text, net of request overhead. The API counts a whole request and
-/// rejects empty content, so a one-character message (<see cref="BaselineText"/>) is counted once
-/// and subtracted from every measurement. File counts then add up instead of each carrying the
-/// envelope; each is the text's tokens less the baseline character's, a constant per text.
-/// Concurrent requests for the same text share one call.
+/// Raw counts by model and content hash, durable across runs and shared by concurrent ones. The
+/// file is append-only text, one <c>count model hash</c> line per entry, so a run writes only what
+/// it measured and loading a million entries stays a single sequential read. Appends happen under
+/// an exclusive lock file; a reader takes no lock and keeps only complete lines, and the count comes
+/// first so a torn line never parses. When duplicate lines pile up (two runs counting the same
+/// text at once) the file is rewritten whole, to a temp file renamed over it. Failures are never
+/// stored.
 /// </summary>
-public sealed class TokenMeasurer(ITokenCounter counter, TokenCache cache)
+public sealed class TokenCache
+{
+    public const string EnvironmentVariable = "REFORGE_TOKEN_CACHE";
+    private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(60);
+
+    private readonly Dictionary<TokenKey, int> _loaded;
+    private readonly ConcurrentDictionary<TokenKey, int> _added = new(TokenKey.Comparer.Instance);
+    private readonly string? _path;
+    private readonly bool _compact;
+
+    private TokenCache(string? path, Dictionary<TokenKey, int> loaded, bool compact)
+    {
+        _path = path;
+        _loaded = loaded;
+        _compact = compact;
+    }
+
+    public static string DefaultPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "reforge", "token-cache.txt");
+
+    /// <summary>The cache file: <paramref name="option"/>, else <see cref="EnvironmentVariable"/>, else <see cref="DefaultPath"/>.</summary>
+    public static string ResolvePath(string? option) =>
+        !string.IsNullOrWhiteSpace(option) ? option
+        : Environment.GetEnvironmentVariable(EnvironmentVariable) is { Length: > 0 } fromEnv ? fromEnv
+        : DefaultPath;
+
+    public static TokenCache InMemory() => new(null, new Dictionary<TokenKey, int>(TokenKey.Comparer.Instance), false);
+
+    public static TokenCache Load(string path)
+    {
+        var (entries, lines, legacy) = Read(path);
+        // Rewrite when a quarter of the lines are duplicates, or the file is not in this format.
+        return new TokenCache(path, entries, legacy || lines > 1024 && lines > entries.Count + entries.Count / 4);
+    }
+
+    public int Count => _loaded.Count + _added.Count(kv => !_loaded.ContainsKey(kv.Key));
+
+    public static TokenKey Key(string model, string text)
+    {
+        Span<byte> hash = stackalloc byte[32];
+        SHA256.HashData(Encoding.UTF8.GetBytes(text), hash);
+        return new TokenKey(model, System.Buffers.Binary.BinaryPrimitives.ReadUInt128BigEndian(hash));
+    }
+
+    public bool TryGet(TokenKey key, out int count) => _added.TryGetValue(key, out count) || _loaded.TryGetValue(key, out count);
+
+    public void Set(TokenKey key, int count) => _added[key] = count;
+
+    /// <summary>Appends this run's new entries under the lock, or rewrites the file when it needs compacting.</summary>
+    public void Save()
+    {
+        if (_path is null) return;
+        var fresh = _added.Where(kv => !_loaded.TryGetValue(kv.Key, out var v) || v != kv.Value).ToList();
+        if (fresh.Count == 0 && !_compact) return;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(_path))!);
+        using var held = AcquireLock(_path + ".lock");
+        if (_compact)
+        {
+            // Under the lock, so nothing appended since this run loaded is lost.
+            var merged = Read(_path).Entries;
+            foreach (var (k, v) in fresh) merged[k] = v;
+            var temp = $"{_path}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+            using (var w = new StreamWriter(temp, false, new UTF8Encoding(false)))
+                foreach (var (k, v) in merged) w.Write(Line(k, v));
+            File.Move(temp, _path, overwrite: true);
+            return;
+        }
+
+        var sb = new StringBuilder();
+        foreach (var (k, v) in fresh) sb.Append(Line(k, v));
+        using var file = new FileStream(_path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+        if (file.Length > 0)
+        {
+            // A writer that died mid-line left no newline; start on a fresh line so this one parses.
+            file.Seek(-1, SeekOrigin.End);
+            if (file.ReadByte() != '\n') sb.Insert(0, '\n');
+        }
+        file.Seek(0, SeekOrigin.End);
+        file.Write(Encoding.UTF8.GetBytes(sb.ToString()));
+        file.Flush(flushToDisk: true);
+    }
+
+    private static string Line(TokenKey key, int count) =>
+        string.Create(CultureInfo.InvariantCulture, $"{count} {key.Model} {key.Hash:X32}\n");
+
+    private static FileStream AcquireLock(string lockPath)
+    {
+        var deadline = DateTime.UtcNow + LockTimeout;
+        while (true)
+        {
+            try { return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException) when (DateTime.UtcNow < deadline) { Thread.Sleep(Random.Shared.Next(10, 50)); }
+        }
+    }
+
+    private static (Dictionary<TokenKey, int> Entries, int Lines, bool Legacy) Read(string path)
+    {
+        var entries = new Dictionary<TokenKey, int>(TokenKey.Comparer.Instance);
+        byte[] bytes;
+        try
+        {
+            if (!File.Exists(path)) return (entries, 0, false);
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            bytes = new byte[stream.Length];
+            stream.ReadExactly(bytes);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"tokens: ignoring unreadable cache {path}: {ex.Message}");
+            return (entries, 0, false);
+        }
+        if (bytes.Length > 0 && bytes[0] == (byte)'{') return (entries, 0, true);
+        entries.EnsureCapacity(bytes.Length / 56); // a line is about 55 bytes
+
+        var models = new List<(byte[] Bytes, string Name)>();
+        var span = bytes.AsSpan();
+        var lines = 0;
+        while (true)
+        {
+            var eol = span.IndexOf((byte)'\n');
+            if (eol < 0) break; // an unfinished last line is still being written, or was torn
+            var line = span[..eol].TrimEnd((byte)'\r');
+            span = span[(eol + 1)..];
+            if (line.IsEmpty) continue;
+            lines++;
+            var a = line.IndexOf((byte)' ');
+            if (a <= 0) continue;
+            var rest = line[(a + 1)..];
+            var b = rest.IndexOf((byte)' ');
+            if (b <= 0 || rest.Length - b - 1 != 32) continue;
+            if (!int.TryParse(line[..a], NumberStyles.None, CultureInfo.InvariantCulture, out var count)) continue;
+            if (!TryParseHex(rest[(b + 1)..], out var hash)) continue;
+            entries[new TokenKey(Intern(models, rest[..b]), hash)] = count;
+        }
+        return (entries, lines, false);
+    }
+
+    private static bool TryParseHex(ReadOnlySpan<byte> hex, out UInt128 value)
+    {
+        value = 0;
+        foreach (var c in hex)
+        {
+            int digit = c switch
+            {
+                >= (byte)'0' and <= (byte)'9' => c - '0',
+                >= (byte)'A' and <= (byte)'F' => c - 'A' + 10,
+                >= (byte)'a' and <= (byte)'f' => c - 'a' + 10,
+                _ => -1,
+            };
+            if (digit < 0) return false;
+            value = (value << 4) | (uint)digit;
+        }
+        return true;
+    }
+
+    private static string Intern(List<(byte[] Bytes, string Name)> models, ReadOnlySpan<byte> model)
+    {
+        foreach (var (bytes, name) in models)
+            if (model.SequenceEqual(bytes)) return name;
+        var added = Encoding.UTF8.GetString(model);
+        models.Add((model.ToArray(), added));
+        return added;
+    }
+}
+
+/// <summary>
+/// Exact token counts for arbitrary text, net of request overhead, or null when there is none: the
+/// cache answers first, and only a counter (an API key) asks the API. The API counts a whole
+/// request and rejects empty content, so a one-character message (<see cref="BaselineText"/>) is
+/// counted once and subtracted from every measurement. File counts then add up instead of each
+/// carrying the envelope. Concurrent requests for the same text share one call.
+/// </summary>
+public sealed class TokenMeasurer(ITokenCounter? counter, TokenCache cache, string model = AnthropicTokenCounter.DefaultModel)
 {
     public const string BaselineText = ".";
 
-    private readonly ConcurrentDictionary<string, Task<int?>> _inFlight = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<TokenKey, Task<int?>> _inFlight = new(TokenKey.Comparer.Instance);
     private Task<int?>? _baseline;
     private int _requests, _hits, _failures;
 
+    public string Model { get; } = counter?.Model ?? model;
     public int Requests => _requests;
     public int CacheHits => _hits;
     public int Failures => _failures;
@@ -201,23 +331,66 @@ public sealed class TokenMeasurer(ITokenCounter counter, TokenCache cache)
 
     private Task<int?> RawAsync(string text, CancellationToken ct)
     {
-        var key = TokenCache.Key(counter.Model, text);
+        var key = TokenCache.Key(Model, text);
         if (cache.TryGet(key, out var cached))
         {
             Interlocked.Increment(ref _hits);
             return Task.FromResult<int?>(cached);
         }
+        if (counter is null) return Task.FromResult<int?>(null);
         return _inFlight.GetOrAdd(key, _ => FetchAsync(key, text, ct));
     }
 
-    private async Task<int?> FetchAsync(string key, string text, CancellationToken ct)
+    private async Task<int?> FetchAsync(TokenKey key, string text, CancellationToken ct)
     {
         Interlocked.Increment(ref _requests);
-        var count = await counter.CountAsync(text, ct);
+        var count = await counter!.CountAsync(text, ct);
         if (count is null) Interlocked.Increment(ref _failures);
         else cache.Set(key, count.Value);
         return count;
     }
+}
+
+/// <summary>
+/// A token figure: exact when every text in it was counted (or cached), otherwise an estimate from
+/// <see cref="TokenEstimator"/>. <see cref="NearThreshold"/> marks an estimate within 5% of a size
+/// threshold, where the estimate's error could put it on either side.
+/// </summary>
+public readonly record struct TokenFigure(int Value, bool Estimated)
+{
+    public bool NearThreshold { get; init; }
+
+    /// <summary>An estimated sum some of whose parts were exact.</summary>
+    public bool Mixed { get; init; }
+
+    public string Source => Estimated ? "estimate" : "exact";
+
+    /// <summary><see cref="Source"/>, with <c>mixed</c> for a sum of exact and estimated parts.</summary>
+    public string Provenance => Mixed ? "mixed" : Source;
+
+    public static TokenFigure Sum(IEnumerable<TokenFigure> figures)
+    {
+        int total = 0;
+        bool estimated = false, exact = false;
+        foreach (var f in figures)
+        {
+            total += f.Value;
+            estimated |= f.Estimated;
+            exact |= !f.Estimated || f.Mixed;
+        }
+        return new TokenFigure(total, estimated) { Mixed = estimated && exact };
+    }
+
+    /// <summary>This figure, marked near-threshold when it is estimated and within 5% of any of <paramref name="thresholds"/>.</summary>
+    public TokenFigure Flag(params double[] thresholds)
+    {
+        var value = Value;
+        return this with { NearThreshold = Estimated && thresholds.Any(t => IsNear(value, t)) };
+    }
+
+    public static bool IsNear(int value, double threshold) => threshold > 0 && Math.Abs(value - threshold) <= threshold * 0.05;
+
+    public override string ToString() => (Estimated ? "~" : "") + Value + (NearThreshold ? " near-threshold" : "");
 }
 
 /// <summary>One type's text as the census reads it: the files it is declared in, and its declaration spans.</summary>
@@ -225,21 +398,25 @@ public sealed record TypeText(
     string Section, string Assembly, string Name, string File, int Line, bool IsClass,
     IReadOnlyList<(string Path, string Text)> Files, IReadOnlyList<string> Spans);
 
-public sealed record ClassTokens(string Name, string File, int Line, int? Tokens);
+public sealed record ClassTokens(string Name, string File, int Line, TokenFigure Tokens);
 
 /// <summary>
-/// A section's tokens: the sum of its whole handwritten files, null if any file went unmeasured.
-/// <see cref="Tests"/> is the same sum over the test files attributed to the section.
+/// A section's tokens: the sum of its whole handwritten files. <see cref="Tests"/> is the same sum
+/// over the test files attributed to the section.
 /// </summary>
-public sealed record SectionTokens(int? Total, int Files, List<ClassTokens> Classes)
+public sealed record SectionTokens(TokenFigure Total, int Files, List<ClassTokens> Classes)
 {
-    public int? Tests { get; init; } = 0;
+    /// <summary>The part of <see cref="Total"/> in the satellite <c>.Contracts</c> assembly.</summary>
+    public TokenFigure Contracts { get; init; }
+    /// <summary>The rest of <see cref="Total"/>: the section's own assembly.</summary>
+    public TokenFigure Main { get; init; }
+    public TokenFigure Tests { get; init; }
     public int TestFiles { get; init; }
 }
 
 public sealed class TokenCensus
 {
-    public int? Total { get; init; }
+    public TokenFigure Total { get; init; }
     public int Files { get; init; }
     public Dictionary<string, SectionTokens> BySection { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -288,10 +465,12 @@ public sealed class TokenCensus
     /// <summary>
     /// Measures each distinct file once per (assembly, path), as <c>metrics.files</c> counts them,
     /// and each class as the sum of its spans. Whole files make a section's total independent of
-    /// how its code is split into types or partials. <paramref name="tests"/> holds each section's
-    /// attributed test files (see <see cref="TestMassAnalyzer.CollectFilesAsync"/>).
+    /// how its code is split into types or partials. Each text takes its exact count when
+    /// <paramref name="measurer"/> has one and is estimated otherwise, so a figure is exact only
+    /// when all of its texts are. <paramref name="tests"/> holds each section's attributed test files
+    /// (see <see cref="TestMassAnalyzer.CollectFilesAsync"/>).
     /// </summary>
-    public static async Task<TokenCensus> MeasureAsync(IReadOnlyList<TypeText> types, TokenMeasurer measurer, CancellationToken ct,
+    public static async Task<TokenCensus> MeasureAsync(IReadOnlyList<TypeText> types, TokenMeasurer? measurer, CancellationToken ct,
         IReadOnlyDictionary<string, List<(string Path, string Text)>>? tests = null)
     {
         var fileText = new Dictionary<(string Assembly, string Path), string>();
@@ -299,43 +478,90 @@ public sealed class TokenCensus
         foreach (var t in types)
             foreach (var (path, text) in t.Files)
                 if (fileText.TryAdd((t.Assembly, path), text)) fileSection[(t.Assembly, path)] = t.Section;
+        tests ??= new Dictionary<string, List<(string Path, string Text)>>();
 
-        var fileCounts = fileText.ToDictionary(kv => kv.Key, kv => measurer.MeasureAsync(kv.Value, ct));
-        var classes = types.Where(t => t.IsClass)
-            .Select(t => (Type: t, Counts: t.Spans.Select(s => measurer.MeasureAsync(s, ct)).ToList()))
-            .ToList();
-        var testCounts = (tests ?? new Dictionary<string, List<(string Path, string Text)>>())
-            .ToDictionary(kv => kv.Key, kv => kv.Value.Select(f => measurer.MeasureAsync(f.Text, ct)).ToList(), StringComparer.OrdinalIgnoreCase);
-        await Task.WhenAll(fileCounts.Values.Concat(classes.SelectMany(c => c.Counts)).Concat(testCounts.Values.SelectMany(t => t)));
+        var figures = await FiguresAsync(fileText.Values
+            .Concat(types.Where(t => t.IsClass).SelectMany(t => t.Spans))
+            .Concat(tests.Values.SelectMany(files => files.Select(f => f.Text))), measurer, ct);
 
-        var census = new TokenCensus { Total = Sum(fileCounts.Values.Select(t => t.Result)), Files = fileCounts.Count };
+        var census = new TokenCensus { Total = TokenFigure.Sum(fileText.Values.Select(t => figures[t])), Files = fileText.Count };
         foreach (var section in fileSection.GroupBy(kv => kv.Value, kv => kv.Key, StringComparer.OrdinalIgnoreCase))
         {
-            var sectionClasses = classes
-                .Where(c => string.Equals(c.Type.Section, section.Key, StringComparison.OrdinalIgnoreCase))
-                .Select(c => new ClassTokens(c.Type.Name, c.Type.File, c.Type.Line, Sum(c.Counts.Select(t => t.Result))))
-                .OrderByDescending(c => c.Tokens ?? -1)
+            var sectionClasses = types
+                .Where(t => t.IsClass && string.Equals(t.Section, section.Key, StringComparison.OrdinalIgnoreCase))
+                .Select(t => new ClassTokens(t.Name, t.File, t.Line, TokenFigure.Sum(t.Spans.Select(s => figures[s]))))
+                .OrderByDescending(c => c.Tokens.Value)
                 .ThenBy(c => c.Name, StringComparer.Ordinal)
                 .ToList();
-            var sectionTests = testCounts.GetValueOrDefault(section.Key) ?? [];
+            var sectionTests = tests.FirstOrDefault(kv => string.Equals(kv.Key, section.Key, StringComparison.OrdinalIgnoreCase)).Value ?? [];
             census.BySection[section.Key] = new SectionTokens(
-                Sum(section.Select(f => fileCounts[f].Result)), section.Count(), sectionClasses)
+                TokenFigure.Sum(section.Select(f => figures[fileText[f]])), section.Count(), sectionClasses)
             {
-                Tests = Sum(sectionTests.Select(t => t.Result)),
+                Main = TokenFigure.Sum(section.Where(f => !AssemblySections.IsContractsAssembly(f.Assembly)).Select(f => figures[fileText[f]])),
+                Contracts = TokenFigure.Sum(section.Where(f => AssemblySections.IsContractsAssembly(f.Assembly)).Select(f => figures[fileText[f]])),
+                Tests = TokenFigure.Sum(sectionTests.Select(f => figures[f.Text])),
                 TestFiles = sectionTests.Count,
             };
         }
         return census;
     }
 
-    private static int? Sum(IEnumerable<int?> counts)
+    /// <summary>Each distinct text's exact count where the measurer has one, else its estimate.</summary>
+    private static async Task<Dictionary<string, TokenFigure>> FiguresAsync(IEnumerable<string> texts, TokenMeasurer? measurer, CancellationToken ct)
     {
-        var total = 0;
-        foreach (var c in counts)
-        {
-            if (c is null) return null;
-            total += c.Value;
-        }
-        return total;
+        var distinct = texts.Distinct(StringComparer.Ordinal).ToList();
+        var exact = measurer is null
+            ? new int?[distinct.Count]
+            : await Task.WhenAll(distinct.Select(t => measurer.MeasureAsync(t, ct)));
+        var figures = new TokenFigure[distinct.Count];
+        Parallel.For(0, distinct.Count, new ParallelOptions { CancellationToken = ct }, i =>
+            figures[i] = exact[i] is { } count ? new TokenFigure(count, false) : new TokenFigure(TokenEstimator.Estimate(distinct[i]), true));
+        var result = new Dictionary<string, TokenFigure>(distinct.Count, StringComparer.Ordinal);
+        for (var i = 0; i < distinct.Count; i++) result[distinct[i]] = figures[i];
+        return result;
     }
+}
+
+/// <summary>
+/// The token path a command runs on: the durable cache, read on every run so cached exact counts
+/// are used with or without a key, and the API for the rest only with <c>--count-tokens</c> and
+/// <c>ANTHROPIC_API_KEY</c>. Whatever stays uncounted is estimated.
+/// </summary>
+public sealed class TokenSession : IDisposable
+{
+    private readonly AnthropicTokenCounter? _counter;
+    private readonly TokenCache _cache;
+
+    private TokenSession(AnthropicTokenCounter? counter, TokenCache cache, string cachePath)
+    {
+        _counter = counter;
+        _cache = cache;
+        CachePath = cachePath;
+        Measurer = new TokenMeasurer(counter, cache);
+    }
+
+    public TokenMeasurer Measurer { get; }
+    public string CachePath { get; }
+
+    public static TokenSession Open(bool countTokens, string? cacheOption, TextWriter stderr)
+    {
+        var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+        if (countTokens && string.IsNullOrWhiteSpace(apiKey))
+            stderr.WriteLine("tokens: ANTHROPIC_API_KEY is not set; uncached files are estimated");
+        var counter = countTokens && !string.IsNullOrWhiteSpace(apiKey) ? new AnthropicTokenCounter(apiKey) : null;
+        var path = TokenCache.ResolvePath(cacheOption);
+        return new TokenSession(counter, TokenCache.Load(path), path);
+    }
+
+    /// <summary>Appends what this run counted. A cache that cannot be written costs a warning, not the run.</summary>
+    public void Save(TextWriter stderr)
+    {
+        try { _cache.Save(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            stderr.WriteLine($"tokens: cache not saved to {CachePath}: {ex.Message}");
+        }
+    }
+
+    public void Dispose() => _counter?.Dispose();
 }
