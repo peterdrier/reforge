@@ -113,7 +113,7 @@ public static class SkillCommand
         (tests are not consulted; reflection and convention DI are invisible). `edges` lists
         `{from, to, count}` per pair of sections. `snapshot --by-assembly` flattens metrics,
         surface, tokens, size charges and the test value into one CSV row per section for history
-        runs; `--score` adds the main score at about twice the run time.
+        runs, including the main score; `--no-score` leaves it out at about half the run time.
 
         **Coverage is attributed per section from a report you supply.** `--coverage <file>` on
         `surface-score` and `snapshot --by-assembly` reads a Cobertura XML (Coverlet:

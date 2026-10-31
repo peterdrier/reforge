@@ -15,8 +15,8 @@ What changed and why. Newest first.
   ratio. `CopyPasteTestSetup` is judged on the test score and fails if the main total moves.
 - **`snapshot --by-assembly` carries what a daily history needs** (49 columns, a new schema that
   `--append` will not mix with the old): full SHA, reforge version, config hash, load failures,
-  tokens per assembly with their source, size charges and the test value, plus the main score with
-  `--score` (roughly double the run time). The token cache it shares with `surface-score` is durable, keyed
+  tokens per assembly with their source, size charges, the test value and the main score by default
+  (`--no-score` leaves it empty at about half the run time). The token cache it shares with `surface-score` is durable, keyed
   by model and content hash, appended under a lock and settable once per driver with `REFORGE_TOKEN_CACHE`.
 
 ## Unreleased - Price the logic, not its arrangement

@@ -15,8 +15,8 @@ namespace Reforge;
 /// Columns are the per-section blocks <c>surface-score</c> reports, flattened so a history run can
 /// append one file per commit and chart any column per section without parsing a score report.
 /// <c>ReforgeVersion</c> and <c>ConfigHash</c> tell rows scored under different rules apart. The
-/// main score columns are null unless the run passed <c>--score</c>, which costs a full scoring
-/// pass; the size charges and the test score are priced off the token census either way.
+/// main score columns are filled by a full scoring pass unless the run passed <c>--no-score</c>,
+/// which leaves them null; the size charges and the test score are priced off the token census either way.
 /// </remarks>
 public sealed record SectionSnapshotRow(
     string CommitDate,
@@ -75,12 +75,12 @@ public static class SectionSnapshotAnalyzer
     public const string SolutionRow = "(solution)";
 
     /// <summary>
-    /// One row per section plus the rollup. With <paramref name="score"/> the full engine runs and
-    /// every column comes off its report; without, only the passes the columns other than the main
-    /// score need, about half the cost.
+    /// One row per section plus the rollup. With <paramref name="score"/> (the default) the full
+    /// engine runs and every column comes off its report; without, only the passes the columns other
+    /// than the main score need, about half the cost.
     /// </summary>
     public static async Task<List<SectionSnapshotRow>> AnalyzeAsync(Solution solution, string? coveragePath, CancellationToken ct,
-        bool score = false, TokenMeasurer? tokens = null, SurfaceScoreConfig? config = null)
+        bool score = true, TokenMeasurer? tokens = null, SurfaceScoreConfig? config = null)
     {
         var dir = LocationHelper.GetSolutionDirectory(solution);
         config ??= SurfaceScoreConfig.LoadOrDefault(null, dir, out _);

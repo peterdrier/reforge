@@ -37,7 +37,7 @@ Every reference is found via the compiler's semantic model — including referen
 | `reforge injected <type>` | Who injects this type via constructor |
 | `reforge usages <type>` | Where a type is used, categorized by kind |
 | `reforge parameters --name X --type Y` | Find parameters matching patterns |
-| `reforge snapshot [--by-assembly] [--score] [--coverage report.xml] [--append file.csv]` | Macro health record for time-series charting; `--by-assembly` emits one row per section with size, complexity, surface census, tokens, size charges, the test value and coverage, and with `--score` the main score |
+| `reforge snapshot [--by-assembly] [--no-score] [--coverage report.xml] [--append file.csv]` | Macro health record for time-series charting; `--by-assembly` emits one row per section with size, complexity, surface census, tokens, size charges, the test value, coverage and the main score (`--no-score` skips the main score) |
 | `reforge audit-surface <type>` | Per-method inbound view: caller counts (prod/test) + body shape for classes (passthrough-repo/-service/-self, linq-over-repo/-service, write, composite, complex) |
 | `reforge audit-downstream <class>` | Per-method outbound view: dependency calls, DbSet reads/writes traced one hop through repository implementations with `via` attribution, untraced repo-to-repo hops, and external IO |
 
@@ -258,8 +258,8 @@ column per section. The schema has 49 columns:
 - tokens: `tokens_prod` (the section's own assembly), `tokens_contracts` (its `.Contracts`
   satellite), each with a `_source` of `exact`, `estimate` or `mixed`, from the same cache as
   `surface-score`
-- score: `score_surface`, `score_implementation`, `score_total`, filled only with `--score`, which
-  runs the full engine and roughly doubles the run time; `section_size_charge` and
+- score: `score_surface`, `score_implementation`, `score_total`, filled by default by the full
+  engine; `--no-score` leaves them empty and roughly halves the run time; `section_size_charge` and
   `class_size_charge` are priced off the tokens either way
 - tests: `test_score`, `test_loc`, `test_files`, `test_methods`, `test_methods_per_class`,
   `tokens_tests`, `tokens_tests_source`, `test_token_ratio`, `coverage_covered`, `coverage_total`,

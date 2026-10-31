@@ -25,10 +25,10 @@ public static class SnapshotCommand
             Description = "With --by-assembly: a Cobertura or dotCover DetailedXML report whose statement coverage is attributed to each section by assembly."
         };
 
-        var scoreOption = new Option<bool>("--score")
+        var noScoreOption = new Option<bool>("--no-score")
         {
-            Description = "With --by-assembly: fill score_surface, score_implementation and score_total by running the full " +
-                          "surface-score engine, about twice the time of a run without it. Every other column is filled either way."
+            Description = "With --by-assembly: skip the full surface-score engine and leave score_surface, score_implementation " +
+                          "and score_total empty, about half the run time. Every other column is filled either way."
         };
 
         var countTokensOption = new Option<bool>("--count-tokens")
@@ -47,7 +47,7 @@ public static class SnapshotCommand
             appendOption,
             byAssemblyOption,
             coverageOption,
-            scoreOption,
+            noScoreOption,
             countTokensOption,
             tokenCacheOption
         };
@@ -68,7 +68,7 @@ public static class SnapshotCommand
                 {
                     using var tokens = TokenSession.Open(parseResult.GetValue(countTokensOption), parseResult.GetValue(tokenCacheOption), Console.Error);
                     var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(solution, coveragePath, cancellationToken,
-                        score: parseResult.GetValue(scoreOption), tokens: tokens.Measurer);
+                        score: !parseResult.GetValue(noScoreOption), tokens: tokens.Measurer);
                     tokens.Save(Console.Error);
                     if (appendPath is not null)
                     {

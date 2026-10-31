@@ -78,11 +78,11 @@ public class SectionSnapshotTests
     }
 
     [Fact]
-    public async Task Score_BlankUnlessAsked_AndThenTheEngines()
+    public async Task Score_TheEnginesByDefault_AndBlankWhenOptedOut()
     {
         var config = LowThresholds();
-        var plain = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None, config: config);
-        var scored = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None, score: true, config: config);
+        var plain = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None, score: false, config: config);
+        var scored = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None, config: config);
         var report = await new SurfaceScoreEngine(config, Dir).ScoreAsync(_fixture.Solution, CancellationToken.None);
 
         Assert.All(plain, r => Assert.Null(r.ScoreTotal));
