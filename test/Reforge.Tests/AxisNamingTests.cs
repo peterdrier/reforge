@@ -34,7 +34,7 @@ public class AxisNamingTests
             new[]
             {
                 "actionDispatcher", "classSize", "flagsControlFlow", "methodComplexity",
-                "methodCount", "mutationModeParameter", "sectionSize", "testSize"
+                "methodCount", "mutationModeParameter", "sectionSize"
             },
             SurfaceScoreRuleGroups.ImplementationShape.OrderBy(r => r, StringComparer.Ordinal).ToArray());
 

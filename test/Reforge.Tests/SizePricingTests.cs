@@ -86,10 +86,17 @@ public class SizePricingTests
         Assert.False(section.Total.Estimated || section.Tests.Estimated);
         Assert.Equal(1, section.TestFiles);
         Assert.Equal(SizePricing.Class(section.Classes.Single().Tokens.Value, 5, Config), report.ByRule["classSize"]);
-        Assert.Equal(SizePricing.Tests(section.Tests.Value, section.Total.Value, 1, Config), report.ByRule["testSize"]);
-        Assert.True(report.ByRule["classSize"] > 0 && report.ByRule["testSize"] > 0);
-        Assert.Equal(report.ByRule["classSize"] + report.ByRule["testSize"] + report.ByRule.GetValueOrDefault("sectionSize"),
+        Assert.True(report.ByRule["classSize"] > 0);
+        Assert.Equal(report.ByRule["classSize"] + report.ByRule.GetValueOrDefault("sectionSize"),
             report.ImplementationShapeTotal - ImplementationShapeWithout(report));
+
+        // testSize is the test score: priced the same way, kept out of every main total.
+        var testScore = SizePricing.Tests(section.Tests.Value, section.Total.Value, 1, Config);
+        Assert.True(testScore > 0);
+        Assert.Equal(testScore, report.TestTotal);
+        Assert.Equal(testScore, report.TestValueOf(report.Tokens.BySection.Keys.Single()).Score);
+        Assert.False(report.ByRule.ContainsKey("testSize"));
+        Assert.Equal(report.SurfaceTotal + report.ImplementationShapeTotal, report.Total);
     }
 
     /// <summary>A *Service class of about 1,020 nonblank lines, about 10k estimated tokens.</summary>
@@ -151,7 +158,7 @@ public class SizePricingTests
         (await ScoreAsync(tokens, BigService)).Tokens!.BySection.Values.Single().Classes.Single().Tokens.Value;
 
     private static int ImplementationShapeWithout(ScoreReport report) =>
-        report.ByRule.Where(kv => SurfaceScoreRuleGroups.IsImplementationShape(kv.Key) && kv.Key is not ("sectionSize" or "classSize" or "testSize"))
+        report.ByRule.Where(kv => SurfaceScoreRuleGroups.IsImplementationShape(kv.Key) && kv.Key is not ("sectionSize" or "classSize"))
             .Sum(kv => kv.Value);
 
     private static async Task<ScoreReport> ScoreAsync(TokenMeasurer? tokens, string prod = Prod, SurfaceScoreConfig? config = null)

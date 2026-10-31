@@ -153,6 +153,24 @@ public sealed class ScoreReport
     }
     /// <summary>Token figures, exact where counted or cached and estimated elsewhere; the size rules price them.</summary>
     public TokenCensus? Tokens { get; set; }
+    /// <summary>The test score (<c>testSize</c>) summed over sections. Never part of <see cref="Total"/>.</summary>
+    public int TestTotal { get; set; }
+    /// <summary>The test score per section with token figures. Keyed by section name.</summary>
+    public Dictionary<string, int> TestScoreBySection { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The test value of <paramref name="section"/>, or of the solution when null.</summary>
+    public TestValue TestValueOf(string? section)
+    {
+        if (section is null)
+            return TestValue.Of(TestTotal, Tests, Metrics.Classes,
+                Tokens?.BySection.Values.Sum(t => t.Tests.Value) ?? 0, Tokens?.Total.Value ?? 0, Coverage);
+        var tokens = Tokens?.BySection.GetValueOrDefault(section);
+        return TestValue.Of(TestScoreBySection.GetValueOrDefault(section),
+            TestsBySection.GetValueOrDefault(section) ?? TestMass.Empty,
+            MetricsBySection.GetValueOrDefault(section)?.Classes ?? 0,
+            tokens?.Tests.Value ?? 0, tokens?.Total.Value ?? 0,
+            CoverageBySection.GetValueOrDefault(section) ?? SectionCoverage.Empty);
+    }
     /// <summary>
     /// Solution-level test-corpus rollup, including the mass of test projects no section claimed.
     /// </summary>

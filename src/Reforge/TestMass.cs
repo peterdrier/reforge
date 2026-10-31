@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Reforge;
 
@@ -6,16 +7,26 @@ namespace Reforge;
 /// Size of one section's test corpus. Non-blank lines, files, and the number of test projects that
 /// resolved to the section, plus the same LOC as a percentage of the section's production LOC.
 /// </summary>
-/// <remarks>
-/// A size column, not a score. Issue #37 ordered a test column after a test <i>axis</i> (#36) on the
-/// assumption the column would carry points; the measurement in
-/// <c>docs/superpowers/specs/2026-08-20-test-axis-measurement.md</c> found nothing in the corpus for
-/// those rules to charge, and the comparison the column is actually for ("Shifts carries 3x the test
-/// mass of Camps") is a ratio of sizes. So this reports size and stays out of every total.
-/// </remarks>
-public sealed record TestMass(int Loc, int Files, int Projects, int LocVsProdPercent)
+/// <remarks>Size only. The test score built on it is <see cref="TestValue"/>, kept out of the main total.</remarks>
+public sealed record TestMass(int Loc, int Files, int Projects, int LocVsProdPercent, int Methods = 0)
 {
     public static readonly TestMass Empty = new(0, 0, 0, 0);
+}
+
+/// <summary>
+/// A section's test value: its test mass and coverage beside production, and a test score of its
+/// own. The test score is the <c>testSize</c> charge, test tokens past the free share of production;
+/// it is reported apart and never enters the main total, so tests and coverage (given or not)
+/// cannot move the main score.
+/// </summary>
+public sealed record TestValue(int Score, TestMass Mass, double? MethodsPerClass, double? TokenRatio, int? CoveragePercent)
+{
+    /// <summary>Ratios are null where production has nothing to divide by.</summary>
+    public static TestValue Of(int score, TestMass mass, int prodClasses, int testTokens, int prodTokens, SectionCoverage coverage) => new(
+        score, mass,
+        prodClasses == 0 ? null : Math.Round((double)mass.Methods / prodClasses, 3),
+        prodTokens == 0 ? null : Math.Round((double)testTokens / prodTokens, 3),
+        coverage.HasData ? coverage.Percent : null);
 }
 
 /// <summary>
@@ -56,20 +67,22 @@ public static class TestMassAnalyzer
         }
 
         var loc = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var methods = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var files = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var projects = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var unattributed = new List<string>();
-        int solutionLoc = 0, solutionFiles = 0, solutionProjects = 0;
+        int solutionLoc = 0, solutionFiles = 0, solutionProjects = 0, solutionMethods = 0;
 
         foreach (var project in solution.Projects)
         {
             if (ct.IsCancellationRequested) break;
             if (!SolutionClassifier.IsTestProject(project)) continue;
 
-            var (projectLoc, projectFiles) = await MeasureAsync(project, ct);
+            var (projectLoc, projectFiles, projectMethods) = await MeasureAsync(project, ct);
             if (projectFiles == 0) continue;
 
             solutionLoc += projectLoc;
+            solutionMethods += projectMethods;
             solutionFiles += projectFiles;
             solutionProjects++;
 
@@ -81,17 +94,18 @@ public static class TestMassAnalyzer
             }
 
             loc[section] = loc.GetValueOrDefault(section) + projectLoc;
+            methods[section] = methods.GetValueOrDefault(section) + projectMethods;
             files[section] = files.GetValueOrDefault(section) + projectFiles;
             projects[section] = projects.GetValueOrDefault(section) + 1;
         }
 
         var bySection = loc.Keys.ToDictionary(
             s => s,
-            s => new TestMass(loc[s], files[s], projects[s], Ratio(loc[s], metricsBySection.GetValueOrDefault(s)?.LocProd ?? 0)),
+            s => new TestMass(loc[s], files[s], projects[s], Ratio(loc[s], metricsBySection.GetValueOrDefault(s)?.LocProd ?? 0), methods[s]),
             StringComparer.OrdinalIgnoreCase);
 
         int prodLoc = metricsBySection.Values.Sum(m => m.LocProd);
-        return (bySection, new TestMass(solutionLoc, solutionFiles, solutionProjects, Ratio(solutionLoc, prodLoc)), unattributed);
+        return (bySection, new TestMass(solutionLoc, solutionFiles, solutionProjects, Ratio(solutionLoc, prodLoc), solutionMethods), unattributed);
     }
 
     /// <summary>
@@ -127,12 +141,12 @@ public static class TestMassAnalyzer
         prodLoc == 0 ? 0 : (int)Math.Round(testLoc * 100.0 / prodLoc);
 
     /// <summary>
-    /// Non-blank lines and file count for one test project, excluding generated files (the same
-    /// exclusion <see cref="SectionMetricsAnalyzer"/> applies to production code).
+    /// Non-blank lines, file count and test methods for one test project, excluding generated files
+    /// (the same exclusion <see cref="SectionMetricsAnalyzer"/> applies to production code).
     /// </summary>
-    private static async Task<(int Loc, int Files)> MeasureAsync(Project project, CancellationToken ct)
+    private static async Task<(int Loc, int Files, int Methods)> MeasureAsync(Project project, CancellationToken ct)
     {
-        int loc = 0, files = 0;
+        int loc = 0, files = 0, methods = 0;
         foreach (var document in HandwrittenDocuments(project))
         {
             if (ct.IsCancellationRequested) break;
@@ -140,9 +154,32 @@ public static class TestMassAnalyzer
             files++;
             foreach (var line in text.Lines)
                 if (!string.IsNullOrWhiteSpace(line.ToString())) loc++;
+            if (await document.GetSyntaxRootAsync(ct) is { } root)
+                methods += root.DescendantNodes().OfType<MethodDeclarationSyntax>().Count(IsTestMethod);
         }
-        return (loc, files);
+        return (loc, files, methods);
     }
+
+    /// <summary>xUnit, NUnit and MSTest test attributes, without the <c>Attribute</c> suffix.</summary>
+    private static readonly HashSet<string> TestAttributes = new(StringComparer.Ordinal)
+    {
+        "Fact", "Theory", "SkippableFact", "SkippableTheory",
+        "Test", "TestCase", "TestCaseSource", "TestMethod", "DataTestMethod",
+    };
+
+    /// <summary>A method carrying a test attribute, read off syntax: a parameterized test counts once.</summary>
+    internal static bool IsTestMethod(MethodDeclarationSyntax method) =>
+        method.AttributeLists.SelectMany(l => l.Attributes).Any(a =>
+        {
+            var name = a.Name switch
+            {
+                QualifiedNameSyntax q => q.Right.Identifier.Text,
+                AliasQualifiedNameSyntax q => q.Name.Identifier.Text,
+                SimpleNameSyntax n => n.Identifier.Text,
+                _ => "",
+            };
+            return TestAttributes.Contains(name.EndsWith("Attribute", StringComparison.Ordinal) ? name[..^"Attribute".Length] : name);
+        });
 
     private static IEnumerable<Document> HandwrittenDocuments(Project project) =>
         // Build intermediates too. This walks a project's documents rather than its symbols, so it

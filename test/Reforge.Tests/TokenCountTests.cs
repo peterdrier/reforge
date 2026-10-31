@@ -119,7 +119,7 @@ public class TokenCountTests
         var bad = census.BySection["S"].Classes.Single(c => c.Name == "S.Bad").Tokens;
         Assert.Equal(new TokenFigure(TokenEstimator.Estimate("class Bad { }"), true), bad);
         Assert.Equal(new TokenFigure(11, false), census.BySection["S"].Classes.Single(c => c.Name == "S.Ok").Tokens);
-        Assert.Equal(new TokenFigure(11 + bad.Value, true), census.Total);
+        Assert.Equal(new TokenFigure(11 + bad.Value, true) { Mixed = true }, census.Total);
         Assert.Equal(1, measurer.Failures);
         Assert.Equal(2, cache.Count);
     }
@@ -144,8 +144,8 @@ public class TokenCountTests
         var classes = census.BySection["S"].Classes.ToDictionary(c => c.Name, c => c.Tokens);
         Assert.Equal(new TokenFigure(1000, false), classes["S.Cached"]);
         Assert.Equal(new TokenFigure(TokenEstimator.Estimate(fresh), true), classes["S.Fresh"]);
-        Assert.Equal(new TokenFigure(1000 + TokenEstimator.Estimate(fresh), true), census.BySection["S"].Total);
-        Assert.Equal("estimate", census.BySection["S"].Total.Source);
+        Assert.Equal(new TokenFigure(1000 + TokenEstimator.Estimate(fresh), true) { Mixed = true }, census.BySection["S"].Total);
+        Assert.Equal(("estimate", "mixed"), (census.BySection["S"].Total.Source, census.BySection["S"].Total.Provenance));
     }
 
     [Fact]

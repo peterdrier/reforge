@@ -60,7 +60,7 @@ public static class SurfaceScoreRuleGlossary
         ["flagsControlFlow"] = "A method that mutates state branches on a [Flags] enum parameter via HasFlag or bitwise tests; read methods are exempt.",
         ["sectionSize"] = "A section's production and contracts files, summed whole, exceed a free allowance of tokens (default 50k): points per thousand tokens above it, plus a tax that grows faster than linear past a second threshold (default 100k). Exact where counted, estimated elsewhere.",
         ["classSize"] = "A class's declarations, summed across every partial file, exceed a free allowance of tokens (default 8k): points per thousand tokens above it, plus a tax that grows faster than linear past a second threshold (default 25k). Exact where counted, estimated elsewhere.",
-        ["testSize"] = "A section's test files hold more tokens than a share (default 100%) of its production and contracts tokens: points per thousand tokens of the excess, linear. Exact where counted, estimated elsewhere."
+        ["testSize"] = "A section's test files hold more tokens than a share (default 100%) of its production and contracts tokens: points per thousand tokens of the excess, linear. Exact where counted, estimated elsewhere. This is the test score, reported apart and never in the main total."
     };
 
     /// <summary>

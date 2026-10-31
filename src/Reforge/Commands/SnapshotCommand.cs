@@ -17,7 +17,7 @@ public static class SnapshotCommand
         var byAssemblyOption = new Option<bool>("--by-assembly")
         {
             Description = "One row per section (assembly) plus a solution rollup, with size, complexity, " +
-                          "exported/internal x read/write surface counts and test mass. CSV unless --format json."
+                          "exported/internal x read/write surface counts, tokens, size charges and the test value. CSV unless --format json."
         };
 
         var coverageOption = new Option<string?>("--coverage")
@@ -25,11 +25,31 @@ public static class SnapshotCommand
             Description = "With --by-assembly: a Cobertura or dotCover DetailedXML report whose statement coverage is attributed to each section by assembly."
         };
 
+        var scoreOption = new Option<bool>("--score")
+        {
+            Description = "With --by-assembly: fill score_surface, score_implementation and score_total by running the full " +
+                          "surface-score engine, about twice the time of a run without it. Every other column is filled either way."
+        };
+
+        var countTokensOption = new Option<bool>("--count-tokens")
+        {
+            Description = "With --by-assembly: count exact tokens for files the cache lacks, as surface-score --count-tokens does. " +
+                          "Cached exact counts are used without it; anything uncounted is estimated."
+        };
+
+        var tokenCacheOption = new Option<string?>("--token-cache")
+        {
+            Description = "Token cache file, shared with surface-score (default: $REFORGE_TOKEN_CACHE, else <LocalApplicationData>/reforge/token-cache.txt)."
+        };
+
         var command = new Command("snapshot", "One-row macro-scale code health record for time-series charting")
         {
             appendOption,
             byAssemblyOption,
-            coverageOption
+            coverageOption,
+            scoreOption,
+            countTokensOption,
+            tokenCacheOption
         };
 
         command.SetAction(async (parseResult, cancellationToken) =>
@@ -46,7 +66,10 @@ public static class SnapshotCommand
             {
                 if (byAssembly)
                 {
-                    var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(solution, coveragePath, cancellationToken);
+                    using var tokens = TokenSession.Open(parseResult.GetValue(countTokensOption), parseResult.GetValue(tokenCacheOption), Console.Error);
+                    var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(solution, coveragePath, cancellationToken,
+                        score: parseResult.GetValue(scoreOption), tokens: tokens.Measurer);
+                    tokens.Save(Console.Error);
                     if (appendPath is not null)
                     {
                         SectionSnapshotAnalyzer.AppendCsv(rows, appendPath);

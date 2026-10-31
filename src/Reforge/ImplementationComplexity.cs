@@ -23,8 +23,7 @@ public static class SurfaceScoreRuleGroups
         "mutationModeParameter",
         "flagsControlFlow",
         "sectionSize",
-        "classSize",
-        "testSize"
+        "classSize"
     };
 
     public static bool IsImplementationShape(string rule) => ImplementationShape.Contains(rule);

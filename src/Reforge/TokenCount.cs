@@ -360,18 +360,25 @@ public readonly record struct TokenFigure(int Value, bool Estimated)
 {
     public bool NearThreshold { get; init; }
 
+    /// <summary>An estimated sum some of whose parts were exact.</summary>
+    public bool Mixed { get; init; }
+
     public string Source => Estimated ? "estimate" : "exact";
+
+    /// <summary><see cref="Source"/>, with <c>mixed</c> for a sum of exact and estimated parts.</summary>
+    public string Provenance => Mixed ? "mixed" : Source;
 
     public static TokenFigure Sum(IEnumerable<TokenFigure> figures)
     {
         int total = 0;
-        var estimated = false;
+        bool estimated = false, exact = false;
         foreach (var f in figures)
         {
             total += f.Value;
             estimated |= f.Estimated;
+            exact |= !f.Estimated || f.Mixed;
         }
-        return new TokenFigure(total, estimated);
+        return new TokenFigure(total, estimated) { Mixed = estimated && exact };
     }
 
     /// <summary>This figure, marked near-threshold when it is estimated and within 5% of any of <paramref name="thresholds"/>.</summary>
@@ -399,6 +406,10 @@ public sealed record ClassTokens(string Name, string File, int Line, TokenFigure
 /// </summary>
 public sealed record SectionTokens(TokenFigure Total, int Files, List<ClassTokens> Classes)
 {
+    /// <summary>The part of <see cref="Total"/> in the satellite <c>.Contracts</c> assembly.</summary>
+    public TokenFigure Contracts { get; init; }
+    /// <summary>The rest of <see cref="Total"/>: the section's own assembly.</summary>
+    public TokenFigure Main { get; init; }
     public TokenFigure Tests { get; init; }
     public int TestFiles { get; init; }
 }
@@ -486,6 +497,8 @@ public sealed class TokenCensus
             census.BySection[section.Key] = new SectionTokens(
                 TokenFigure.Sum(section.Select(f => figures[fileText[f]])), section.Count(), sectionClasses)
             {
+                Main = TokenFigure.Sum(section.Where(f => !AssemblySections.IsContractsAssembly(f.Assembly)).Select(f => figures[fileText[f]])),
+                Contracts = TokenFigure.Sum(section.Where(f => AssemblySections.IsContractsAssembly(f.Assembly)).Select(f => figures[fileText[f]])),
                 Tests = TokenFigure.Sum(sectionTests.Select(f => figures[f.Text])),
                 TestFiles = sectionTests.Count,
             };
@@ -507,4 +520,48 @@ public sealed class TokenCensus
         for (var i = 0; i < distinct.Count; i++) result[distinct[i]] = figures[i];
         return result;
     }
+}
+
+/// <summary>
+/// The token path a command runs on: the durable cache, read on every run so cached exact counts
+/// are used with or without a key, and the API for the rest only with <c>--count-tokens</c> and
+/// <c>ANTHROPIC_API_KEY</c>. Whatever stays uncounted is estimated.
+/// </summary>
+public sealed class TokenSession : IDisposable
+{
+    private readonly AnthropicTokenCounter? _counter;
+    private readonly TokenCache _cache;
+
+    private TokenSession(AnthropicTokenCounter? counter, TokenCache cache, string cachePath)
+    {
+        _counter = counter;
+        _cache = cache;
+        CachePath = cachePath;
+        Measurer = new TokenMeasurer(counter, cache);
+    }
+
+    public TokenMeasurer Measurer { get; }
+    public string CachePath { get; }
+
+    public static TokenSession Open(bool countTokens, string? cacheOption, TextWriter stderr)
+    {
+        var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+        if (countTokens && string.IsNullOrWhiteSpace(apiKey))
+            stderr.WriteLine("tokens: ANTHROPIC_API_KEY is not set; uncached files are estimated");
+        var counter = countTokens && !string.IsNullOrWhiteSpace(apiKey) ? new AnthropicTokenCounter(apiKey) : null;
+        var path = TokenCache.ResolvePath(cacheOption);
+        return new TokenSession(counter, TokenCache.Load(path), path);
+    }
+
+    /// <summary>Appends what this run counted. A cache that cannot be written costs a warning, not the run.</summary>
+    public void Save(TextWriter stderr)
+    {
+        try { _cache.Save(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            stderr.WriteLine($"tokens: cache not saved to {CachePath}: {ex.Message}");
+        }
+    }
+
+    public void Dispose() => _counter?.Dispose();
 }

@@ -10,7 +10,8 @@ Small before/after pairs that pin down what `surface-score` should say about a c
   tokens, as a run without counts is, and sit far below every size threshold.
 - `manifest.json` labels each pair: `better` (after scores lower), `worse` (after scores higher) or
   `lateral` (after scores exactly the same; totals are integers, so no tolerance). A `gap` names the
-  root cause of a pair that fails today.
+  root cause of a pair that fails today. A pair with `"axis": "test"` is judged on the test score,
+  which `testSize` prices apart from the main total, and fails if the main total moves at all.
 - `ScoringCorpusTests` scores every pair under the default config. It fails when an unmarked pair
   fails or a gap pair starts passing, so closing a gap means deleting its marker.
 
