@@ -78,6 +78,15 @@ public static class SurfaceScoreCommand
             Description = "Token cache file, read on every run and shared safely by concurrent runs (default: $REFORGE_TOKEN_CACHE, else <LocalApplicationData>/reforge/token-cache.txt)."
         };
 
+        var explainOption = new Option<bool>("--explain")
+        {
+            Description = "Add a one-line description of every rule that fired (text: a Rules block; JSON: `ruleGlossary`)."
+        };
+        var helpersOption = new Option<bool>("--helpers")
+        {
+            Description = "Add `helperCandidates` (stateless helper types) to the JSON. Emitted without the flag when the solution has conservation anchors, because a later --baseline run needs them."
+        };
+
         var command = new Command("surface-score",
             "Score a solution's durable surface, dependency use, and implementation shape (config-driven). Supports Compact, Markdown, and JSON output.")
         {
@@ -92,7 +101,9 @@ public static class SurfaceScoreCommand
             allowDegradedOption,
             coverageOption,
             countTokensOption,
-            tokenCacheOption
+            tokenCacheOption,
+            explainOption,
+            helpersOption
         };
 
         command.SetAction(async (parseResult, ct) =>
@@ -112,6 +123,8 @@ public static class SurfaceScoreCommand
             var format = parseResult.GetValue(formatOption);
             var countTokens = parseResult.GetValue(countTokensOption);
             var tokenCache = parseResult.GetValue(tokenCacheOption);
+            var explain = parseResult.GetValue(explainOption);
+            var helpers = parseResult.GetValue(helpersOption);
 
             // --all is an alias for --top 0 (no cap). int.MaxValue is the sentinel for "show
             // everything" through the Take(top) calls downstream.
@@ -212,15 +225,15 @@ public static class SurfaceScoreCommand
                 }
                 else if (format == OutputFormat.Json)
                 {
-                    WriteJson(report, groupFilter, top, topSymbols, baseline);
+                    WriteJson(report, groupFilter, top, topSymbols, baseline, explain, helpers);
                 }
                 else if (format == OutputFormat.Markdown)
                 {
-                    WriteMarkdown(report, groupFilter, top, topSymbols, baseline);
+                    WriteMarkdown(report, groupFilter, top, topSymbols, baseline, explain);
                 }
                 else
                 {
-                    WriteCompact(report, groupFilter, top, topSymbols, baseline);
+                    WriteCompact(report, groupFilter, top, topSymbols, baseline, explain);
                 }
 
                 sw.Stop();
@@ -298,16 +311,20 @@ public static class SurfaceScoreCommand
             yield return $"  (+{bh.DiagnosticsTruncated} more)";
     }
 
-    internal static void WriteCompact(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
+    internal static void WriteCompact(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline, bool explain = false)
     {
-        Console.WriteLine($"surface-score: surface={report.SurfaceTotal} implementationShape={report.ImplementationShapeTotal} combined={report.Total} (informational) tests={report.TestTotal} (separate) types={report.TypesAnalyzed} groups={report.Groups.Count} config={(report.ConfigPath ?? "(defaults)")}");
-        Console.WriteLine($"corpus{(groupFilter is null ? "" : $" ({groupFilter})")}: " +
-                          $"{MetricsLine(ScopedMetrics(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
-        Console.WriteLine($"surface: {SurfaceLine(ScopedSurface(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
+        Console.WriteLine($"surface-score: surface={report.SurfaceTotal} implementationShape={report.ImplementationShapeTotal} total={report.Total} tests={report.TestTotal} (not in total) types={report.TypesAnalyzed} groups={report.Groups.Count} config={(report.ConfigPath ?? "(defaults)")}");
+        var scopedGroups = FilterAndOrderGroups(report, groupFilter);
+        // The scope's lines, kept so a group block below can skip any line that would only repeat one.
+        var headerMetrics = MetricsLine(ScopedMetrics(report, scopedGroups, groupFilter));
+        var headerSurface = SurfaceLine(ScopedSurface(report, scopedGroups, groupFilter));
         var solutionTests = TestsLine(report.TestValueOf(groupFilter));
+        var solutionCoverage = ScopedCoverage(report, scopedGroups, groupFilter);
+        var headerCoverage = solutionCoverage.HasData ? CoverageLine(solutionCoverage) : "";
+        Console.WriteLine($"corpus{(groupFilter is null ? "" : $" ({groupFilter})")}: {headerMetrics}");
+        Console.WriteLine($"surface: {headerSurface}");
         if (solutionTests.Length > 0) Console.WriteLine(solutionTests);
-        var solutionCoverage = ScopedCoverage(report, FilterAndOrderGroups(report, groupFilter), groupFilter);
-        if (solutionCoverage.HasData) Console.WriteLine($"{CoverageLine(solutionCoverage)} ({report.CoverageFormat})");
+        if (solutionCoverage.HasData) Console.WriteLine($"{headerCoverage} ({report.CoverageFormat})");
 
         foreach (var d in report.Diagnostics)
             Console.WriteLine($"! {d.Level}: {d.Message}");
@@ -338,7 +355,7 @@ public static class SurfaceScoreCommand
             foreach (var line in writeSurfaceLines) Console.WriteLine(line);
         }
 
-        var orderedGroups = FilterAndOrderGroups(report, groupFilter);
+        var orderedGroups = scopedGroups;
         if (orderedGroups.Count == 0)
         {
             if (report.Diagnostics.Count == 0)
@@ -354,7 +371,7 @@ public static class SurfaceScoreCommand
             : orderedGroups[0].ByRule;
         var firedRulesByScore = effectiveByRule.OrderByDescending(kv => kv.Value).Select(kv => kv.Key).ToList();
         var glossary = SurfaceScoreRuleGlossary.ForFiredRules(firedRulesByScore);
-        if (glossary.Count > 0)
+        if (explain && glossary.Count > 0)
         {
             Console.WriteLine();
             Console.WriteLine(groupFilter is null ? "Rules:" : $"Rules (scoped to '{groupFilter}'):");
@@ -362,10 +379,14 @@ public static class SurfaceScoreCommand
                 Console.WriteLine($"  {kv.Key,-40} {kv.Value}");
         }
 
-        // Section totals first as a one-liner per group, then per-group detail blocks.
-        Console.WriteLine();
-        foreach (var g in orderedGroups)
-            Console.WriteLine($"  {g.Name,-30} {g.Total,5}  {MetricsSummary(g.Metrics)}");
+        // Section totals first as a one-liner per group, then per-group detail blocks. With one
+        // group the list is its block heading over again.
+        if (orderedGroups.Count > 1)
+        {
+            Console.WriteLine();
+            foreach (var g in orderedGroups)
+                Console.WriteLine($"  {g.Name,-30} {g.Total,5}  {MetricsSummary(g.Metrics)}");
+        }
 
         foreach (var g in orderedGroups)
         {
@@ -373,10 +394,11 @@ public static class SurfaceScoreCommand
             Console.WriteLine(g.ContractsSurfaceTotal != 0
                 ? $"{g.Name} ({g.Total}; surface {g.MainSurfaceTotal} main + {g.ContractsSurfaceTotal} contracts)"
                 : $"{g.Name} ({g.Total})");
-            Console.WriteLine($"  {MetricsLine(g.Metrics)}");
-            Console.WriteLine($"  {SurfaceLine(g.Surface)}");
-            if (TestsLine(report.TestValueOf(g.Name)) is { Length: > 0 } testsLine) Console.WriteLine($"  {testsLine}");
-            if (g.Coverage.HasData) Console.WriteLine($"  {CoverageLine(g.Coverage)}");
+            // A line identical to the header's says nothing new (one group, or --group).
+            if (MetricsLine(g.Metrics) is var metricsLine && metricsLine != headerMetrics) Console.WriteLine($"  {metricsLine}");
+            if (SurfaceLine(g.Surface) is var surfaceLine && surfaceLine != headerSurface) Console.WriteLine($"  {surfaceLine}");
+            if (TestsLine(report.TestValueOf(g.Name)) is { Length: > 0 } testsLine && testsLine != solutionTests) Console.WriteLine($"  {testsLine}");
+            if (g.Coverage.HasData && CoverageLine(g.Coverage) is var coverageLine && coverageLine != headerCoverage) Console.WriteLine($"  {coverageLine}");
             if (report.Tokens?.BySection.GetValueOrDefault(g.Name) is { } tokens) Console.WriteLine($"  {TokensLine(tokens)}");
 
             foreach (var kv in g.ByRule.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
@@ -419,7 +441,7 @@ public static class SurfaceScoreCommand
 
     // ----------------------- Markdown -----------------------
 
-    internal static void WriteMarkdown(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
+    internal static void WriteMarkdown(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline, bool explain = false)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# Surface Score");
@@ -427,7 +449,7 @@ public static class SurfaceScoreCommand
         sb.AppendLine($"- **Surface Score**: {report.SurfaceTotal}");
         sb.AppendLine($"- **Implementation Shape Score**: {report.ImplementationShapeTotal}");
         sb.AppendLine($"- **Test Score** (separate, not in the total): {report.TestTotal}");
-        sb.AppendLine($"- **Combined Score** (informational, not an optimization target): {report.Total}");
+        sb.AppendLine($"- **Total**: {report.Total}");
         sb.AppendLine($"- **Types analyzed**: {report.TypesAnalyzed}");
         sb.AppendLine($"- **Corpus**{(groupFilter is null ? "" : $" (`{groupFilter}`)")}: " +
                       $"{MetricsLine(ScopedMetrics(report, FilterAndOrderGroups(report, groupFilter), groupFilter))}");
@@ -517,19 +539,19 @@ public static class SurfaceScoreCommand
         {
             sb.AppendLine(groupFilter is null ? "## Totals by rule" : $"## Totals by rule (scoped to `{groupFilter}`)");
             sb.AppendLine();
-            sb.AppendLine("| Rule | Score | What it checks |");
-            sb.AppendLine("|---|---:|---|");
+            sb.AppendLine(explain ? "| Rule | Score | What it checks |" : "| Rule | Score |");
+            sb.AppendLine(explain ? "|---|---:|---|" : "|---|---:|");
             foreach (var kv in effectiveByRule.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal))
             {
                 var desc = SurfaceScoreRuleGlossary.Descriptions.TryGetValue(kv.Key, out var d) ? d : "";
-                sb.AppendLine($"| `{kv.Key}` | {kv.Value} | {desc} |");
+                sb.AppendLine(explain ? $"| `{kv.Key}` | {kv.Value} | {desc} |" : $"| `{kv.Key}` | {kv.Value} |");
             }
             sb.AppendLine();
         }
 
         foreach (var g in orderedGroups)
         {
-            sb.AppendLine($"## {g.Name} — surface {g.SurfaceTotal}, shape {g.ImplementationShapeTotal} (combined {g.Total})");
+            sb.AppendLine($"## {g.Name}: surface {g.SurfaceTotal}, shape {g.ImplementationShapeTotal} (total {g.Total})");
             sb.AppendLine();
             sb.AppendLine($"`{MetricsLine(g.Metrics)}`");
             sb.AppendLine();
@@ -646,7 +668,16 @@ public static class SurfaceScoreCommand
 
     // ----------------------- JSON -----------------------
 
-    internal static void WriteJson(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline)
+    /// <remarks>
+    /// Contract: an external consumer reads <c>total</c>, <c>surfaceTotal</c>,
+    /// <c>implementationShapeTotal</c>, <c>testTotal</c>, <c>byRule</c> and <c>edges</c> (always
+    /// present, an empty list included) at the top level, and <c>name</c>, <c>surfaceTotal</c>,
+    /// <c>implementationShapeTotal</c>, <c>total</c>, <c>surface</c> and <c>tests</c> on each group.
+    /// SurfaceScoreJsonContractTests pins them. Everything else here may change; the lists that are
+    /// usually empty are left out when they are.
+    /// </remarks>
+    internal static void WriteJson(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline,
+        bool explain = false, bool helpers = false)
     {
         var filteredGroups = FilterAndOrderGroups(report, groupFilter);
         var effectiveTop = top <= 0 ? int.MaxValue : top;
@@ -701,8 +732,9 @@ public static class SurfaceScoreCommand
             .ThenBy(kv => kv.Key, StringComparer.Ordinal)
             .Select(kv => kv.Key)
             .ToList();
-        var ruleGlossary = SurfaceScoreRuleGlossary.ForFiredRules(firedRules)
-            .ToDictionary(kv => kv.Key, kv => kv.Value);
+        var ruleGlossary = explain
+            ? SurfaceScoreRuleGlossary.ForFiredRules(firedRules).ToDictionary(kv => kv.Key, kv => kv.Value)
+            : null;
 
         var symbolAggs = BuildSymbolAggregates(report, groupFilter, topSymbols)
             .Select(s => new
@@ -741,7 +773,6 @@ public static class SurfaceScoreCommand
             total = report.Total,
             surfaceTotal = report.SurfaceTotal,
             implementationShapeTotal = report.ImplementationShapeTotal,
-            combinedTotal = report.Total,
             testTotal = report.TestTotal,
             typesAnalyzed = report.TypesAnalyzed,
             // Scoped like byRule below: with --group set, the solution-wide corpus would read as
@@ -799,13 +830,13 @@ public static class SurfaceScoreCommand
             ruleGlossary,
             groups,
             topSymbols = symbolAggs,
-            duplicateOwners = report.DuplicateOwners,
+            duplicateOwners = NullIfEmpty(report.DuplicateOwners),
             baseline = baselinePayload,
-            suspiciousImprovements = report.SuspiciousImprovements
+            suspiciousImprovements = NullIfEmpty(report.SuspiciousImprovements
                 .Select(si => new { scope = si.Scope, kind = si.Kind, message = si.Message, surfaceDelta = si.SurfaceDelta, shapeDelta = si.ShapeDelta, improvement = si.Improvement })
-                .ToArray(),
-            diagnostics = report.Diagnostics.Select(d => new { level = d.Level, code = d.Code, message = d.Message }).ToArray(),
-            conservationAnchors = report.ConservationAnchors.Select(a => new
+                .ToArray()),
+            diagnostics = NullIfEmpty(report.Diagnostics.Select(d => new { level = d.Level, code = d.Code, message = d.Message }).ToArray()),
+            conservationAnchors = NullIfEmpty(report.ConservationAnchors.Select(a => new
             {
                 key = a.Key,
                 section = a.Section,
@@ -813,9 +844,13 @@ public static class SurfaceScoreCommand
                 paths = a.Paths,
                 methods = a.Methods.Select(m => new { name = m.Name, returns = m.Returns }).ToArray(),
                 byRule = a.ByRule
-            }).ToArray(),
-            helperCandidates = report.HelperCandidates.Select(h => new { display = h.Display, methods = h.Methods }).ToArray(),
-            conservationEvidence = baseline is null ? Array.Empty<object>() : baseline.ConservationVerdicts.Select(v => new
+            }).ToArray()),
+            // A --baseline run reads these back to tell a helper the change added from one that was
+            // already there, but only for sections with anchors; so anchors bring them along.
+            helperCandidates = helpers || report.ConservationAnchors.Count > 0
+                ? report.HelperCandidates.Select(h => new { display = h.Display, methods = h.Methods }).ToArray()
+                : null,
+            conservationEvidence = baseline is null ? null : NullIfEmpty(baseline.ConservationVerdicts.Select(v => new
             {
                 section = v.Section,
                 kind = v.Kind,
@@ -829,11 +864,15 @@ public static class SurfaceScoreCommand
                     coveredBy = m.CoveredBy,
                     missingInfoFacts = m.MissingInfoFacts.Select(f => new { fact = f.Fact, targetDto = f.TargetDto }).ToArray()
                 }).ToArray()
-            }).ToArray<object>()
+            }).ToArray<object>())
         };
 
         Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
     }
+
+    /// <summary>Null, and so left out of the JSON, when there is nothing in the list.</summary>
+    private static T? NullIfEmpty<T>(T items) where T : class, System.Collections.ICollection =>
+        items.Count == 0 ? null : items;
 
     // ----------------------- Public write surface (reported, never scored) -----------------------
 
@@ -1005,9 +1044,24 @@ public static class SurfaceScoreCommand
     /// <summary>One-line census for the compact and markdown reports.</summary>
     private static string SurfaceLine(SurfaceCensus s) =>
         $"exported: types={s.ExportedTypes} read={s.ExportedReadMethods} write={s.ExportedWriteMethods}" +
-        $" unused-externally types={s.ExportedTypesUnusedExternally} methods={s.ExportedMethodsUnusedExternally}" +
-        $" write={s.ExportedWriteMethodsUnusedExternally}" +
+        UnusedExternally(s) +
         $" | internal: types={s.InternalTypes} read={s.InternalReadMethods} write={s.InternalWriteMethods}";
+
+    /// <summary>
+    /// The exported types and methods no other assembly names. When every one of them is unused
+    /// externally (always so in a one-assembly solution) the three counts only repeat the exported
+    /// ones, so they collapse to <c>all</c>; nothing exported prints nothing.
+    /// </summary>
+    private static string UnusedExternally(SurfaceCensus s)
+    {
+        if (s.ExportedTypes == 0 && s.ExportedMethods == 0) return "";
+        if (s.ExportedTypesUnusedExternally == s.ExportedTypes
+            && s.ExportedMethodsUnusedExternally == s.ExportedMethods
+            && s.ExportedWriteMethodsUnusedExternally == s.ExportedWriteMethods)
+            return " unused-externally=all";
+        return $" unused-externally types={s.ExportedTypesUnusedExternally} methods={s.ExportedMethodsUnusedExternally}" +
+               $" write={s.ExportedWriteMethodsUnusedExternally}";
+    }
 
     private static SectionCoverage ScopedCoverage(ScoreReport report, List<GroupScore> filteredGroups, string? groupFilter)
     {

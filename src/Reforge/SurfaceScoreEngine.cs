@@ -242,8 +242,24 @@ public sealed partial class SurfaceScoreEngine
         ISymbol symbol, string file, int line, string? detail)
     {
         var (scaled, multiplied) = ApplyContractsMultiplier(rule, points, symbol);
-        AddEntryByName(report, groupName, rule, scaled, symbol.Name, file, line, detail,
+        AddEntryByName(report, groupName, rule, scaled, symbol.Name, file, line, QualifyMethod(symbol, detail),
             multiplied ? ScoreOrigin.Contracts : OriginOf(symbol), multiplied);
+    }
+
+    /// <summary>
+    /// A method's detail led by <c>Type.Method</c> rather than the bare name, which repeats across
+    /// types (several <c>AnalyzeAsync</c>). Only a detail that starts with the method's name is
+    /// rewritten; with no detail, the qualified name becomes the detail.
+    /// </summary>
+    internal static string? QualifyMethod(ISymbol symbol, string? detail)
+    {
+        if (symbol is not IMethodSymbol { MethodKind: MethodKind.Ordinary, ContainingType: { } type }) return detail;
+        var name = symbol.Name;
+        var qualified = $"{type.Name}.{name}";
+        if (detail is null) return qualified;
+        bool leadsWithName = detail.StartsWith(name, StringComparison.Ordinal)
+            && (detail.Length == name.Length || !(char.IsLetterOrDigit(detail[name.Length]) || detail[name.Length] == '_'));
+        return leadsWithName ? qualified + detail[name.Length..] : detail;
     }
 
     private static string OriginOf(ISymbol symbol) =>
