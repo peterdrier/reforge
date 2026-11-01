@@ -2,15 +2,24 @@ name: Publish
 
 # Pushes the package to NuGet.org via trusted publishing: NuGet/login exchanges this run's GitHub
 # OIDC token for a short-lived API key, so no long-lived key is stored anywhere.
+#
+# A push to main publishes when the csproj <Version> has no v<Version> tag yet, then tags the commit.
+# The tag is created only after a successful push, so a failed publish is retried by re-running.
+# A tag pushed with GITHUB_TOKEN does not start another run; --skip-duplicate covers any double run.
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -20,33 +29,63 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Pack
-        run: dotnet pack src/Reforge/Reforge.csproj --configuration Release --output nupkg
+      - name: Read package version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' src/Reforge/Reforge.csproj)
+          if [ -z "$version" ]; then
+            echo "::error::No <Version> found in src/Reforge/Reforge.csproj."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          release=true
+          if [ "${{ github.ref_type }}" = branch ] && [ "${{ github.event_name }}" = push ]; then
+            if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+              echo "Tag v$version already exists; nothing to release."
+              release=false
+            fi
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
 
       - name: Tag matches package version
         if: github.ref_type == 'tag'
         shell: bash
         run: |
-          version=$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' src/Reforge/Reforge.csproj)
-          if [ "v$version" != "${{ github.ref_name }}" ]; then
-            echo "::error::Tag ${{ github.ref_name }} does not match csproj version $version."
+          if [ "v${{ steps.version.outputs.version }}" != "${{ github.ref_name }}" ]; then
+            echo "::error::Tag ${{ github.ref_name }} does not match csproj version ${{ steps.version.outputs.version }}."
             exit 1
           fi
 
+      - name: Set up .NET
+        if: steps.version.outputs.release == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack
+        if: steps.version.outputs.release == 'true'
+        run: dotnet pack src/Reforge/Reforge.csproj --configuration Release --output nupkg
+
       - name: NuGet login
+        if: steps.version.outputs.release == 'true'
         uses: NuGet/login@v1
         id: login
         with:
           user: drierp
 
       - name: Push
+        if: steps.version.outputs.release == 'true'
         run: >
           dotnet nuget push nupkg/*.nupkg
           --source https://api.nuget.org/v3/index.json
           --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
           --skip-duplicate
+
+      - name: Tag release
+        if: steps.version.outputs.release == 'true' && github.event_name == 'push' && github.ref_type == 'branch'
+        shell: bash
+        run: |
+          tag="v${{ steps.version.outputs.version }}"
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
