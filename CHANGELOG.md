@@ -2,7 +2,7 @@
 
 What changed and why. Newest first.
 
-## Unreleased - Derived test attributes
+## v0.31.1 - Derived test attributes
 
 - **Test methods are counted by what their attribute is, not what it is called.** The attribute is
   resolved through the semantic model and counts when it or a base class is xUnit's, NUnit's or
