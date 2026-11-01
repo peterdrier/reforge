@@ -47,6 +47,24 @@ public class SurfaceScoreBaselineTests
         finally { File.Delete(path); }
     }
 
+    /// <summary>v0.18.1 baselines carry the build block but predate conservationAnchors; still old.</summary>
+    [Fact]
+    public void Compare_BaselineWithBuildBlockButNoAnchors_IsFlagged()
+    {
+        var baseline = """
+            { "total": 10, "surfaceTotal": 10, "implementationShapeTotal": 0, "byRule": {}, "groups": [],
+              "build": { "degraded": false, "appearsUnbuilt": false } }
+            """;
+        var path = Path.GetTempFileName();
+        File.WriteAllText(path, baseline);
+        try
+        {
+            var cmp = SurfaceScoreBaseline.Compare(new ScoreReport(), path);
+            Assert.True(cmp.BaselineAnchorsMissing);
+        }
+        finally { File.Delete(path); }
+    }
+
     [Fact]
     public void Gate_ExistingDtoFact_IsCanonicalConsolidation()
     {
