@@ -2,7 +2,7 @@
 
 What changed and why. Newest first.
 
-## Unreleased - Leaner surface-score output
+## v0.32.0 - Leaner surface-score output
 
 - **Text and JSON are shorter, with nothing lost.** On Reforge.slnx text drops from 114 lines (11,611 bytes) to 90 (6,959) and JSON from 1,250 lines (31,953 bytes) to about 690 (17,800): the rule glossary is printed only with `--explain`, `helperCandidates` only with `--helpers` (or when conservation anchors need it for a later `--baseline`), `combinedTotal` is gone (`total` is the same number), and empty `duplicateOwners`, `suspiciousImprovements`, `diagnostics` and `conservationEvidence` are left out (`conservationAnchors` stays, empty or not, since `--baseline` reads a missing key as an old baseline).
 - **Text says each thing once.** A group block skips any line identical to the header's, the "combined (informational)" wording is now `total=`, and the unused-externally counts collapse to `unused-externally=all` when they only repeat the exported counts.
