@@ -154,7 +154,7 @@ public class SectionSnapshotTests
         Assert.Equal(report.TestTotal, doc.RootElement.GetProperty("tests").GetProperty("score").GetInt32());
         var camp = doc.RootElement.GetProperty("groups").EnumerateArray().Single(g => g.GetProperty("name").GetString() == "Camp").GetProperty("tests");
         Assert.Equal(report.TestScoreBySection["Camp"], camp.GetProperty("score").GetInt32());
-        Assert.Equal(2, camp.GetProperty("methods").GetInt32());
+        Assert.Equal(3, camp.GetProperty("methods").GetInt32());
         Assert.True(camp.GetProperty("tokenRatio").GetDouble() > 0);
         Assert.False(camp.TryGetProperty("coveragePercent", out _));
     }
@@ -165,8 +165,8 @@ public class SectionSnapshotTests
         var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None);
 
         var camp = rows.Single(r => r.Section == "Camp");
-        Assert.Equal(2, camp.TestMethods);
-        Assert.Equal(Math.Round(2.0 / camp.Classes, 3), camp.TestMethodsPerClass);
+        Assert.Equal(3, camp.TestMethods); // [Fact], [FactAttribute], and [SampleFact] : FactAttribute
+        Assert.Equal(Math.Round(3.0 / camp.Classes, 3), camp.TestMethodsPerClass);
         Assert.True(rows[^1].TestMethods >= camp.TestMethods);
     }
 
@@ -177,10 +177,31 @@ public class SectionSnapshotTests
     [InlineData("[TestMethodAttribute]", true)]
     [InlineData("[Obsolete]", false)]
     [InlineData("", false)]
-    public void IsTestMethod_ReadsTheAttributeName(string attributes, bool expected)
+    public void IsTestMethod_WithoutAModel_ReadsTheAttributeName(string attributes, bool expected)
     {
         var method = CSharpSyntaxTree.ParseText($"class C {{ {attributes} void M(int x) {{ }} }}")
             .GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>().Single();
-        Assert.Equal(expected, TestMassAnalyzer.IsTestMethod(method));
+        Assert.Equal(expected, TestMassAnalyzer.IsTestMethod(method, null));
+    }
+
+    [Theory]
+    [InlineData("Derived", true)]               // project attribute deriving from Xunit.FactAttribute
+    [InlineData("Xunit.Fact", true)]
+    [InlineData("Unrelated.Test", false)]       // the name of a test attribute, but not one
+    [InlineData("Missing.Fact", true)]          // unresolved: falls back to the name
+    [InlineData("DerivedFromMissing", true)]    // resolved, but its base is not: the base's name
+    public void IsTestMethod_WithAModel_ResolvesTheAttributeAndItsBases(string attribute, bool expected)
+    {
+        const string source = """
+            namespace Xunit { public class FactAttribute : System.Attribute { } }
+            namespace Unrelated { public class TestAttribute : System.Attribute { } }
+            class DerivedAttribute : Xunit.FactAttribute { }
+            class DerivedFromMissingAttribute : Absent.TheoryAttribute { }
+            """;
+        var tree = CSharpSyntaxTree.ParseText($"{source}\nclass C {{ [{attribute}] void M() {{ }} }}");
+        var compilation = CSharpCompilation.Create("T", [tree],
+            [Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(typeof(object).Assembly.Location)]);
+        var method = tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>().Single();
+        Assert.Equal(expected, TestMassAnalyzer.IsTestMethod(method, compilation.GetSemanticModel(tree)));
     }
 }

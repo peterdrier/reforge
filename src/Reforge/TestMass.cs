@@ -154,32 +154,69 @@ public static class TestMassAnalyzer
             files++;
             foreach (var line in text.Lines)
                 if (!string.IsNullOrWhiteSpace(line.ToString())) loc++;
-            if (await document.GetSyntaxRootAsync(ct) is { } root)
-                methods += root.DescendantNodes().OfType<MethodDeclarationSyntax>().Count(IsTestMethod);
+            if (await document.GetSyntaxRootAsync(ct) is not { } root) continue;
+            var attributed = root.DescendantNodes().OfType<MethodDeclarationSyntax>().Where(m => m.AttributeLists.Count > 0).ToList();
+            if (attributed.Count == 0) continue;
+            var model = await document.GetSemanticModelAsync(ct);
+            methods += attributed.Count(m => IsTestMethod(m, model));
         }
         return (loc, files, methods);
     }
 
-    /// <summary>xUnit, NUnit and MSTest test attributes, without the <c>Attribute</c> suffix.</summary>
-    private static readonly HashSet<string> TestAttributes = new(StringComparer.Ordinal)
+    /// <summary>xUnit, NUnit and MSTest test attributes, by fully qualified name.</summary>
+    private static readonly HashSet<string> KnownTestAttributes = new(StringComparer.Ordinal)
+    {
+        "Xunit.FactAttribute", "Xunit.TheoryAttribute",
+        "NUnit.Framework.TestAttribute", "NUnit.Framework.TestCaseAttribute", "NUnit.Framework.TestCaseSourceAttribute",
+        "Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute",
+        "Microsoft.VisualStudio.TestTools.UnitTesting.DataTestMethodAttribute",
+    };
+
+    /// <summary>
+    /// Test attribute simple names without the <c>Attribute</c> suffix, for attributes the semantic
+    /// model cannot resolve (missing reference, degraded build).
+    /// </summary>
+    private static readonly HashSet<string> TestAttributeNames = new(StringComparer.Ordinal)
     {
         "Fact", "Theory", "SkippableFact", "SkippableTheory",
         "Test", "TestCase", "TestCaseSource", "TestMethod", "DataTestMethod",
     };
 
-    /// <summary>A method carrying a test attribute, read off syntax: a parameterized test counts once.</summary>
-    internal static bool IsTestMethod(MethodDeclarationSyntax method) =>
+    private static readonly SymbolDisplayFormat QualifiedName = SymbolDisplayFormat.FullyQualifiedFormat
+        .WithGlobalNamespaceStyle(SymbolDisplayGlobalNamespaceStyle.Omitted);
+
+    /// <summary>
+    /// A method carrying a test attribute: a parameterized test counts once. With a semantic model
+    /// the attribute counts when it or a class in its base chain is a known test attribute, so a
+    /// project's own <c>[MyFact] : FactAttribute</c> counts and an unrelated <c>TestAttribute</c> does
+    /// not. An attribute (or base) that does not resolve falls back to its name.
+    /// </summary>
+    internal static bool IsTestMethod(MethodDeclarationSyntax method, SemanticModel? model) =>
         method.AttributeLists.SelectMany(l => l.Attributes).Any(a =>
+            model?.GetTypeInfo(a).Type is INamedTypeSymbol { TypeKind: not TypeKind.Error } type
+                ? IsTestAttribute(type)
+                : TestAttributeNames.Contains(StripSuffix(SimpleName(a.Name))));
+
+    private static bool IsTestAttribute(INamedTypeSymbol type)
+    {
+        for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
         {
-            var name = a.Name switch
-            {
-                QualifiedNameSyntax q => q.Right.Identifier.Text,
-                AliasQualifiedNameSyntax q => q.Name.Identifier.Text,
-                SimpleNameSyntax n => n.Identifier.Text,
-                _ => "",
-            };
-            return TestAttributes.Contains(name.EndsWith("Attribute", StringComparison.Ordinal) ? name[..^"Attribute".Length] : name);
-        });
+            if (t.TypeKind == TypeKind.Error) return TestAttributeNames.Contains(StripSuffix(t.Name));
+            if (KnownTestAttributes.Contains(t.OriginalDefinition.ToDisplayString(QualifiedName))) return true;
+        }
+        return false;
+    }
+
+    private static string SimpleName(NameSyntax name) => name switch
+    {
+        QualifiedNameSyntax q => q.Right.Identifier.Text,
+        AliasQualifiedNameSyntax q => q.Name.Identifier.Text,
+        SimpleNameSyntax n => n.Identifier.Text,
+        _ => "",
+    };
+
+    private static string StripSuffix(string name) =>
+        name.EndsWith("Attribute", StringComparison.Ordinal) ? name[..^"Attribute".Length] : name;
 
     private static IEnumerable<Document> HandwrittenDocuments(Project project) =>
         // Build intermediates too. This walks a project's documents rather than its symbols, so it

@@ -2,6 +2,13 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Derived test attributes
+
+- **Test methods are counted by what their attribute is, not what it is called.** The attribute is
+  resolved through the semantic model and counts when it or a base class is xUnit's, NUnit's or
+  MSTest's test attribute, so `[HumansFact] : FactAttribute` counts (Humans: 0 to 8,883 test methods)
+  and an unrelated `TestAttribute` does not; the name match remains for attributes that don't resolve.
+
 ## Unreleased - Size without a key, tests apart
 
 - **Size is always priced.** Without exact counts each file's tokens are estimated by a linear model
