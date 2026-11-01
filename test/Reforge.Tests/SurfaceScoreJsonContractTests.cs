@@ -135,8 +135,34 @@ public class SurfaceScoreJsonContractTests
         using var doc = Json(HandBuilt());
         var root = doc.RootElement;
         foreach (var key in new[] { "combinedTotal", "ruleGlossary", "helperCandidates", "duplicateOwners",
-                     "suspiciousImprovements", "diagnostics", "conservationAnchors", "conservationEvidence" })
+                     "suspiciousImprovements", "diagnostics", "conservationEvidence" })
             Assert.False(root.TryGetProperty(key, out _), $"'{key}' should be left out");
+    }
+
+    /// <summary>
+    /// A missing conservationAnchors key marks a baseline older than the gate, so a fresh run writes
+    /// the key even with nothing in it, and reads back as a baseline without the warning.
+    /// </summary>
+    [Fact]
+    public void ConservationAnchors_AlwaysPresent_AndRoundTripsAsBaseline()
+    {
+        var report = HandBuilt();
+        var json = Capture(() => SurfaceScoreCommand.WriteJson(report, null, 10, 25, null));
+        using (var doc = JsonDocument.Parse(json))
+        {
+            var anchors = doc.RootElement.GetProperty("conservationAnchors");
+            Assert.Equal(JsonValueKind.Array, anchors.ValueKind);
+            Assert.Equal(0, anchors.GetArrayLength());
+        }
+
+        var path = Path.GetTempFileName();
+        File.WriteAllText(path, json);
+        try
+        {
+            var cmp = SurfaceScoreBaseline.Compare(HandBuilt(), path);
+            Assert.False(cmp.BaselineAnchorsMissing);
+        }
+        finally { File.Delete(path); }
     }
 
     [Fact]

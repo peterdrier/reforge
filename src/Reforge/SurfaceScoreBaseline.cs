@@ -129,10 +129,10 @@ public static class SurfaceScoreBaseline
         // Conservation gate: classify what happened to removed read/service behavior per section.
         var baseAnchors = ReadAnchors(root);
         var baseHelpers = ReadHelperDisplays(root);
-        // Current output leaves an empty anchor list out, so the key's absence means "none" in any
-        // baseline new enough to carry the build block (v0.20, after anchors arrived in v0.19).
+        // Every run since v0.19 writes conservationAnchors, an empty list included, so a missing
+        // key means the baseline is older than the gate.
         comparison.BaselineAnchorsMissing = !(root.TryGetProperty("conservationAnchors", out var caEl)
-            && caEl.ValueKind == JsonValueKind.Array) && !root.TryGetProperty("build", out _);
+            && caEl.ValueKind == JsonValueKind.Array);
         RunConservationGate(now, baseAnchors, baseHelpers, comparison);
 
         return comparison;

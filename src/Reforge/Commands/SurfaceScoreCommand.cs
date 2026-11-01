@@ -673,7 +673,8 @@ public static class SurfaceScoreCommand
     /// <c>implementationShapeTotal</c>, <c>testTotal</c>, <c>byRule</c> and <c>edges</c> (always
     /// present, an empty list included) at the top level, and <c>name</c>, <c>surfaceTotal</c>,
     /// <c>implementationShapeTotal</c>, <c>total</c>, <c>surface</c> and <c>tests</c> on each group.
-    /// SurfaceScoreJsonContractTests pins them. Everything else here may change; the lists that are
+    /// SurfaceScoreJsonContractTests pins them. <c>conservationAnchors</c> is also always present,
+    /// because --baseline reads its absence as an old baseline. Everything else here may change; the lists that are
     /// usually empty are left out when they are.
     /// </remarks>
     internal static void WriteJson(ScoreReport report, string? groupFilter, int top, int topSymbols, BaselineComparison? baseline,
@@ -836,7 +837,9 @@ public static class SurfaceScoreCommand
                 .Select(si => new { scope = si.Scope, kind = si.Kind, message = si.Message, surfaceDelta = si.SurfaceDelta, shapeDelta = si.ShapeDelta, improvement = si.Improvement })
                 .ToArray()),
             diagnostics = NullIfEmpty(report.Diagnostics.Select(d => new { level = d.Level, code = d.Code, message = d.Message }).ToArray()),
-            conservationAnchors = NullIfEmpty(report.ConservationAnchors.Select(a => new
+            // Always present, an empty list included: a --baseline run reads a missing key as a
+            // baseline older than the conservation gate.
+            conservationAnchors = report.ConservationAnchors.Select(a => new
             {
                 key = a.Key,
                 section = a.Section,
@@ -844,7 +847,7 @@ public static class SurfaceScoreCommand
                 paths = a.Paths,
                 methods = a.Methods.Select(m => new { name = m.Name, returns = m.Returns }).ToArray(),
                 byRule = a.ByRule
-            }).ToArray()),
+            }).ToArray(),
             // A --baseline run reads these back to tell a helper the change added from one that was
             // already there, but only for sections with anchors; so anchors bring them along.
             helperCandidates = helpers || report.ConservationAnchors.Count > 0

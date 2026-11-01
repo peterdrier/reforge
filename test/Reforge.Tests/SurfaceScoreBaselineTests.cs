@@ -47,9 +47,9 @@ public class SurfaceScoreBaselineTests
         finally { File.Delete(path); }
     }
 
-    /// <summary>Current output leaves an empty anchor list out; that is "no anchors", not an old baseline.</summary>
+    /// <summary>v0.18.1 baselines carry the build block but predate conservationAnchors; still old.</summary>
     [Fact]
-    public void Compare_BaselineWithBuildBlockButNoAnchors_IsNotFlagged()
+    public void Compare_BaselineWithBuildBlockButNoAnchors_IsFlagged()
     {
         var baseline = """
             { "total": 10, "surfaceTotal": 10, "implementationShapeTotal": 0, "byRule": {}, "groups": [],
@@ -60,7 +60,7 @@ public class SurfaceScoreBaselineTests
         try
         {
             var cmp = SurfaceScoreBaseline.Compare(new ScoreReport(), path);
-            Assert.False(cmp.BaselineAnchorsMissing);
+            Assert.True(cmp.BaselineAnchorsMissing);
         }
         finally { File.Delete(path); }
     }
