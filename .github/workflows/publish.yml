@@ -1,0 +1,52 @@
+name: Publish
+
+# Pushes the package to NuGet.org via trusted publishing: NuGet/login exchanges this run's GitHub
+# OIDC token for a short-lived API key, so no long-lived key is stored anywhere.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Pack and push
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack
+        run: dotnet pack src/Reforge/Reforge.csproj --configuration Release --output nupkg
+
+      - name: Tag matches package version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version=$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' src/Reforge/Reforge.csproj)
+          if [ "v$version" != "${{ github.ref_name }}" ]; then
+            echo "::error::Tag ${{ github.ref_name }} does not match csproj version $version."
+            exit 1
+          fi
+
+      - name: NuGet login
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: drierp
+
+      - name: Push
+        run: >
+          dotnet nuget push nupkg/*.nupkg
+          --source https://api.nuget.org/v3/index.json
+          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
+          --skip-duplicate
