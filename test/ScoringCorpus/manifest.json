@@ -1,5 +1,5 @@
 {
-  "comment": "Proposed labels for test/ScoringCorpus/Pairs. better: after must score lower. worse: after must score higher. lateral: after must score exactly the same. tokensPerChar scores the pair with a fake token counter so the size rules price it. gap names the root cause a pair exposes while it still fails; see ScoringCorpusTests.",
+  "comment": "Proposed labels for test/ScoringCorpus/Pairs. better: after must score lower. worse: after must score higher. lateral: after must score exactly the same. tokensPerChar scores the pair with a fake token counter so the size rules price it. axis test judges the pair on the test score, and the main total must not move. gap names the root cause a pair exposes while it still fails; see ScoringCorpusTests.",
   "pairs": [
     { "id": "ReadSelectorInlineArms", "label": "worse", "rationale": "Three named reads become one object-typed getter behind an enum with the arm bodies inline; same logic, less type information, callers still pick one of three." },
     { "id": "ReadSelectorDelegating", "label": "worse", "rationale": "Same collapse with the arms delegating to private members; the case #78 closed." },
@@ -32,7 +32,7 @@
     { "id": "SplitPartialAcrossFiles", "label": "lateral", "rationale": "One class split into a partial class across two files." },
     { "id": "SplitSectionIntoSiblingFiles", "label": "lateral", "tokensPerChar": 100, "rationale": "A file holding three classes of a section over 100k tokens split into one file per class; the section is priced on its whole files, so the split does not escape sectionSize." },
     { "id": "SplitGodClassIntoSiblings", "label": "better", "tokensPerChar": 100, "rationale": "A class past the 25k-token tax split into two sibling classes along a seam no method crosses; each piece now fits one read." },
-    { "id": "CopyPasteTestSetup", "label": "worse", "tokensPerChar": 10, "rationale": "A shared test helper pasted into every test, so the section's tests outgrow its production code; the logic tested is unchanged." },
+    { "id": "CopyPasteTestSetup", "label": "worse", "axis": "test", "tokensPerChar": 10, "rationale": "A shared test helper pasted into every test, so the section's tests outgrow its production code; the logic tested is unchanged." },
     { "id": "ExplicitInterfaceImpl", "label": "lateral", "rationale": "An internal interface implemented explicitly instead of implicitly." },
     { "id": "SwitchToDictionaryDispatch", "label": "worse", "rationale": "A switch whose arms compute a price becomes a dictionary of lambdas keyed by the same enum; the table is one more declaration to read, so it pays one more flat charge." }
   ]

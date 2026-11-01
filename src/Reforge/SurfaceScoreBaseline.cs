@@ -80,7 +80,7 @@ public static class SurfaceScoreBaseline
         "readServiceInterfaceMethod", "fullServiceInterfaceMethod", "repositoryInterfaceMethod"
     };
     private static readonly string[] DispatcherRules = { "actionDispatcher", "flagsControlFlow" };
-    private static readonly string[] GodMethodRules = { "methodComplexity", "largeClass" };
+    private static readonly string[] GodMethodRules = { "methodComplexity", "classSize" };
     private static readonly string[] ParamBagRules = { "publicInputWithHiddenState", "parameterBagInput", "inlineParameterObjectConstruction" };
 
     public static BaselineComparison Compare(ScoreReport now, string baselineJsonPath)

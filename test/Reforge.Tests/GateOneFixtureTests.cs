@@ -53,12 +53,6 @@ public class GateOneFixtureTests
     private static readonly IReadOnlyDictionary<string, string> Exempt =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            // Cost, not doubt: the threshold is 750 nonblank LOC, so a Before/CheapestFix pair is
-            // ~1,600 lines of synthetic class to demonstrate one 10-point charge. The rule's Gate 1
-            // reasoning is measured in 2026-08-20-internal-axis-second-corpus.md instead — the
-            // partial-split escape is closed by summing partial declarations (see
-            // GeneratedPartialScoringTests), and the remaining one costs a constructor partition.
-            ["largeClass"] = "a 750-LOC threshold makes a fixture pair ~1,600 lines of synthetic class",
             // The only edit that stops it firing is the fix it exists to prompt: make the method
             // internal, which withdraws the surface and lowers the total. A pair would either
             // record that honest improvement as gameable or fail the no-drop assertion.
@@ -69,11 +63,12 @@ public class GateOneFixtureTests
             // Same shape: the edit that stops them is narrowing the method to private.
             ["internalWiderThanUse"] = "its only fix narrows the method to private, so the total must fall",
             ["protectedWiderThanUse"] = "its only fix narrows the method to private, so the total must fall",
-            // Gate 1 scores without a token counter, so these never fire here. The scoring corpus
-            // prices them with a fake counter (tokensPerChar pairs) and SizePricingTests pins the curves.
-            ["sectionSize"] = "priced only on exact token counts, which Gate 1 does not take",
-            ["classSize"] = "priced only on exact token counts, which Gate 1 does not take",
-            ["testSize"] = "priced only on exact token counts, which Gate 1 does not take",
+            // Cost, not doubt: the free allowances are 8k tokens a class and 50k a section, so a
+            // pair would be thousands of lines of synthetic code. The scoring corpus prices them with
+            // a fake counter (tokensPerChar pairs) and SizePricingTests pins the curves.
+            ["sectionSize"] = "a 50k-token free allowance makes a fixture pair thousands of lines of synthetic code",
+            ["classSize"] = "an 8k-token free allowance makes a fixture pair thousands of lines of synthetic class",
+            ["testSize"] = "it needs a section's tests to outgrow its production code, thousands of lines of synthetic tests",
         };
 
     /// <summary>

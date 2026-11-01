@@ -11,6 +11,13 @@ public static class WorkspaceHelper
     /// </summary>
     internal static Solution? HotSolution { get; set; }
 
+    /// <summary>
+    /// Workspace load failures (MSBuild could not evaluate or load a project) reported while this
+    /// process last opened a solution cold. Warnings are not counted. 0 in hot mode.
+    /// </summary>
+    public static int LoadFailures => _loadFailures;
+    private static int _loadFailures;
+
     private sealed class NoOpDisposable : IDisposable
     {
         public void Dispose() { }
@@ -32,9 +39,11 @@ public static class WorkspaceHelper
 
         var resolved = solutionPath ?? FindSolutionFile();
 
+        _loadFailures = 0;
         var workspace = MSBuildWorkspace.Create();
         workspace.RegisterWorkspaceFailedHandler(e =>
         {
+            if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure) Interlocked.Increment(ref _loadFailures);
             Console.Error.WriteLine($"workspace: {e.Diagnostic.Message}");
         });
 

@@ -138,7 +138,7 @@ public class SectionMetricsTests
         var report = await ScoreDefaultAsync();
 
         // Camp's largest declaration is an interface. maxClassLoc must describe the same set as
-        // `classes` and as the largeClass rule, or the field names a type it does not measure.
+        // `classes`, or the field names a type it does not measure.
         Assert.NotEqual("", report.MetricsBySection["Camp"].MaxClassLocName);
 
         var classified = await SolutionClassifier.ClassifyAsync(

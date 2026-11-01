@@ -2,6 +2,23 @@
 
 What changed and why. Newest first.
 
+## Unreleased - Size without a key, tests apart
+
+- **Size is always priced.** Without exact counts each file's tokens are estimated by a linear model
+  over Roslyn lexer features, fitted on Humans: +2.2% on reforge's own files, about 2% median per
+  section. JSON marks every token figure `exact` or `estimate` and flags estimates within 5% of a
+  threshold `nearThreshold`; an exact count, measured or cached, always wins for its file.
+  `largeClass` is retired: it only priced classes without a token count, and every class now has one.
+- **Tests are a value of their own.** `testSize` becomes the test score, reported in each `tests`
+  block and in `testTotal` and never in `total`, so tests and coverage cannot move the main score;
+  the block adds test methods, methods per production class and the test-to-production token
+  ratio. `CopyPasteTestSetup` is judged on the test score and fails if the main total moves.
+- **`snapshot --by-assembly` carries what a daily history needs** (49 columns, a new schema that
+  `--append` will not mix with the old): full SHA, reforge version, config hash, load failures,
+  tokens per assembly with their source, size charges, the test value and the main score by default
+  (`--no-score` leaves it empty at about half the run time). The token cache it shares with `surface-score` is durable, keyed
+  by model and content hash, appended under a lock and settable once per driver with `REFORGE_TOKEN_CACHE`.
+
 ## Unreleased - Price the logic, not its arrangement
 
 - **`actionDispatcher` prices a selector by the operations its arms hide**, inline or delegated, bool

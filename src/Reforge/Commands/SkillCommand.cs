@@ -112,7 +112,8 @@ public static class SkillCommand
         `writeUnusedExternally` count exported symbols no other production project names in source
         (tests are not consulted; reflection and convention DI are invisible). `edges` lists
         `{from, to, count}` per pair of sections. `snapshot --by-assembly` flattens metrics,
-        surface and tests into one CSV row per section for history runs.
+        surface, tokens, size charges and the test value into one CSV row per section for history
+        runs, including the main score; `--no-score` leaves it out at about half the run time.
 
         **Coverage is attributed per section from a report you supply.** `--coverage <file>` on
         `surface-score` and `snapshot --by-assembly` reads a Cobertura XML (Coverlet:
@@ -121,18 +122,21 @@ public static class SkillCommand
         or no key when unmeasured; `coverageFormat` says which reader ran. Test assemblies in the
         report are listed in a diagnostic and left out. Informational; never scored.
 
-        **Exact token counts are opt in, and size is priced only on them.** `--count-tokens` (needs
-        `ANTHROPIC_API_KEY`) adds `tokens: { total, files, tests, testFiles, classes }` per group: a
-        section is its whole handwritten files, a class its spans across partials, measured by
-        Anthropic's `count_tokens` net of a baseline request and cached by content hash
-        (`--token-cache`). The counts drive `sectionSize`, `classSize` and `testSize`. Without the
-        flag or key the fields are absent and those rules are skipped; a failed request leaves its
-        total null and unpriced. Never estimated.
+        **Size is priced in tokens, exact where counted and estimated elsewhere.** Each group has
+        `tokens: { total, files, tests, testFiles, classes }`: a section is its whole handwritten
+        files, a class its spans across partials. A file takes its cached exact count, else a
+        lexical estimate (about 2% off on a section); `totalSource`, `testsSource` and each class's
+        `source` say `exact` or `estimate`, and `nearThreshold` marks an estimate within 5% of a
+        threshold, which may sit on either side. `--count-tokens` (needs `ANTHROPIC_API_KEY`) counts
+        uncached files with Anthropic's `count_tokens`, cached by model and content hash
+        (`--token-cache`, else `REFORGE_TOKEN_CACHE`). They drive `sectionSize`, `classSize` and the
+        test score's `testSize`.
 
-        **Test mass is reported per section, and scored nowhere.** A `tests` block per group (plus a
-        solution rollup) carries `loc`, `files`, `projects`, and `locVsProdPercent` — test LOC as a
-        percentage of the section's production LOC, which is the figure that compares two sections
-        (raw test LOC scales with section size). A test project is attributed to the section its
+        **Tests are a value apart from the main score.** A `tests` block per group (plus a solution
+        rollup) carries `score` (the `testSize` charge, summed into `testTotal` and never into
+        `total`), `loc`, `files`, `projects`, `locVsProdPercent`, `methods` (attributed test
+        methods), `methodsPerClass`, `tokenRatio` (test over production tokens) and, with a coverage
+        report, `coveragePercent`. A test project is attributed to the section its
         **non-test project references** name, so `X.Tests` and `X.IntegrationTests` land together;
         where the references name several sections the project name breaks the tie, and where
         nothing breaks it the project appears in `unattributedTestProjects` and in no column.

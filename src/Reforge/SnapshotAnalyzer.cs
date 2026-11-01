@@ -221,8 +221,8 @@ public static class SnapshotAnalyzer
         return false;
     }
 
-    internal static string TryGetGitCommit(Solution solution) =>
-        RunGit(solution, "rev-parse --short HEAD");
+    internal static string TryGetGitCommit(Solution solution, bool full = false) =>
+        RunGit(solution, full ? "rev-parse HEAD" : "rev-parse --short HEAD");
 
     internal static string TryGetGitCommitDate(Solution solution) =>
         RunGit(solution, "show -s --format=%cI HEAD");
