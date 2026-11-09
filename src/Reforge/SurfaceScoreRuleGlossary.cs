@@ -41,6 +41,8 @@ public static class SurfaceScoreRuleGlossary
         ["crossSectionConcreteService"] = "A class depends, through its constructor, on a concrete service class from another section rather than on an interface it publishes. Dearer than crossSectionFullService: the consumer binds the whole implementation.",
         ["crossSectionFullService"] = "A constructor dependency on a full-service interface owned by a different section.",
         ["crossSectionRepository"] = "A constructor dependency on a repository interface or implementation owned by a different section.",
+        ["projectReference"] = "A production project's compilation uses an assembly of another section, through a direct or a transitive ProjectReference, and no constructor-dependency rule already charges that pair; charged once per section reached.",
+        ["unusedProjectReference"] = "A ProjectReference in a production project's csproj whose assembly nothing in that project's compilation uses.",
         ["writeCapableInterfaceUsedReadOnly"] = "A class injects a full-service interface that is paired (by inheritance or by a same-namespace 'Read'-suffixed sibling) with a read-only interface, and every observed invocation on the injected dependency targets a method that also exists on the read interface.",
 
         // Signature shape

@@ -98,6 +98,14 @@ Rules that charge for a *use* rather than a declaration — `crossSectionReposit
 an internal class injecting another section's repository still forces the assembly reference and
 still calls across the boundary, so marking it internal can't make the coupling free.
 
+**Project references are priced by use.** A production project pays `projectReference` (5) once per
+other section its compilation uses (the compiler's `GetUsedAssemblyReferences`), direct or
+transitive, unless a `crossSection*` rule already charges that section pair: it is a floor, so
+copying code to drop an edge breaks even at best. Each `<ProjectReference>` in a csproj that the
+library does not use (in code, or by name in its Razor views) pays `unusedProjectReference` (25) at
+its csproj line; an application is not judged, since a host may reference modules only to ship them, and the report lists
+them in one `unusedProjectReference` diagnostic. Test projects are not charged.
+
 **A section's read API is what it exports from its contracts surface.** Canonical read DTOs are
 derived, never listed: the exported data types a section declares in its `<Section>.Contracts`
 assembly, or under a `Contracts/` folder in its own assembly. A `Contracts` folder or namespace is

@@ -122,7 +122,8 @@ public sealed partial class SurfaceScoreEngine
         ScoreDurableSurface(classified, report, analyzedAssemblies, behaviour);
 
         // Pass 2 — dependency use
-        ScoreDependencyUse(classified, typesByDisplay, report);
+        var pricedSectionPairs = ScoreDependencyUse(classified, typesByDisplay, report);
+        await ScoreProjectReferencesAsync(solution, report, pricedSectionPairs, ct);
 
         // Pass 3 — signature shape (surface axis)
         await ScoreSignatureShape(classified, report, ct);

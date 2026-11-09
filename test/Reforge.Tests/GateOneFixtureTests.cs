@@ -68,6 +68,10 @@ public class GateOneFixtureTests
             // a fake counter (tokensPerChar pairs) and SizePricingTests pins the curves.
             ["sectionSize"] = "a 50k-token free allowance makes a fixture pair thousands of lines of synthetic code",
             ["classSize"] = "an 8k-token free allowance makes a fixture pair thousands of lines of synthetic class",
+            // Its fix deletes a csproj line and changes no code, so the total must fall. (Inventing
+            // a use to keep the line also falls, to the projectReference floor, and costs more edits
+            // than the deletion it competes with.) The harness compiles variants without csproj files.
+            ["unusedProjectReference"] = "its fix deletes the reference and changes no code, so the total must fall",
             ["testSize"] = "it needs a section's tests to outgrow its production code, thousands of lines of synthetic tests",
         };
 
