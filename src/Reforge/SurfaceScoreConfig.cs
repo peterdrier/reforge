@@ -341,6 +341,11 @@ public sealed class SurfaceScoreConfig
                 ["crossSectionConcreteService"] = 36,
                 ["crossSectionRepository"] = 75,
                 ["writeCapableInterfaceUsedReadOnly"] = 36,
+                // A floor per other section a project's compilation uses, however it reaches it,
+                // waived where a crossSection* rule already prices the pair; and per csproj
+                // ProjectReference it does not use, about a cross-section service injection.
+                ["projectReference"] = 5,
+                ["unusedProjectReference"] = 25,
 
                 // Signature shape (surface axis — method/return shape smells)
                 ["methodParameterOverflow"] = 1, // per param after 2

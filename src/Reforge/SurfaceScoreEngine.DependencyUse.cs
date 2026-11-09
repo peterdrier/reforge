@@ -15,11 +15,14 @@ public sealed partial class SurfaceScoreEngine
     /// gaming the effective-accessibility rule exists to close. Same reasoning for
     /// writeCapableInterfaceUsedReadOnly and duplicateDbSetOwner.
     /// </summary>
-    private void ScoreDependencyUse(
+    /// <returns>The (consumer section, dependency section) pairs charged, which already price the
+    /// project reference between them.</returns>
+    private HashSet<(string From, string To)> ScoreDependencyUse(
         List<ClassifiedType> classified,
         Dictionary<string, ClassifiedType> typesByDisplay,
         ScoreReport report)
     {
+        var priced = new HashSet<(string From, string To)>(SectionPairComparer.Instance);
         foreach (var c in classified)
         {
             if (c.Type.TypeKind != TypeKind.Class) continue;
@@ -54,8 +57,19 @@ public sealed partial class SurfaceScoreEngine
                     var (file, line) = LocateMember(loc, c);
                     AddEntry(report, c.Group, rule, weight, c.Type, file, line,
                         $"{c.Type.Name} <- {param.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}");
+                    if (!sameGroup) priced.Add((c.Group, dep.Group));
                 }
             }
         }
+        return priced;
+    }
+
+    private sealed class SectionPairComparer : IEqualityComparer<(string From, string To)>
+    {
+        public static readonly SectionPairComparer Instance = new();
+        public bool Equals((string From, string To) x, (string From, string To) y) =>
+            StringComparer.OrdinalIgnoreCase.Equals(x.From, y.From) && StringComparer.OrdinalIgnoreCase.Equals(x.To, y.To);
+        public int GetHashCode((string From, string To) p) =>
+            HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(p.From), StringComparer.OrdinalIgnoreCase.GetHashCode(p.To));
     }
 }

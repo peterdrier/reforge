@@ -6,4 +6,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Deliberately unused: nothing in Tent names a Core type (unusedProjectReference). -->
+    <ProjectReference Include="..\SampleSolution.Core\SampleSolution.Core.csproj" />
+  </ItemGroup>
+
 </Project>

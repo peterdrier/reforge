@@ -210,6 +210,9 @@ public static class SkillCommand
           //   sameSectionReadService (0), crossSectionReadInterface (6),
           //   crossSectionFullService (24), crossSectionConcreteService (36),
           //   crossSectionRepository (75),
+          //   projectReference (5, per other section a project's compilation uses that no
+          //     crossSection* rule above already charges),
+          //   unusedProjectReference (25, per csproj ProjectReference nothing in the project uses),
           //   writeCapableInterfaceUsedReadOnly (36, full-service interface paired with a read
           //     interface — via inheritance or "{Full}Read" sibling — where every observed call
           //     on the injected dep also exists on the read interface)

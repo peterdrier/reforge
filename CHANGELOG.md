@@ -2,6 +2,12 @@
 
 What changed and why. Newest first.
 
+## v0.33.0 - Project references cost
+
+- **A ProjectReference nothing uses costs 25** (`unusedProjectReference`), charged at its csproj line and listed in one diagnostic. Use is the compiler's own answer plus what Razor views name; an application's references are not judged, since a host may reference modules only to ship them. Humans: 3 of 354 library references flagged.
+- **Reaching another section costs at least 5** (`projectReference`), once per section a project's compilation uses, direct or transitive, unless a `crossSection*` rule already prices the pair. A floor rather than a surcharge, so copying code to drop an edge breaks even at best (new Gate 1 pair), and moving a reference to a transitive path earns nothing.
+- Test projects are not charged. Humans: total 62,945 to 64,650 (+2.7%), all of it surface.
+
 ## Unreleased - Release on merge
 
 - **Merging a version bump is the release.** A push to main whose csproj `<Version>` has no `v<Version>` tag yet packs, publishes to NuGet and then tags the commit; an existing tag means nothing to do.
