@@ -37,7 +37,7 @@ Every reference is found via the compiler's semantic model — including referen
 | `reforge injected <type>` | Who injects this type via constructor |
 | `reforge usages <type>` | Where a type is used, categorized by kind |
 | `reforge parameters --name X --type Y` | Find parameters matching patterns |
-| `reforge snapshot [--by-assembly] [--no-score] [--coverage report.xml] [--append file.csv]` | Macro health record for time-series charting; `--by-assembly` emits one row per section with size, complexity, surface census, tokens, size charges, the test value, coverage and the main score (`--no-score` skips the main score) |
+| `reforge snapshot [--by-assembly] [--no-score] [--top-files n] [--coverage report.xml] [--append file.csv]` | Macro health record for time-series charting; `--by-assembly` emits one row per section with size, complexity, surface census, tokens, size charges, the test value, coverage and the main score (`--no-score` skips the main score) |
 | `reforge audit-surface <type>` | Per-method inbound view: caller counts (prod/test) + body shape for classes (passthrough-repo/-service/-self, linq-over-repo/-service, write, composite, complex) |
 | `reforge audit-downstream <class>` | Per-method outbound view: dependency calls, DbSet reads/writes traced one hop through repository implementations with `via` attribution, untraced repo-to-repo hops, and external IO |
 
@@ -272,6 +272,10 @@ column per section. The schema has 49 columns:
 - tests: `test_score`, `test_loc`, `test_files`, `test_methods`, `test_methods_per_class`,
   `tokens_tests`, `tokens_tests_source`, `test_token_ratio`, `coverage_covered`, `coverage_total`,
   `coverage_pct`
+
+With `--format json` each row also carries `topFiles`: its files ranked by reach, then fan-out,
+each with `file`, `reach` and `fanOut` (five by default, `--top-files <n>`, 0 to skip). It is not a
+CSV column.
 
 `--append` refuses a file whose header is not this schema, so a history file never mixes widths:
 start a new file when the schema changes.
