@@ -68,7 +68,19 @@ public sealed record SectionSnapshotRow(
     /// <summary>Null when no coverage report was given or it said nothing about the section.</summary>
     int? CoverageCovered,
     int? CoverageTotal,
-    int? CoveragePercent);
+    int? CoveragePercent,
+    /// <summary>
+    /// The section's files ranked by reach, then fan-out: JSON only, never a CSV column. Empty
+    /// unless the run asked for them.
+    /// </summary>
+    IReadOnlyList<TopFile> TopFiles);
+
+/// <summary>
+/// A file in a row's <c>topFiles</c>. <c>Reach</c> counts the files it depends on transitively and
+/// <c>FanOut</c> the files it names directly, the values <c>snapshot</c>'s <c>maxReach</c> and
+/// <c>maxFanOut</c> are drawn from. <c>File</c> is solution-relative.
+/// </summary>
+public sealed record TopFile(string File, int Reach, int FanOut);
 
 public static class SectionSnapshotAnalyzer
 {
@@ -77,10 +89,11 @@ public static class SectionSnapshotAnalyzer
     /// <summary>
     /// One row per section plus the rollup. With <paramref name="score"/> (the default) the full
     /// engine runs and every column comes off its report; without, only the passes the columns other
-    /// than the main score need, about half the cost.
+    /// than the main score need, about half the cost. A positive <paramref name="topFiles"/> builds
+    /// the file dependency graph and lists that many files per row.
     /// </summary>
     public static async Task<List<SectionSnapshotRow>> AnalyzeAsync(Solution solution, string? coveragePath, CancellationToken ct,
-        bool score = true, TokenMeasurer? tokens = null, SurfaceScoreConfig? config = null)
+        bool score = true, TokenMeasurer? tokens = null, SurfaceScoreConfig? config = null, int topFiles = 0)
     {
         var dir = LocationHelper.GetSolutionDirectory(solution);
         config ??= SurfaceScoreConfig.LoadOrDefault(null, dir, out _);
@@ -104,6 +117,10 @@ public static class SectionSnapshotAnalyzer
             ConfigHash(config),
             WorkspaceHelper.LoadFailures);
 
+        var (topBySection, topOfSolution) = topFiles > 0
+            ? await RankFilesAsync(solution, report.SectionByAssembly, topFiles, ct)
+            : (new Dictionary<string, IReadOnlyList<TopFile>>(), NoFiles);
+
         // One row per section of the corpus, not per section with metrics: a section whose every
         // declaration is generated has no metrics entry but is still a section with a census.
         var rows = new List<SectionSnapshotRow>();
@@ -118,7 +135,8 @@ public static class SectionSnapshotAnalyzer
                 score ? (group?.SurfaceTotal ?? 0, group?.ImplementationShapeTotal ?? 0, group?.Total ?? 0) : null,
                 tokensOf is null ? default : SizePricing.ForSection(tokensOf, config),
                 report.TestValueOf(section),
-                report.CoverageBySection.GetValueOrDefault(section) ?? SectionCoverage.Empty));
+                report.CoverageBySection.GetValueOrDefault(section) ?? SectionCoverage.Empty,
+                topBySection.GetValueOrDefault(section) ?? NoFiles));
         }
 
         var all = report.Tokens?.BySection.Values.ToList() ?? [];
@@ -127,8 +145,33 @@ public static class SectionSnapshotAnalyzer
             TokenFigure.Sum(all.Select(t => t.Main)), TokenFigure.Sum(all.Select(t => t.Contracts)), TokenFigure.Sum(all.Select(t => t.Tests)),
             score ? (report.SurfaceTotal, report.ImplementationShapeTotal, report.Total) : null,
             new SizeCharges(charges.Sum(c => c.Section), charges.Sum(c => c.Classes), charges.Sum(c => c.Tests)),
-            report.TestValueOf(null), report.Coverage));
+            report.TestValueOf(null), report.Coverage, topOfSolution));
         return rows;
+    }
+
+    private static readonly IReadOnlyList<TopFile> NoFiles = Array.Empty<TopFile>();
+
+    /// <summary>
+    /// Every prod file ranked by reach, then fan-out, then path; the first <paramref name="n"/> of
+    /// each section (by the file's assembly) and of the whole solution. A file whose assembly maps to
+    /// no section counts only in the solution's list.
+    /// </summary>
+    private static async Task<(Dictionary<string, IReadOnlyList<TopFile>> BySection, IReadOnlyList<TopFile> Solution)> RankFilesAsync(
+        Solution solution, IReadOnlyDictionary<string, string> sectionByAssembly, int n, CancellationToken ct)
+    {
+        var graph = await FileDependencyGraph.BuildAsync(solution, ct);
+        var reach = StructuralAnalysis.ComputeReachCounts(graph.Adj, StructuralAnalysis.FindStronglyConnectedComponents(graph.Adj));
+        var ranked = Enumerable.Range(0, graph.Files.Count)
+            .Select(i => (Section: sectionByAssembly.GetValueOrDefault(graph.Assemblies[i]), File: new TopFile(graph.Files[i], reach[i], graph.Adj[i].Count)))
+            .OrderByDescending(r => r.File.Reach)
+            .ThenByDescending(r => r.File.FanOut)
+            .ThenBy(r => r.File.File, StringComparer.Ordinal)
+            .ToList();
+        var bySection = ranked
+            .Where(r => r.Section is not null)
+            .GroupBy(r => r.Section!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<TopFile>)g.Take(n).Select(r => r.File).ToList(), StringComparer.OrdinalIgnoreCase);
+        return (bySection, ranked.Take(n).Select(r => r.File).ToList());
     }
 
     /// <summary>
@@ -172,7 +215,8 @@ public static class SectionSnapshotAnalyzer
     private static SectionSnapshotRow Row(
         Stamp st, string section, SectionMetrics m, SurfaceCensus s,
         TokenFigure prod, TokenFigure contracts, TokenFigure testTokens,
-        (int Surface, int Implementation, int Total)? score, SizeCharges charges, TestValue test, SectionCoverage cov) => new(
+        (int Surface, int Implementation, int Total)? score, SizeCharges charges, TestValue test, SectionCoverage cov,
+        IReadOnlyList<TopFile> topFiles) => new(
         st.CommitDate, st.Commit, st.Solution, section, st.Version, st.ConfigHash, st.LoadFailures,
         m.LocProd, m.Files, m.Classes, m.Interfaces, m.Methods,
         m.Cognitive.Avg, m.Cognitive.P95, m.Cognitive.Max,
@@ -186,7 +230,8 @@ public static class SectionSnapshotAnalyzer
         charges.Section, charges.Classes,
         test.Score, test.Mass.Loc, test.Mass.Files, test.Mass.Methods, test.MethodsPerClass,
         testTokens.Value, Source(testTokens), test.TokenRatio,
-        cov.HasData ? cov.Covered : null, cov.HasData ? cov.Total : null, cov.HasData ? cov.Percent : null);
+        cov.HasData ? cov.Covered : null, cov.HasData ? cov.Total : null, cov.HasData ? cov.Percent : null,
+        topFiles);
 
     /// <summary><c>exact</c>, <c>estimate</c> or <c>mixed</c>; empty for a figure with nothing in it.</summary>
     private static string Source(TokenFigure f) => f.Value == 0 ? "" : f.Provenance;

@@ -160,6 +160,45 @@ public class SectionSnapshotTests
     }
 
     [Fact]
+    public async Task TopFiles_RankEachSectionByTheSnapshotsOwnReach()
+    {
+        var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None, score: false, topFiles: 3);
+        var (record, graph, sccs) = await SnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, CancellationToken.None);
+        var reach = StructuralAnalysis.ComputeReachCounts(graph.Adj, sccs);
+        var byFile = Enumerable.Range(0, graph.Files.Count).ToDictionary(i => graph.Files[i], i => (reach[i], graph.Adj[i].Count));
+
+        Assert.All(rows, r => Assert.InRange(r.TopFiles.Count, 0, 3));
+        Assert.All(rows.SelectMany(r => r.TopFiles), f => Assert.Equal(byFile[f.File], (f.Reach, f.FanOut)));
+        Assert.All(rows, r => Assert.Equal(r.TopFiles.OrderByDescending(f => f.Reach).ThenByDescending(f => f.FanOut), r.TopFiles));
+
+        var solution = rows[^1].TopFiles;
+        Assert.Equal(3, solution.Count);
+        Assert.Equal(record.MaxReach, solution[0].Reach);
+        Assert.Equal(byFile.Values.Select(v => v.Item1).OrderDescending().Take(3), solution.Select(f => f.Reach));
+
+        // A section lists only its own files, and its first is its own maximum.
+        var camp = rows.Single(r => r.Section == "Camp").TopFiles;
+        Assert.NotEmpty(camp);
+        var campFiles = Enumerable.Range(0, graph.Files.Count)
+            .Where(i => graph.Assemblies[i] is "SampleSolution.Camp" or "SampleSolution.Camp.Contracts").ToList();
+        Assert.All(camp, f => Assert.Contains(f.File, campFiles.Select(i => graph.Files[i])));
+        Assert.Equal(campFiles.Max(i => reach[i]), camp[0].Reach);
+
+        var json = System.Text.Json.JsonSerializer.Serialize(rows[^1], new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var first = doc.RootElement.GetProperty("topFiles")[0];
+        Assert.Equal((solution[0].File, solution[0].Reach, solution[0].FanOut),
+            (first.GetProperty("file").GetString(), first.GetProperty("reach").GetInt32(), first.GetProperty("fanOut").GetInt32()));
+    }
+
+    [Fact]
+    public async Task TopFiles_EmptyUnlessAskedFor()
+    {
+        var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None, score: false);
+        Assert.All(rows, r => Assert.Empty(r.TopFiles));
+    }
+
+    [Fact]
     public async Task TestMethods_CountedPerSection_AndPerProdClass()
     {
         var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(_fixture.Solution, null, CancellationToken.None);

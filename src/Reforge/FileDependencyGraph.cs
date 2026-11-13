@@ -14,6 +14,9 @@ public sealed class FileDependencyGraph
     /// <summary>Ordered file list. Indices are stable and used by all downstream algorithms.</summary>
     public IReadOnlyList<string> Files { get; }
 
+    /// <summary>Assembly name of the project each file was registered from, parallel to <see cref="Files"/>.</summary>
+    public IReadOnlyList<string> Assemblies { get; }
+
     /// <summary>Adjacency: Adj[i] = set of file indices that file i depends on.</summary>
     public IReadOnlyList<HashSet<int>> Adj { get; }
 
@@ -40,6 +43,7 @@ public sealed class FileDependencyGraph
 
     private FileDependencyGraph(
         List<string> files,
+        List<string> assemblies,
         List<HashSet<int>> adj,
         List<HashSet<int>> revAdj,
         List<int> loc,
@@ -50,6 +54,7 @@ public sealed class FileDependencyGraph
         int interfaceCount)
     {
         Files = files;
+        Assemblies = assemblies;
         Adj = adj;
         RevAdj = revAdj;
         Loc = loc;
@@ -68,6 +73,7 @@ public sealed class FileDependencyGraph
         // symbol record which file its primary declaration lives in.
         var fileIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var files = new List<string>();
+        var assemblies = new List<string>();
         var loc = new List<int>();
         var symbolToFile = new Dictionary<ISymbol, int>(SymbolEqualityComparer.Default);
         int classCount = 0;
@@ -110,6 +116,7 @@ public sealed class FileDependencyGraph
                 int idx = files.Count;
                 fileIndex[normalized] = idx;
                 files.Add(normalized);
+                assemblies.Add(project.AssemblyName);
                 loc.Add(relativeLines);
 
                 var model = compilation.GetSemanticModel(tree);
@@ -183,7 +190,7 @@ public sealed class FileDependencyGraph
         int totalProdLoc = 0;
         foreach (var l in loc) totalProdLoc += l;
 
-        return new FileDependencyGraph(files, adj, revAdj, loc, totalProdLoc, totalTestLoc, testFileCount, classCount, interfaceCount);
+        return new FileDependencyGraph(files, assemblies, adj, revAdj, loc, totalProdLoc, totalTestLoc, testFileCount, classCount, interfaceCount);
     }
 
     private static bool IsTestProject(Project project)

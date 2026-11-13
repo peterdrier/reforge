@@ -42,6 +42,17 @@ public static class SnapshotCommand
             Description = "Token cache file, shared with surface-score (default: $REFORGE_TOKEN_CACHE, else <LocalApplicationData>/reforge/token-cache.txt)."
         };
 
+        var topFilesOption = new Option<int>("--top-files")
+        {
+            Description = "With --by-assembly --format json: list this many files per row, ranked by reach then fan-out (default 5; 0 skips the file graph).",
+            DefaultValueFactory = _ => 5
+        };
+        topFilesOption.Validators.Add(result =>
+        {
+            if (result.GetValueOrDefault<int>() < 0)
+                result.AddError($"--top-files must be 0 or more, not {result.GetValueOrDefault<int>()}.");
+        });
+
         var command = new Command("snapshot", "One-row macro-scale code health record for time-series charting")
         {
             appendOption,
@@ -49,7 +60,8 @@ public static class SnapshotCommand
             coverageOption,
             noScoreOption,
             countTokensOption,
-            tokenCacheOption
+            tokenCacheOption,
+            topFilesOption
         };
 
         command.SetAction(async (parseResult, cancellationToken) =>
@@ -66,9 +78,12 @@ public static class SnapshotCommand
             {
                 if (byAssembly)
                 {
+                    var topFiles = parseResult.GetValue(topFilesOption);
+                    // Only JSON carries topFiles; CSV rows would build the graph for nothing.
+                    if (format != OutputFormat.Json || appendPath is not null) topFiles = 0;
                     using var tokens = TokenSession.Open(parseResult.GetValue(countTokensOption), parseResult.GetValue(tokenCacheOption), Console.Error);
                     var rows = await SectionSnapshotAnalyzer.AnalyzeAsync(solution, coveragePath, cancellationToken,
-                        score: !parseResult.GetValue(noScoreOption), tokens: tokens.Measurer);
+                        score: !parseResult.GetValue(noScoreOption), tokens: tokens.Measurer, topFiles: topFiles);
                     tokens.Save(Console.Error);
                     if (appendPath is not null)
                     {

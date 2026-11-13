@@ -2,6 +2,11 @@
 
 What changed and why. Newest first.
 
+## v0.34.0 - Top files per section
+
+- **`snapshot --by-assembly --format json` lists each row's top files** (`topFiles`: `file`, `reach`, `fanOut`), ranked by reach then fan-out, five by default (`--top-files <n>`, 0 to skip). The single solution-wide `maxReachFile` is always some section's composition root; the ranked list lets a consumer filter those out itself.
+- Every existing field and the 49-column CSV are unchanged; CSV and `--append` runs skip the file graph.
+
 ## v0.33.0 - Project references cost
 
 - **A ProjectReference nothing uses costs 25** (`unusedProjectReference`), charged at its csproj line and listed in one diagnostic. Use is the compiler's own answer plus what Razor views name; an application's references are not judged, since a host may reference modules only to ship them. Humans: 3 of 354 library references flagged.
